@@ -1,0 +1,9 @@
+node_modules/
+dist/
+ios/App/build/
+ios/App/Pods/
+DerivedData/
+.DS_Store
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
