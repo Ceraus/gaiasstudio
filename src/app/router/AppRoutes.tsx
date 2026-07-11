@@ -13,6 +13,7 @@ const CustomerDetailPage = lazy(() => import("@/modules/customers/CustomerDetail
 const CustomersPage = lazy(() => import("@/modules/customers/CustomersPage").then((module) => ({ default: module.CustomersPage })));
 const MobileHomePage = lazy(() => import("@/modules/employees/MobileHomePage").then((module) => ({ default: module.MobileHomePage })));
 const ActivityMapPage = lazy(() => import("@/modules/map/ActivityMapPage").then((module) => ({ default: module.ActivityMapPage })));
+const BlueprintHubPage = lazy(() => import("@/modules/map/BlueprintHubPage").then((module) => ({ default: module.BlueprintHubPage })));
 const ProjectDetailPage = lazy(() => import("@/modules/projects/ProjectDetailPage").then((module) => ({ default: module.ProjectDetailPage })));
 const ProjectGalleryPage = lazy(() => import("@/modules/projects/ProjectGalleryPage").then((module) => ({ default: module.ProjectGalleryPage })));
 const ProjectsPage = lazy(() => import("@/modules/projects/ProjectsPage").then((module) => ({ default: module.ProjectsPage })));
@@ -52,7 +53,12 @@ export function AppRoutes() {
         <Route path="/settings" element={<HubPlaceholderPage title="Settings" />} />
         <Route path="/time-material" element={<TimeMaterialPage />} />
         <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/map" element={<ActivityMapPage />} />
+        {/* /map → Blueprint Hub (Dexie offline-first plan workspace selector) */}
+        <Route path="/map" element={<BlueprintHubPage />} />
+        {/* /map/activity → team clock activity (legacy Leaflet map) */}
+        <Route path="/map/activity" element={<ActivityMapPage />} />
+        {/* /team → unified Employees + Users hub */}
+        <Route path="/team" element={<EmployeesPage />} />
         <Route path="/projects/:projectId" element={<ProjectPlansRedirect />} />
         <Route path="/projects/:projectId/overview" element={<ProjectDetailPage initialSection="overview" />} />
         <Route path="/projects/:projectId/plan" element={<ProjectDetailPage initialSection="plans" />} />

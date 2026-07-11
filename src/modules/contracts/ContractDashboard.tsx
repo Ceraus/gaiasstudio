@@ -4,7 +4,6 @@ import {
   Check,
   Clock,
   Eye,
-  FileSearch,
   FileSignature,
   FileSpreadsheet,
   FileStack,
@@ -24,9 +23,7 @@ import {
   resumeLocalDraft,
   loadServerContractIntoBuilder,
   deleteLocalDraft,
-  clearSearch,
 } from '@/store/contractsSlice'
-import { ContractSearchBar } from './ContractSearchBar'
 import { setActiveContractType } from '@/store/studioSlice'
 import {
   TIER_LABELS,
@@ -491,117 +488,6 @@ function Lane({
 
 // ── Meilisearch results pane ──────────────────────────────────────────────────
 
-function SearchHitCard({
-  contract,
-  onView,
-  onResume,
-}: {
-  contract: Contract
-  onView: () => void
-  onResume?: () => void
-}) {
-  return (
-    <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm hover:border-[#166eb4]/40 hover:shadow-md transition-all">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-slate-800">{contract.client_name}</p>
-          {contract.contract_title && (
-            <p className="mt-0.5 truncate text-[10px] text-slate-400">{contract.contract_title}</p>
-          )}
-        </div>
-        <TierBadge tier={contract.contract_type} />
-      </div>
-
-      <div className="flex items-center justify-between pt-0.5">
-        <StatusBadge status={contract.status} />
-        <span className="text-sm font-bold tabular-nums text-slate-700">
-          {formatUsd(contract.total_investment)}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5 pt-1">
-        {contract.status === 'draft' && onResume ? (
-          <button
-            type="button"
-            onClick={onResume}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#166eb4] py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-[#125c96]"
-          >
-            <Play size={10} strokeWidth={3} aria-hidden />
-            Resume
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onView}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white py-1.5 text-[11px] font-semibold text-slate-600 transition-colors hover:border-[#166eb4] hover:text-[#166eb4]"
-          >
-            <Eye size={10} aria-hidden />
-            View
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function SearchResultsPane({
-  onViewContract,
-  onResumeContract,
-}: {
-  onViewContract: (c: Contract) => void
-  onResumeContract: (c: Contract) => void
-}) {
-  const { searchResults, searchStatus, searchError, searchQuery } = useAppSelector(
-    (s) => s.contracts,
-  )
-
-  if (searchStatus === 'searching') {
-    return (
-      <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-16 text-sm text-slate-500 shadow-sm">
-        <RefreshCw size={16} className="animate-spin text-[#166eb4]" aria-hidden />
-        Searching contracts…
-      </div>
-    )
-  }
-
-  if (searchStatus === 'failed') {
-    return (
-      <p className="rounded-xl border border-red-200 bg-white px-4 py-3 text-sm text-red-600">
-        {searchError ?? 'Search failed. The Meilisearch index may be unreachable.'}
-      </p>
-    )
-  }
-
-  if (searchResults.length === 0 && searchStatus === 'succeeded') {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 py-16 text-center">
-        <FileSearch size={28} className="text-slate-300" strokeWidth={1.5} aria-hidden />
-        <p className="text-xs font-semibold text-slate-400">
-          No contracts matched &ldquo;{searchQuery}&rdquo;
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-3">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-        {searchResults.length} result{searchResults.length === 1 ? '' : 's'} for &ldquo;{searchQuery}&rdquo;
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {searchResults.map((c) => (
-          <SearchHitCard
-            key={c.id}
-            contract={c}
-            onView={() => onViewContract(c)}
-            onResume={() => onResumeContract(c)}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export function ContractDashboard({
@@ -614,7 +500,7 @@ export function ContractDashboard({
   onResumeDraft?: () => void
 }) {
   const dispatch = useAppDispatch()
-  const { records, localDrafts, status, error, searchQuery, searchStatus } = useAppSelector(
+  const { records, localDrafts, status, error } = useAppSelector(
     (s) => s.contracts,
   )
 
@@ -627,16 +513,13 @@ export function ContractDashboard({
   /** After a successful vault import, slot fields and navigate to the Live Builder. */
   const handleVaultImported = useCallback(() => {
     setVaultModalOpen(false)
-    dispatch(clearSearch())
     onResumeDraft?.()
-  }, [dispatch, onResumeDraft])
+  }, [onResumeDraft])
 
   useEffect(() => {
     if (status === 'idle') dispatch(loadContracts())
   }, [dispatch, status])
 
-  /** True when the search pane should replace the swimlanes. */
-  const searchActive = searchQuery.trim().length >= 2 || searchStatus === 'searching'
 
   // ── Swimlane selectors ────────────────────────────────────────────────────
   const serverDrafts  = records.filter((c) => c.status === 'draft')
@@ -699,30 +582,17 @@ export function ContractDashboard({
         </div>
       </div>
 
-      {/* ── Meilisearch search bar ── */}
-      <ContractSearchBar />
-
-      {/* ── Taxonomy quick-create (hidden while searching to keep focus on results) ── */}
-      {!searchActive && (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <TaxonomyLane
-            onCreateWithType={onCreateWithType}
-            onVaultImport={openVaultModal}
-            onImportXls={openVaultModal}
-            disabled={false}
-          />
-        </div>
-      )}
-
-      {searchActive ? (
-        /* ── Search results pane replaces KPI tiles + swimlanes ── */
-        <SearchResultsPane
-          onViewContract={(c) => setViewingContract(c)}
-          onResumeContract={(c) => handleResumeServerDraft(c)}
+      {/* ── Taxonomy quick-create ── */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <TaxonomyLane
+          onCreateWithType={onCreateWithType}
+          onVaultImport={openVaultModal}
+          onImportXls={openVaultModal}
+          disabled={false}
         />
-      ) : (
-        <>
-          {/* ── KPI tiles ── */}
+      </div>
+
+      {/* ── KPI tiles ── */}
           <div className="grid gap-3 sm:grid-cols-3">
             <SummaryTile
               label="Drafts"
@@ -836,8 +706,6 @@ export function ContractDashboard({
               </Lane>
             </div>
           )}
-        </>
-      )}
 
       {/* ── Read-only contract view modal ── */}
       {viewingContract && (

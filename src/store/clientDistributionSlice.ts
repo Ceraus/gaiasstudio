@@ -1,6 +1,8 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { fetchClientDistribution } from '@/modules/contracts/contractApi'
 import type { ClientDistributionEntry } from '@/shared/types/contract'
+import { isMockMode } from '@/core/mock/isMockMode'
+import { MOCK_CLIENT_DISTRIBUTION } from '@/core/mock/seedData'
 
 // Seeded NYC-area demo entries — rendered when the API is unavailable.
 const NYC_DEMO_ENTRIES: ClientDistributionEntry[] = [
@@ -31,6 +33,7 @@ export const loadClientDistribution = createAsyncThunk<
   void,
   { rejectValue: string }
 >('clientDistribution/load', async (_, { rejectWithValue }) => {
+  if (isMockMode()) return MOCK_CLIENT_DISTRIBUTION
   try {
     const data = await fetchClientDistribution()
     return data.length > 0 ? data : NYC_DEMO_ENTRIES

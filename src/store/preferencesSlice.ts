@@ -43,6 +43,13 @@ export interface PreferencesState {
   /** Compact content density. */
   compactDensity: boolean
 
+  /**
+   * Mock Data Gateway flag.
+   * When true, all async thunks return local seed data instead of hitting the
+   * Laravel backend. Defaults strictly to false — live data on first boot.
+   */
+  useMockData: boolean
+
   saveStatus: 'idle' | 'saving' | 'saved' | 'failed'
   saveError: string | null
 }
@@ -54,6 +61,7 @@ function buildInitialState(): PreferencesState {
     radialMenuEnabled: stored.radialMenuEnabled ?? false,
     reducedMotion: stored.reducedMotion ?? false,
     compactDensity: stored.compactDensity ?? false,
+    useMockData: stored.useMockData ?? false,
     saveStatus: 'idle',
     saveError: null,
   }
@@ -86,6 +94,14 @@ const preferencesSlice = createSlice({
       const { saveStatus, saveError, ...fields } = action.payload
       Object.assign(state, fields)
     },
+    /**
+     * Flips the Mock Data Gateway flag and immediately writes the new value to
+     * localStorage so that async thunks can read it via `isMockMode()`.
+     */
+    toggleMockData(state) {
+      state.useMockData = !state.useMockData
+      persistPreferences({ useMockData: state.useMockData })
+    },
     resetSaveStatus(state) {
       state.saveStatus = 'idle'
       state.saveError = null
@@ -110,5 +126,5 @@ const preferencesSlice = createSlice({
   },
 })
 
-export const { patchPreferences, resetSaveStatus } = preferencesSlice.actions
+export const { patchPreferences, toggleMockData, resetSaveStatus } = preferencesSlice.actions
 export default preferencesSlice.reducer

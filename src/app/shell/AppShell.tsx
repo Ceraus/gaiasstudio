@@ -1,17 +1,26 @@
-import { X } from "lucide-react";
+import { FlaskConical, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useGlobalHotkeys } from "@/hooks/useGlobalHotkeys";
+import { useAppSelector } from "@/store/hooks";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
-import { navItems } from "./nav";
+import { CORE_NAV, DOCK_NAV, NAV_GROUPS } from "./nav";
+
+// Flat list of all nav items used only for page-title lookup
+const navItems = [
+  ...CORE_NAV,
+  ...NAV_GROUPS.flatMap((g) => g.items),
+  ...DOCK_NAV,
+];
 
 const sidebarStorageKey = "clearplan-app-sidebar-collapsed";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const useMockData = useAppSelector((s) => s.preferences.useMockData);
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(sidebarStorageKey) === "true");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -57,9 +66,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="h-screen h-svh overflow-hidden bg-[#f5f7fb]">
       <div className="flex h-full min-h-0">
-        <Sidebar collapsed={collapsed} />
+        <Sidebar collapsed={collapsed} onCollapse={() => setCollapsed((v) => !v)} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!isPlansWorkspace && <Header onMobileMenu={() => setMobileNavOpen(true)} onSidebarToggle={() => setCollapsed((value) => !value)} collapsed={collapsed} title={currentTitle} />}
+          {useMockData && (
+            <div className="flex shrink-0 items-center justify-center gap-2 bg-amber-400 px-4 py-1.5 text-xs font-semibold text-amber-950">
+              <FlaskConical size={13} aria-hidden="true" />
+              Seed Data Mode — not connected to live backend. Toggle off in Settings &amp; Account.
+            </div>
+          )}
           <main className={`app-scroll w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto ${isPlansWorkspace ? "h-full min-h-0 overflow-hidden" : "px-3 py-4 pb-[max(2rem,var(--safe-bottom))] sm:px-5 md:px-6 lg:px-8 lg:py-8"}`}>{children}</main>
         </div>
       </div>

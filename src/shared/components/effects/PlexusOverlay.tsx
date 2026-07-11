@@ -124,11 +124,17 @@ export function PlexusOverlay({
 
     resize()
     draw()
-    window.addEventListener('resize', resize)
+
+    // Use ResizeObserver so the canvas restarts whenever the sidebar CSS
+    // transition changes the container width (window resize alone won't fire).
+    const ro = new ResizeObserver(() => {
+      resize()
+    })
+    ro.observe(canvas)
 
     return () => {
       cancelAnimationFrame(raf)
-      window.removeEventListener('resize', resize)
+      ro.disconnect()
     }
   }, [nodeCount, linkDist, intensity, rgb, scale, reducedMotion])
 

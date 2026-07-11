@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.0] — 2026-07-10
+
+### Universal API Gateway — full-stack Redux ↔ Laravel wiring
+
+#### Added
+- **`apiClient.ts`** — Axios singleton gateway replacing the fetch-based `ApiClient`. Request
+  interceptor injects `Authorization: Bearer` from `auth.accessToken` (Redux) with
+  localStorage/cookie fallback via `getBearerToken()`.
+- **Mock data gateway** — when `account.useMockData` is `true`, the interceptor swaps the
+  Axios adapter and resolves taxonomy-compliant seed payloads from `mockGateway.ts` without
+  hitting the network.
+- **`accountSlice`** — `useMockData` flag persisted to `localStorage`; toggled via
+  `setUseMockData` / `toggleUseMockData`; bootstrapped from `VITE_USE_MOCKS`.
+- **`authSlice`** — Redux auth state (`user`, `accessToken`, `status`); `syncAuthSession`
+  action wired from `AuthContext` on login/logout/refresh.
+- **`m365Slice`** — `brokerM365SsoStatus` thunk routes to `GET /api/v1/auth/sso/status`.
+- **`globalSearchSlice`** + **`globalSearchApi`** — parallel multi-index search broker
+  (`contracts`, `projects`, `vault`); `quotes` index strictly excluded.
+- **`storeRef.ts`** — binds Redux store to Axios interceptors without circular imports.
+- **Blueprint Hub** — isolated Zustand `useBlueprintStore` with `brokerBlueprintSave` /
+  `brokerBlueprintLoad` routing through `apiClient` to `PUT/GET /api/v1/blueprint/hub/{planId}`.
+- **`axios`** dependency added to `package.json`.
+
+#### Changed
+- **`authSession.ts`** — all auth endpoints (`login`, `me`, `status`) now route through
+  `apiClient` instead of raw `fetch()`.
+- **`AuthContext.tsx`** — dispatches `syncAuthSession` on every session transition; removed
+  `setAuthTokenProvider` pattern.
+- **`store/index.ts`** — registers `account`, `auth`, and `m365` reducers; calls
+  `bindReduxStore(store)` at init.
+- Removed legacy `src/core/api/ApiClient.ts` (fetch wrapper).
+
+#### Backend — Global-API (Laravel)
+- **`BlueprintHubController`** — persists spatial pins, zones, and active taxonomy tier to
+  `user_dashboard_layouts` via `GET/PUT /api/v1/blueprint/hub/{planId}`.
+- **CORS** — explicit non-production origins for `localhost:5173`, `127.0.0.1:5173`, and
+  port 8080 variants.
+
+---
+
 ## [1.0.0] — 2026-07-10
 
 ### First production release of the Redux architecture.

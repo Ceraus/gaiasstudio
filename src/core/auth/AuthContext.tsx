@@ -1,7 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useDispatch } from "react-redux";
 import { apiClient } from "../api";
 import { authSession, type AuthUser } from "./authSession";
 import { clearDevSession, loadDevSession } from "./devSession";
+import { syncAuthSession } from "@/store/authSlice";
+import type { AppDispatch } from "@/store";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -18,19 +21,27 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const dispatch = useDispatch<AppDispatch>();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const publishSession = useCallback(
+    (snapshot: { user: AuthUser | null; accessToken: string | null }) => {
+      dispatch(syncAuthSession(snapshot));
+      setUser(snapshot.user);
+    },
+    [dispatch],
+  );
+
   useEffect(() => {
     let mounted = true;
 
-    // DEV-only: if a local offline session is stored, bypass the API check.
     if (import.meta.env.DEV) {
       const devUser = loadDevSession();
       if (devUser) {
         if (mounted) {
-          setUser(devUser);
+          publishSession({ user: devUser, accessToken: "dev-session-token" });
           setLoading(false);
         }
         return () => { mounted = false; };
@@ -40,11 +51,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authSession
       .refresh()
       .then((snapshot) => {
-        if (mounted) setUser(snapshot.user);
+        if (mounted) publishSession(snapshot);
       })
       .catch((restoreError) => {
         if (mounted) {
-          setUser(null);
+          publishSession({ user: null, accessToken: null });
           setError(restoreError instanceof Error ? restoreError.message : "Unable to restore your session.");
         }
       })
@@ -55,36 +66,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [publishSession]);
 
   useEffect(() => {
-    apiClient.setAuthTokenProvider(() => authSession.read().accessToken);
-
     const handleUnauthorized = () => {
       authSession.clear();
-      setUser(null);
+      publishSession({ user: null, accessToken: null });
       setError("Your session expired. Sign in again to continue.");
     };
 
     window.addEventListener("cvg:auth-unauthorized", handleUnauthorized);
     return () => window.removeEventListener("cvg:auth-unauthorized", handleUnauthorized);
-  }, []);
+  }, [publishSession]);
 
   const login = useCallback(async (email: string, password: string) => {
     setLoading(true);
     try {
       const snapshot = await authSession.login(email, password);
-      setUser(snapshot.user);
+      publishSession(snapshot);
       setError(null);
       return true;
     } catch (loginError) {
-      setUser(null);
+      publishSession({ user: null, accessToken: null });
       setError(loginError instanceof Error ? loginError.message : "Unable to sign in.");
       return false;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [publishSession]);
 
   const logout = useCallback(async () => {
     setLoading(true);
@@ -95,22 +104,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Remote logout is best-effort; local session cleanup must always happen.
     } finally {
       authSession.clear();
-      setUser(null);
+      publishSession({ user: null, accessToken: null });
       setLoading(false);
       window.location.assign("/login");
     }
-  }, []);
+  }, [publishSession]);
 
   const refresh = useCallback(async () => {
     const snapshot = await authSession.refresh();
-    setUser(snapshot.user);
-  }, []);
+    publishSession(snapshot);
+  }, [publishSession]);
 
   const validateSession = useCallback(async () => {
     const valid = await authSession.validate();
-    if (!valid) setUser(null);
+    if (!valid) publishSession({ user: null, accessToken: null });
     return valid;
-  }, []);
+  }, [publishSession]);
 
   const permissions = user?.permissions ?? [];
   const can = useCallback((permission: string) => permissions.includes("admin:all") || permissions.includes(permission), [permissions]);

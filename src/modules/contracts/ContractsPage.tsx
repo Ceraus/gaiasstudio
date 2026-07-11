@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FileSignature, Map, PlusCircle } from 'lucide-react'
 import { useAppDispatch } from '@/store/hooks'
 import { updateDraftField } from '@/store/contractsSlice'
@@ -16,7 +17,13 @@ const TABS: { id: ContractTab; label: string; icon: React.ElementType }[] = [
 
 export function ContractsPage() {
   const dispatch = useAppDispatch()
-  const [activeTab, setActiveTab] = useState<ContractTab>('dashboard')
+  const [searchParams] = useSearchParams()
+
+  // Global search hit routing: ?tab=create opens the Live Builder directly.
+  const [activeTab, setActiveTab] = useState<ContractTab>(() => {
+    const t = searchParams.get('tab')
+    return t === 'create' || t === 'map' ? t : 'dashboard'
+  })
 
   function handleCreateWithType(type: ContractTier) {
     dispatch(setActiveContractType(type))

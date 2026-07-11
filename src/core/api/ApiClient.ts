@@ -1,150 +1,198 @@
-import { appConfig } from "../config/appConfig";
-import { errorFromResponse, normalizeApiError, type ApiError } from "./apiErrors";
+import axios, {
+  type AxiosInstance,
+  type AxiosRequestConfig,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from 'axios'
+import { appConfig } from '../config/appConfig'
+import { getBearerToken, emitAuthUnauthorized } from '../auth/authSession'
+import { readReduxState } from '@/store/storeRef'
+import { resolveMockPayload } from './mockGateway'
+import { ApiError, normalizeApiError } from './apiErrors'
 
-export type ApiRequestOptions = Omit<RequestInit, "body"> & {
-  body?: BodyInit | Record<string, unknown> | unknown[] | null;
-  query?: Record<string, string | number | boolean | undefined | null>;
-  timeoutMs?: number;
-  retryCount?: number;
-  skipAuth?: boolean;
-};
+export type ApiRequestOptions = Omit<AxiosRequestConfig, 'url' | 'method' | 'data'> & {
+  query?: Record<string, string | number | boolean | undefined | null>
+  timeoutMs?: number
+  retryCount?: number
+  skipAuth?: boolean
+}
 
-type RequestInterceptor = (request: RequestInit) => RequestInit | Promise<RequestInit>;
-type ResponseInterceptor = (response: Response) => Response | Promise<Response>;
-type AuthTokenProvider = () => string | null | Promise<string | null>;
-
-export class ApiClient {
-  private authTokenProvider?: AuthTokenProvider;
-  private readonly requestInterceptors: RequestInterceptor[] = [];
-  private readonly responseInterceptors: ResponseInterceptor[] = [];
-
-  constructor(private readonly baseUrl = appConfig.apiBaseUrl) {}
-
-  setAuthTokenProvider(provider: AuthTokenProvider) {
-    this.authTokenProvider = provider;
+function withQuery(path: string, query?: ApiRequestOptions['query']): string {
+  if (!query) return path
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value))
   }
+  const qs = search.toString()
+  return qs ? `${path}?${qs}` : path
+}
 
-  addRequestInterceptor(interceptor: RequestInterceptor) {
-    this.requestInterceptors.push(interceptor);
+function resolveUrl(path: string): string {
+  const route = path.startsWith('/') ? path : `/${path}`
+  if (/^https?:\/\//.test(path)) return path
+  if (!appConfig.apiBaseUrl) return route
+  return `${appConfig.apiBaseUrl}${route}`
+}
+
+function shouldRetry(error: ApiError, attempt: number, retries: number): boolean {
+  if (attempt >= retries) return false
+  return error.kind === 'network' || error.kind === 'timeout' || error.kind === 'server'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function toApiError(error: unknown): ApiError {
+  if (axios.isAxiosError(error)) {
+    if (error.code === 'ECONNABORTED') {
+      return new ApiError('The request timed out.', 'timeout')
+    }
+    if (!error.response) {
+      return new ApiError('The network request failed.', 'network', undefined, error)
+    }
+    const status = error.response.status
+    const details = error.response.data
+    const message =
+      details && typeof details === 'object' && 'message' in details && typeof details.message === 'string'
+        ? details.message
+        : error.message || 'The API request failed.'
+    if (status === 401 || status === 403) return new ApiError(message, 'auth', status, details)
+    if (status === 422) return new ApiError(message, 'validation', status, details)
+    if (status >= 500) return new ApiError(message, 'server', status, details)
+    return new ApiError(message, 'unknown', status, details)
   }
+  return normalizeApiError(error)
+}
 
-  addResponseInterceptor(interceptor: ResponseInterceptor) {
-    this.responseInterceptors.push(interceptor);
-  }
+function installGatewayInterceptors(instance: AxiosInstance): void {
+  instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+    const state = readReduxState()
+    const useMockData = state?.account.useMockData ?? false
 
-  get<T>(path: string, options?: ApiRequestOptions) {
-    return this.request<T>(path, { ...options, method: "GET" });
-  }
-
-  post<T>(path: string, body?: ApiRequestOptions["body"], options?: ApiRequestOptions) {
-    return this.request<T>(path, { ...options, method: "POST", body });
-  }
-
-  patch<T>(path: string, body?: ApiRequestOptions["body"], options?: ApiRequestOptions) {
-    return this.request<T>(path, { ...options, method: "PATCH", body });
-  }
-
-  delete<T>(path: string, options?: ApiRequestOptions) {
-    return this.request<T>(path, { ...options, method: "DELETE" });
-  }
-
-  async request<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-    const retries = options.retryCount ?? appConfig.apiRetryCount;
-    let lastError: ApiError | null = null;
-
-    for (let attempt = 0; attempt <= retries; attempt += 1) {
-      try {
-        const response = await this.fetchOnce(path, options);
-        if (response.status === 204) return undefined as T;
-        return (await response.json()) as T;
-      } catch (error) {
-        lastError = normalizeApiError(error);
-        if (lastError.kind === "auth") {
-          window.dispatchEvent(new CustomEvent("cvg:auth-unauthorized"));
-        }
-        if (!shouldRetry(lastError, attempt, retries)) throw lastError;
-        await delay(250 * 2 ** attempt);
+    if (useMockData) {
+      config.adapter = async (cfg) => {
+        const payload = resolveMockPayload(cfg)
+        return {
+          data: payload,
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config: cfg,
+        } satisfies AxiosResponse
       }
     }
 
-    throw lastError ?? normalizeApiError(new Error("The API request failed."));
-  }
-
-  private async fetchOnce(path: string, options: ApiRequestOptions) {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? appConfig.apiTimeoutMs);
-    const headers = await this.headers(options);
-    const init = await this.applyRequestInterceptors({
-      ...options,
-      body: serializeBody(options.body),
-      headers,
-      signal: controller.signal
-    });
-
-    try {
-      let response = await fetch(this.url(path, options.query), init);
-      for (const interceptor of this.responseInterceptors) response = await interceptor(response);
-      if (!response.ok) throw await errorFromResponse(response);
-      return response;
-    } finally {
-      window.clearTimeout(timeout);
-    }
-  }
-
-  private async headers(options: ApiRequestOptions) {
-    const headers = new Headers(options.headers);
-    if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
-    headers.set("accept", "application/json");
-
-    if (!options.skipAuth && this.authTokenProvider) {
-      const token = await this.authTokenProvider();
-      if (token) headers.set("authorization", `Bearer ${token}`);
+    const skipAuth = (config as InternalAxiosRequestConfig & { skipAuth?: boolean }).skipAuth
+    const token = state?.auth.accessToken ?? getBearerToken()
+    if (!skipAuth && token) {
+      config.headers.set('Authorization', `Bearer ${token}`)
     }
 
-    return headers;
+    config.headers.set('Accept', 'application/json')
+    config.headers.set('X-Requested-With', 'XMLHttpRequest')
+
+    return config
+  })
+
+  instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const apiError = toApiError(error)
+      if (apiError.kind === 'auth') emitAuthUnauthorized()
+      return Promise.reject(apiError)
+    },
+  )
+}
+
+function createAxiosConductor(): AxiosInstance {
+  const instance = axios.create({
+    baseURL: appConfig.apiBaseUrl || undefined,
+    timeout: appConfig.apiTimeoutMs,
+    withCredentials: false,
+  })
+  installGatewayInterceptors(instance)
+  return instance
+}
+
+class ApiClientFacade {
+  private readonly axios = createAxiosConductor()
+
+  async get<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'GET' })
   }
 
-  private async applyRequestInterceptors(init: RequestInit) {
-    let request = init;
-    for (const interceptor of this.requestInterceptors) request = await interceptor(request);
-    return request;
+  async post<T>(
+    path: string,
+    body?: ApiRequestOptions['data'],
+    options: ApiRequestOptions = {},
+  ): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'POST', data: body })
   }
 
-  private url(path: string, query?: ApiRequestOptions["query"]) {
-    if (/^https?:\/\//.test(path)) return withQuery(path, query);
-    const route = path.startsWith("/") ? path : `/${path}`;
-    if (!this.baseUrl) return withQuery(route, query);
-    return withQuery(`${this.baseUrl}${route}`, query);
+  async patch<T>(
+    path: string,
+    body?: ApiRequestOptions['data'],
+    options: ApiRequestOptions = {},
+  ): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'PATCH', data: body })
+  }
+
+  async put<T>(
+    path: string,
+    body?: ApiRequestOptions['data'],
+    options: ApiRequestOptions = {},
+  ): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'PUT', data: body })
+  }
+
+  async delete<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'DELETE' })
+  }
+
+  async request<T>(path: string, options: ApiRequestOptions & { method?: string } = {}): Promise<T> {
+    const retries = options.retryCount ?? appConfig.apiRetryCount
+    let lastError: ApiError | null = null
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const response = await this.dispatchOnce(path, options)
+        if (response.status === 204) return undefined as T
+        return response.data as T
+      } catch (error) {
+        lastError = toApiError(error)
+        if (!shouldRetry(lastError, attempt, retries)) throw lastError
+        await delay(250 * 2 ** attempt)
+      }
+    }
+
+    throw lastError ?? new ApiError('The API request failed.', 'unknown')
+  }
+
+  private async dispatchOnce(
+    path: string,
+    options: ApiRequestOptions & { method?: string },
+  ): Promise<AxiosResponse> {
+    const { query, timeoutMs, retryCount: _retryCount, skipAuth, ...axiosConfig } = options
+    const url = resolveUrl(withQuery(path, query))
+
+    const isFormData =
+      typeof FormData !== 'undefined' && axiosConfig.data instanceof FormData
+
+    return this.axios.request({
+      ...axiosConfig,
+      url,
+      timeout: timeoutMs ?? appConfig.apiTimeoutMs,
+      skipAuth,
+      headers: {
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(axiosConfig.headers ?? {}),
+      },
+    } as AxiosRequestConfig & { skipAuth?: boolean })
   }
 }
 
-export const apiClient = new ApiClient();
+/** Singleton Axios gateway — all Redux thunks and Zustand brokers route through this conduit. */
+export const apiClient = new ApiClientFacade()
 
-function serializeBody(body: ApiRequestOptions["body"]) {
-  if (!body) return undefined;
-  if (body instanceof Blob || body instanceof FormData || body instanceof URLSearchParams) return body;
-  if (typeof body === "string") return body;
-  return JSON.stringify(body);
-}
-
-function shouldRetry(error: ApiError, attempt: number, retries: number) {
-  if (attempt >= retries) return false;
-  return error.kind === "network" || error.kind === "timeout" || error.kind === "server";
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function withQuery(url: string, query?: ApiRequestOptions["query"]) {
-  if (!query) return url;
-  const [path, existingQuery = ""] = url.split("?");
-  const search = new URLSearchParams(existingQuery);
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
-  }
-  const qs = search.toString();
-  return qs ? `${path}?${qs}` : path;
-}
+export type { AxiosInstance }

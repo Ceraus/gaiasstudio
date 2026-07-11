@@ -1,7 +1,7 @@
 {
   "name": "clearplan-command",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,7 +22,9 @@
     "@capacitor/status-bar": "^7.0.0",
     "@react-three/fiber": "^9.6.1",
     "@reduxjs/toolkit": "^2.12.0",
+    "@turf/turf": "^7.3.5",
     "@vitejs/plugin-react": "^5.0.0",
+    "axios": "^1.9.0",
     "dexie": "^4.4.4",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
@@ -34,7 +36,8 @@
     "react-redux": "^9.3.0",
     "react-router-dom": "^6.28.0",
     "three": "^0.185.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.0.0",
