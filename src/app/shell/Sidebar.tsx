@@ -1,6 +1,8 @@
 import { Activity, ClipboardCheck, FileText, FolderKanban, Image, LayoutDashboard, ListChecks } from "lucide-react";
 import { NavLink, useLocation, useMatch } from "react-router-dom";
 import { useDemoData } from "@/app/providers/DemoDataProvider";
+import { AnimatedCommandLogo } from "@/shared/components/branding/AnimatedCommandLogo";
+import { PlexusOverlay } from "@/shared/components/effects/PlexusOverlay";
 import { navItems } from "./nav";
 
 const projectItems = [
@@ -41,17 +43,18 @@ function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; onNavig
 
   return (
     <>
-      <div className="flex h-20 items-center gap-3 border-b border-white/10 px-4">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-sm font-black text-slate-950">CP</div>
-        {!collapsed && (
-          <div className="sidebar-label min-w-0">
-            <p className="truncate text-lg font-bold text-white">ClearPlan</p>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Field operations demo</p>
-          </div>
-        )}
+      <div className={`flex shrink-0 items-center justify-center border-b border-white/10 ${collapsed ? "h-14 py-2" : "py-3"}`}>
+        <AnimatedCommandLogo size={collapsed ? 40 : 45} className="command-symbol-glow" />
       </div>
 
-      <nav className="app-scroll min-h-0 flex-1 space-y-1 overflow-y-auto p-3 scrollbar-soft">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <PlexusOverlay
+          opacity={0.65}
+          nodeCount={collapsed ? 28 : 52}
+          linkDist={collapsed ? 72 : 100}
+          scale={collapsed ? 1 : 1.25}
+        />
+        <nav className="relative z-[1] app-scroll min-h-0 flex-1 space-y-1 overflow-y-auto p-3 scrollbar-soft">
         {navItems.map((item) => (
           <NavLink
             key={item.path}
@@ -96,7 +99,20 @@ function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; onNavig
             </div>
           </div>
         )}
-      </nav>
+        </nav>
+
+        {/* Version badge — pinned at sidebar bottom */}
+        {!collapsed && (
+          <div className="relative z-[1] shrink-0 border-t border-white/10 px-4 py-2.5">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600">
+              Clearplan Command
+            </p>
+            <p className="mt-0.5 font-mono text-[9px] text-slate-700">
+              v{__APP_VERSION__}
+            </p>
+          </div>
+        )}
+      </div>
     </>
   );
 }

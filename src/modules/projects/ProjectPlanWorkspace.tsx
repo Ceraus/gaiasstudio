@@ -672,7 +672,7 @@ export function ProjectPlanWorkspace({ project, projectPlans, projectTasks, init
             projectName={project.name}
             planName={activePlan?.name ?? "No plan selected"}
             onOpenSections={onOpenSections}
-            userName={user?.name ?? "ClearPlan User"}
+            userName={user?.name ?? "Clearplan Command User"}
             onLogout={() => void logout()}
           />
           <ToolPalette

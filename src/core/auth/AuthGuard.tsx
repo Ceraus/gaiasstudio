@@ -10,8 +10,8 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     return (
       <div className="grid min-h-[60vh] place-items-center">
         <div className="rounded-3xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-          <p className="text-sm font-bold text-slate-900">Checking your ClearPlan session</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">Connecting to Command API</p>
+          <p className="text-sm font-bold text-slate-900">Checking your Clearplan Command session</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Connecting to Clearplan Command API</p>
         </div>
       </div>
     );

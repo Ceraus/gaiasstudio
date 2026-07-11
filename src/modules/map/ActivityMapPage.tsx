@@ -155,7 +155,7 @@ function EventPanel({ events, selectedEventId, onSelect }: { events: ClockEvent[
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-slate-900">{employee?.name ?? "Unknown employee"}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500">{project?.company ?? "ClearPlan"} / {project?.name ?? "Unassigned"}</p>
+                    <p className="truncate text-xs font-semibold text-slate-500">{project?.company ?? "Clearplan Command"} / {project?.name ?? "Unassigned"}</p>
                   </div>
                   <span className="shrink-0 text-xs font-semibold text-slate-400">{formatTime(event.timestamp)}</span>
                 </div>

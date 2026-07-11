@@ -58,8 +58,7 @@ export function Header({ onSidebarToggle, onMobileMenu, collapsed, title }: { on
           <button type="button" aria-label="Notifications" className="compact-control grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50">
             <Bell size={16} aria-hidden="true" />
           </button>
-          <button type="button" className="hidden rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600 sm:inline-flex">ClearPlan</button>
-          <Avatar name={user?.name ?? "ClearPlan User"} className="h-9 w-9 text-xs" />
+          <Avatar name={user?.name ?? "User"} className="h-9 w-9 text-xs" />
           <button type="button" onClick={() => void logout()} aria-label="Log out" className="compact-control grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50">
             <LogOut size={16} aria-hidden="true" />
           </button>

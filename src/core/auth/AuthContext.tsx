@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiClient } from "../api";
 import { authSession, type AuthUser } from "./authSession";
+import { clearDevSession, loadDevSession } from "./devSession";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -23,6 +24,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+
+    // DEV-only: if a local offline session is stored, bypass the API check.
+    if (import.meta.env.DEV) {
+      const devUser = loadDevSession();
+      if (devUser) {
+        if (mounted) {
+          setUser(devUser);
+          setLoading(false);
+        }
+        return () => { mounted = false; };
+      }
+    }
 
     authSession
       .refresh()
@@ -75,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     setLoading(true);
+    if (import.meta.env.DEV) clearDevSession();
     try {
       await apiClient.post("/api/v1/auth/logout", undefined, { retryCount: 0 });
     } catch {

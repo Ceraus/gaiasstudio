@@ -1,14 +1,59 @@
-import { ArrowRight } from "lucide-react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/core/auth/AuthContext";
+import { activateDevSession } from "@/core/auth/devSession";
+import type { AuthUser } from "@/core/auth/authSession";
+import { LoginAuthLayout } from "./LoginAuthLayout";
+import { AnimatedCommandLogo } from "@/shared/components/branding/AnimatedCommandLogo";
+
+// Dev-only: loads an untracked *.local.ts account file. Resolves to nothing
+// in production since the glob is guarded by import.meta.env.DEV.
+const devOfflineModules = import.meta.env.DEV
+  ? import.meta.glob("@/dev/*.local.ts", { eager: true })
+  : {};
+const devOfflineAccount = (
+  Object.values(devOfflineModules)[0] as
+    | { devOfflineAccount?: { user: AuthUser; label?: string } }
+    | undefined
+)?.devOfflineAccount;
 
 const MICROSOFT_SSO_URL = "https://api.clearviewglobal.net/api/v1/auth/sso/microsoft/redirect";
 
+const SSO_ERROR_MESSAGES: Record<string, string> = {
+  "unauthorized-domain":
+    "Unauthorized Domain — only @clearviewglobal.com Microsoft 365 accounts may sign in to Clearplan Command.",
+  "domain-not-allowed": "Only company Microsoft 365 accounts are allowed to sign in.",
+  "wrong-tenant": "That account is not part of the company organization.",
+  "exchange-failed": "Microsoft sign-in could not be completed. Please try again.",
+  "login-failed": "Microsoft sign-in could not be started. Please try again.",
+  "pending-approval":
+    "Your account is pending approval. A Clearview administrator must activate your access before you can sign in.",
+  "access-denied":
+    "Access to Clearplan Command was denied. Contact your administrator if you believe this is an error.",
+  "encryption-locked": "Sign-in is not yet available — contact your administrator.",
+  disabled: "This account has been disabled.",
+};
+
+function MicrosoftMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
+  );
+}
+
+const panelClass =
+  "rounded-xl border border-slate-700 bg-slate-900/95 p-6 shadow-lg backdrop-blur-sm";
+
 export function LoginPage() {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { loading, user } = useAuth();
   const from = getReturnPath(location.state);
 
+  // ── Auth state engine (Redux) — preserved exactly ──────────────────────────
   if (!loading && user) {
     return <Navigate to={from} replace />;
   }
@@ -16,55 +61,83 @@ export function LoginPage() {
   function handleMicrosoftSignIn() {
     window.location.assign(MICROSOFT_SSO_URL);
   }
+  // ───────────────────────────────────────────────────────────────────────────
+
+  function handleDevOfflineLogin() {
+    if (!devOfflineAccount) return;
+    activateDevSession(devOfflineAccount.user);
+    window.location.assign("/dashboard");
+  }
+
+  const ssoCallbackError = searchParams.get("error");
+  const alertMessage = ssoCallbackError
+    ? (SSO_ERROR_MESSAGES[ssoCallbackError] ?? `Microsoft sign-in failed (${ssoCallbackError}).`)
+    : null;
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[#060912] px-6 py-10 text-white">
-      <section className="w-full max-w-[340px]" aria-label="Team access sign in">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.38em] text-slate-500">Team Access</p>
+    <LoginAuthLayout>
+      <div className={panelClass}>
+        {alertMessage ? (
+          <p
+            className="mb-4 rounded-md bg-red-950/60 px-3 py-2 text-sm text-red-300"
+            role="alert"
+          >
+            {alertMessage}
+          </p>
+        ) : null}
 
-        <div className="mt-8">
-          <h1 className="max-w-[240px] text-[26px] font-bold leading-[1.08] tracking-normal text-white sm:text-[28px]">
-            Sign in to
-            <br />
-            your account
-          </h1>
-          <p className="mt-4 max-w-[230px] text-xs font-medium leading-6 text-slate-500">Restricted to approved Clearview Global members.</p>
+        <div className="mb-6 flex items-center justify-center">
+          <AnimatedCommandLogo size={56} className="command-symbol-glow" />
         </div>
 
-        <div className="my-9 flex items-center gap-3">
-          <span className="h-px flex-1 bg-slate-800" aria-hidden="true" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.32em] text-slate-600">Continue With</span>
-          <span className="h-px flex-1 bg-slate-800" aria-hidden="true" />
-        </div>
-
+        {/* Sign-in button — onClick bound to the preserved Redux gateway function */}
         <button
           type="button"
           onClick={handleMicrosoftSignIn}
           disabled={loading}
-          className="flex h-14 w-full items-center justify-between rounded-lg border border-slate-700 bg-slate-900/80 px-5 text-sm font-bold text-white shadow-[0_18px_45px_rgba(0,0,0,0.22)] transition hover:border-slate-500 hover:bg-slate-800/95 focus:outline-none focus:ring-2 focus:ring-blue-400/70 disabled:cursor-wait disabled:opacity-70"
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-[#166eb4] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#125c96] focus:outline-none focus:ring-2 focus:ring-blue-400/60 disabled:cursor-wait disabled:opacity-60"
         >
-          <span className="flex items-center gap-4">
-            <span className="grid h-5 w-5 grid-cols-2 gap-0.5" aria-hidden="true">
-              <span className="bg-[#f25022]" />
-              <span className="bg-[#7fba00]" />
-              <span className="bg-[#00a4ef]" />
-              <span className="bg-[#ffb900]" />
-            </span>
-            Microsoft
-          </span>
-          <ArrowRight size={17} className="text-slate-600" aria-hidden="true" />
+          <MicrosoftMark />
+          Sign in with Microsoft
         </button>
 
-        <p className="mt-5 flex items-center gap-2 text-[11px] font-semibold text-slate-600">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.9)]" aria-hidden="true" />
+        <p className="mt-4 flex items-center justify-center gap-2 text-[11px] font-semibold text-slate-500">
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.9)]"
+            aria-hidden="true"
+          />
           OAuth 2.0 • Microsoft Identity Platform
         </p>
 
-        <div className="mt-8 border-t border-slate-800 pt-7">
-          <p className="text-[11px] font-semibold text-slate-600">Powered by Clearview Global.</p>
+        {import.meta.env.DEV && devOfflineAccount ? (
+          <>
+            <div className="my-5 flex items-center gap-3">
+              <div className="h-px flex-1 bg-amber-300/40" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-500">
+                Dev Only
+              </span>
+              <div className="h-px flex-1 bg-amber-300/40" />
+            </div>
+            <button
+              type="button"
+              onClick={handleDevOfflineLogin}
+              className="w-full rounded-md border border-amber-400/60 bg-amber-50/10 px-4 py-2 text-sm font-semibold text-amber-400 transition hover:bg-amber-400/10"
+            >
+              {devOfflineAccount.label ?? "Dev Offline Login"}
+            </button>
+            <p className="mt-2 text-center text-[11px] text-amber-600/70">
+              Offline — bypasses Microsoft SSO. Dev builds only.
+            </p>
+          </>
+        ) : null}
+
+        <div className="mt-5 border-t border-slate-800 pt-4">
+          <p className="text-center text-[11px] font-semibold text-slate-600">
+            Powered by Clearview Global.
+          </p>
         </div>
-      </section>
-    </main>
+      </div>
+    </LoginAuthLayout>
   );
 }
 

@@ -7,3 +7,5 @@ DerivedData/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+# Dev-only offline account — never commit
+src/dev/*.local.ts

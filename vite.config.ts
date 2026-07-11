@@ -3,9 +3,13 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import pkg from "./package.json";
 
 export default defineConfig({
   plugins: [react(), copyPdfJsAssets()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   resolve: {
     alias: {
       "@": resolve(__dirname, "src")

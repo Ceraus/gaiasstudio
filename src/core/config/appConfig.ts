@@ -1,5 +1,5 @@
 export const appConfig = {
-  appName: "ClearPlan",
+  appName: "Clearplan Command",
   appUrl: normalizeBaseUrl(import.meta.env.VITE_APP_URL),
   apiBaseUrl: normalizeBaseUrl(
     import.meta.env.VITE_API_URL ?? import.meta.env.VITE_LARAVEL_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? "" : "https://api.clearviewglobal.net")

@@ -180,7 +180,7 @@ export function AccountPage() {
           {["Company name", "Primary contact", "Billing email", "Default time zone", "Office address", "Storage policy"].map((item, index) => (
             <label key={item} className="text-sm font-semibold text-slate-500">
               {item}
-              <input defaultValue={["ClearPlan", "Jordan Lee", "ops@clearplan.example", "America/New_York", "418 Market St, Boston, MA", "Mock local uploads"][index]} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-ink outline-none focus:border-field" />
+              <input defaultValue={["Clearplan Command", "Jordan Lee", "ops@clearplan.example", "America/New_York", "418 Market St, Boston, MA", "Mock local uploads"][index]} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-ink outline-none focus:border-field" />
             </label>
           ))}
         </div>

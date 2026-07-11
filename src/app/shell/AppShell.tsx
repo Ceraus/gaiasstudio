@@ -1,7 +1,8 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useGlobalHotkeys } from "@/hooks/useGlobalHotkeys";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { navItems } from "./nav";
@@ -10,8 +11,19 @@ const sidebarStorageKey = "clearplan-app-sidebar-collapsed";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(sidebarStorageKey) === "true");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Mount the global hotkey listener — reads shortcut overrides live from the
+  // Redux preferences slice so user rebindings take effect without reloading.
+  const hotkeyHandlers = useMemo(() => ({
+    onOpenSettings: () => navigate("/profile"),
+    onToggleSidebar: () => setCollapsed((v) => !v),
+    onGlobalSearch: () => window.dispatchEvent(new CustomEvent("cvg:global-search")),
+    onCommandPalette: () => window.dispatchEvent(new CustomEvent("cvg:command-palette")),
+  }), [navigate]);
+  useGlobalHotkeys(hotkeyHandlers);
   const params = new URLSearchParams(location.search);
   const isProjectDetail = /^\/projects\/[^/]+/.test(location.pathname);
   const isPlansWorkspace = isProjectDetail && (params.get("section") === "plans" || location.pathname.includes("/plans/") || location.pathname.endsWith("/plans") || location.pathname.endsWith("/plan"));
@@ -88,5 +100,5 @@ function pageTitle(pathname: string) {
     .filter((item) => item.path !== "/")
     .sort((a, b) => b.path.length - a.path.length)
     .find((item) => pathname === item.path || pathname.startsWith(`${item.path}/`));
-  return match?.label ?? "Command";
+  return match?.label ?? "Clearplan Command";
 }

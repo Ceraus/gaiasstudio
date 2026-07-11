@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <defs>
+    <linearGradient id="cmdGrad" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <filter id="cmdGlow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- Dark rounded background -->
+  <rect width="24" height="24" rx="5" fill="#0a0f1c"/>
+  <!-- Soft glow underlay -->
+  <path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"
+        stroke="url(#cmdGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        fill="none" filter="url(#cmdGlow)" opacity="0.5"/>
+  <!-- Crisp main stroke -->
+  <path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"
+        stroke="url(#cmdGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+</svg>

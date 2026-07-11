@@ -75,7 +75,7 @@ export function PwaLifecycle() {
   if (installPrompt && !standalone) {
     return (
       <div className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[70] mx-auto flex max-w-md flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-2xl">
-        <span className="font-semibold text-slate-700">Install ClearPlan for offline access.</span>
+        <span className="font-semibold text-slate-700">Install Clearplan Command for offline access.</span>
         <button type="button" onClick={() => void install()} className="min-h-11 rounded-full bg-slate-950 px-4 font-bold text-white">
           Install
         </button>

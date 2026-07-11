@@ -1,11 +1,13 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { LoginFallback } from "@/modules/admin/LoginAuthLayout";
 
 const AdminPages = lazy(() => import("@/modules/admin/AdminPages"));
 const ClockPage = lazy(() => import("@/modules/clock/ClockPage").then((module) => ({ default: module.ClockPage })));
 const TimesheetsPage = lazy(() => import("@/modules/clock/TimesheetsPage").then((module) => ({ default: module.TimesheetsPage })));
 const EmployeesPage = lazy(() => import("@/modules/employees/EmployeesPage").then((module) => ({ default: module.EmployeesPage })));
 const HubPlaceholderPage = lazy(() => import("@/modules/hub/HubPlaceholderPage").then((module) => ({ default: module.HubPlaceholderPage })));
+const ContractsPage = lazy(() => import("@/modules/contracts/ContractsPage").then((module) => ({ default: module.ContractsPage })));
 const LoginPage = lazy(() => import("@/modules/admin/LoginPage").then((module) => ({ default: module.LoginPage })));
 const CustomerDetailPage = lazy(() => import("@/modules/customers/CustomerDetailPage").then((module) => ({ default: module.CustomerDetailPage })));
 const CustomersPage = lazy(() => import("@/modules/customers/CustomersPage").then((module) => ({ default: module.CustomersPage })));
@@ -23,13 +25,20 @@ export function AppRoutes() {
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/login"
+          element={
+            <Suspense fallback={<LoginFallback />}>
+              <LoginPage />
+            </Suspense>
+          }
+        />
         <Route path="/dashboard" element={<AdminPages page="dashboard" />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/clock/timesheets" element={<TimesheetsPage />} />
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/contracts" element={<HubPlaceholderPage title="Contracts" />} />
+        <Route path="/contracts" element={<ContractsPage />} />
         <Route path="/quotes" element={<HubPlaceholderPage title="Quotes" />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/clients" element={<Navigate to="/customers" replace />} />
@@ -76,7 +85,7 @@ function ProjectPlansRedirect() {
 function RouteFallback() {
   return (
     <div className="grid min-h-[50svh] place-items-center px-4 text-sm font-semibold text-slate-500" role="status" aria-live="polite">
-      Loading ClearPlan...
+      Loading Clearplan Command…
     </div>
   );
 }
