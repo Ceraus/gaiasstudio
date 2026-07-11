@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-07-11
+
+### Navigation Restructure, Microsoft 365 Integration & Settings Hub Consolidation
+
+#### Added
+- **Microsoft 365 nav item** — `M365NavItem` button grafted directly beneath Notifications in the
+  sidebar's `CORE_NAV` block. Renders a faithful 4-square grid SVG icon ported from Pre-Redux.
+  Collapsed mode shows icon-only; expanded mode shows label + emerald connected-indicator dot.
+- **`m365Slice` token state** — extended with `accessToken`, `tokenExpiry`, `userEmail` fields;
+  `setM365Token({ token, expiry, email })` and `clearM365Token()` reducers added. Token is stored
+  strictly in Redux — never written to `localStorage` directly. `isM365TokenValid()` selector
+  helper exported for use across the codebase.
+- **`M365HubPage`** — new hub at `/m365` and `/m365/:tab` with 5 app tabs: Overview, Outlook Mail,
+  Calendar, To Do / Tasks, and Teams. Connected state embeds the respective Microsoft web app in a
+  sandboxed iframe; disconnected state renders a sign-in CTA that brokers `brokerM365SsoStatus`
+  and follows `redirect_url` to the MSAL flow.
+- **`SettingsHubPage`** — tabbed settings gateway at `/settings` and `/settings/:section` with
+  four sections: General (system config + Mouse & Keyboard panel), Account (user profile, identity
+  stats, company profile), AI Hub (Ollama endpoint, model config, 5-tier taxonomy enforcement),
+  and Integrations (API keys for Meilisearch, Paperless-ngx, Global API; connected services list).
+- **`src/modules/settings/`** and **`src/modules/m365/`** module directories created.
+
+#### Changed
+- **`DOCK_NAV`** pruned from 5 items to 2 — `AI Hub`, `Integrations`, and `Account` removed from
+  the sidebar utility dock; only `Mobile` and `Settings` remain visible in the dock.
+- **Sidebar scroll** removed — inner `<nav>` no longer clips with `overflow-y-auto`; the outer
+  `<aside>` is now the single scroll container (`max-h-screen overflow-y-auto`), allowing all nav
+  items to render at full height with no internal scroll trap.
+- **Example Data toggle** slimmed — reduced padding (`py-2.5 → py-1.5`), icon size (`13 → 11`),
+  pill dimensions (`h-[18px] w-8 → h-[14px] w-6`), and corner radius (`rounded-2xl → rounded-xl`).
+- **Example Data gateway** fully gated on `DashboardPage` — `projects` and `tasks` from
+  `DemoDataProvider` are now set to `[]` when `useExampleData` is OFF; `EXAMPLE_PROJECTS` (33
+  entries: 3 task-anchor + 30 dashboard entries) injected when ON.
+- **`DemoDataProvider`** now also controls `projects` injection/flush in the toggle effect and
+  initial mount effect, aligning it with `tasks`, `floorPlans`, `timeEntries`, `galleryPhotos`.
+
+#### Fixed
+- **`mockGateway.ts`** — added missing `import type { InternalAxiosRequestConfig } from 'axios'`
+  resolving `TS2304: Cannot find name 'InternalAxiosRequestConfig'`.
+- **`contractFieldPalette.ts`** — added `scopeOfWork` to `ContractFieldTone` union and `TONES`
+  record (violet accent), resolving `TS2322` on the Legal Disclaimer textarea tone.
+- **`ContractCreation.tsx`** — added `as ContractTier` assertion at `SlaEditorContent` call site
+  where `activeContractType` was typed `ContractTier | ''`, resolving `TS2322`.
+- **`vite-env.d.ts`** — added ambient declarations for `'three'` and
+  `'three/addons/controls/OrbitControls.js'` to suppress `TS7016` implicit-any errors from
+  `EarthGlobeCanvas.tsx` and `solar.ts`.
+
+#### Routing
+- `/settings/:section` — new nested route structure; `SettingsHubPage` renders the correct tab
+  via `:section` param.
+- `/ai-hub` → redirect to `/settings/ai-hub`
+- `/integrations` → redirect to `/settings/integrations`
+- `/account` → redirect to `/settings/account`
+- `/m365` and `/m365/:tab` — new routes for the Microsoft 365 hub.
+
+---
+
 ## [1.1.0] — 2026-07-10
 
 ### Universal API Gateway — full-stack Redux ↔ Laravel wiring

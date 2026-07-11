@@ -3,10 +3,11 @@ import {
   Activity, ChevronDown, ChevronRight, ClipboardCheck, FileText,
   FlaskConical, FolderKanban, Image, LayoutDashboard, ListChecks, X,
 } from "lucide-react";
-import { NavLink, useLocation, useMatch } from "react-router-dom";
+import { NavLink, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { useDemoData } from "@/app/providers/DemoDataProvider";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { toggleMockData } from "@/store/preferencesSlice";
+import { toggleUseExampleData } from "@/store/accountSlice";
+import { brokerM365SsoStatus } from "@/store/m365Slice";
 import { AnimatedCommandLogo } from "@/shared/components/branding/AnimatedCommandLogo";
 import { PlexusOverlay } from "@/shared/components/effects/PlexusOverlay";
 import { CORE_NAV, DOCK_NAV, NAV_GROUPS } from "./nav";
@@ -47,7 +48,7 @@ export function Sidebar({
 }) {
   if (mode === "drawer") {
     return (
-      <aside className="flex h-full min-h-0 w-full flex-col bg-slate-950 text-slate-200">
+      <aside className="flex w-full flex-col overflow-y-auto bg-slate-950 text-slate-200 scrollbar-soft">
         {/* onNavigate doubles as onCollapse in drawer mode — closes the sheet */}
         <SidebarContent collapsed={false} onCollapse={onNavigate} onNavigate={onNavigate} />
       </aside>
@@ -58,9 +59,9 @@ export function Sidebar({
     <aside
       className={[
         collapsed ? "w-[86px]" : "w-72",
-        "hidden h-screen h-svh shrink-0 flex-col rounded-r-3xl border-r border-white/10",
+        "hidden shrink-0 flex-col rounded-r-3xl border-r border-white/10",
         "bg-slate-950 text-slate-200 shadow-2xl transition-[width] duration-200 ease-out",
-        "lg:sticky lg:top-0 lg:flex",
+        "lg:sticky lg:top-0 lg:flex lg:max-h-screen lg:overflow-y-auto",
       ].join(" ")}
     >
       <SidebarContent collapsed={collapsed} onCollapse={onCollapse} onNavigate={onNavigate} />
@@ -80,7 +81,7 @@ function SidebarContent({
 }) {
   const location = useLocation();
   const dispatch  = useAppDispatch();
-  const useMockData = useAppSelector((s) => s.preferences.useMockData);
+  const useExampleData = useAppSelector((s) => s.account.useExampleData);
   const nestedProjectMatch = useMatch("/projects/:projectId/*");
   const rootProjectMatch   = useMatch("/projects/:projectId");
   const projectMatch = nestedProjectMatch ?? rootProjectMatch;
@@ -134,8 +135,8 @@ function SidebarContent({
         )}
       </div>
 
-      {/* ── Scrollable nav body ── */}
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* ── Nav body — grows to fit all items; outer aside handles scroll ── */}
+      <div className="relative flex flex-1 flex-col">
         <PlexusOverlay
           opacity={0.65}
           nodeCount={collapsed ? 28 : 52}
@@ -143,7 +144,7 @@ function SidebarContent({
           scale={collapsed ? 1 : 1.25}
         />
 
-        <nav className="relative z-[1] app-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto p-3 scrollbar-soft">
+        <nav className="relative z-[1] space-y-0.5 p-3">
 
           {/* ── Core pinned items ── */}
           {CORE_NAV.map((item) => (
@@ -158,6 +159,9 @@ function SidebarContent({
               {!collapsed && <span className="sidebar-label">{item.label}</span>}
             </NavLink>
           ))}
+
+          {/* ── Microsoft 365 — positioned directly beneath Notifications ── */}
+          <M365NavItem collapsed={collapsed} onNavigate={onNavigate} />
 
           {/* ── Accordion groups ── */}
           {!collapsed && (
@@ -266,56 +270,56 @@ function SidebarContent({
             </NavLink>
           ))}
 
-          {/* ── Mock Data Gateway toggle ── */}
-          {collapsed ? (
-            <button
-              type="button"
-              title={useMockData ? "Seed Data Mode ON — click to disable" : "Seed Data Mode OFF — click to enable"}
-              onClick={() => dispatch(toggleMockData())}
-              className={[
-                "flex h-10 w-10 items-center justify-center rounded-2xl transition mx-auto",
-                useMockData
-                  ? "bg-amber-400/20 text-amber-400"
-                  : "text-slate-600 hover:bg-white/10 hover:text-slate-400",
-              ].join(" ")}
-            >
-              <FlaskConical size={17} aria-hidden />
-            </button>
-          ) : (
-            <div className={[
-              "mt-1 flex items-center justify-between rounded-2xl px-3 py-2 transition",
-              useMockData ? "bg-amber-400/15 ring-1 ring-amber-400/30" : "bg-white/5",
-            ].join(" ")}>
-              <div className="flex items-center gap-2">
-                <FlaskConical size={13} className={useMockData ? "text-amber-400" : "text-slate-600"} aria-hidden />
-                <span className={[
-                  "text-[10px] font-bold uppercase tracking-wider",
-                  useMockData ? "text-amber-400" : "text-slate-600",
-                ].join(" ")}>
-                  Seed Data
-                </span>
-              </div>
-              {/* Toggle pill */}
+          {/* ── Example Data toggle ── */}
+          <div className="mt-1 border-t border-white/[0.07] pt-1.5">
+            {collapsed ? (
+              <button
+                type="button"
+                title={useExampleData ? "Example Data ON — click to disable" : "Example Data OFF — click to enable"}
+                onClick={() => dispatch(toggleUseExampleData())}
+                className={[
+                  "mx-auto flex h-8 w-8 items-center justify-center rounded-xl transition",
+                  useExampleData
+                    ? "bg-amber-400/20 text-amber-400"
+                    : "text-slate-600 hover:bg-white/10 hover:text-slate-400",
+                ].join(" ")}
+              >
+                <FlaskConical size={14} aria-hidden />
+              </button>
+            ) : (
               <button
                 type="button"
                 role="switch"
-                aria-checked={useMockData}
-                onClick={() => dispatch(toggleMockData())}
+                aria-checked={useExampleData}
+                onClick={() => dispatch(toggleUseExampleData())}
                 className={[
-                  "relative inline-flex h-4 w-7 shrink-0 cursor-pointer items-center rounded-full",
-                  "border-2 border-transparent transition-colors duration-200 focus:outline-none",
-                  useMockData ? "bg-amber-400" : "bg-slate-700",
+                  "flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 transition",
+                  useExampleData ? "bg-amber-400/15 ring-1 ring-amber-400/30" : "bg-white/5 hover:bg-white/10",
                 ].join(" ")}
               >
+                <div className="flex items-center gap-1.5">
+                  <FlaskConical size={11} className={useExampleData ? "text-amber-400" : "text-slate-500"} aria-hidden />
+                  <span className={[
+                    "text-[9px] font-bold uppercase tracking-wider",
+                    useExampleData ? "text-amber-400" : "text-slate-500",
+                  ].join(" ")}>
+                    Example Data
+                  </span>
+                </div>
                 <span
                   className={[
-                    "inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow transition-transform duration-200",
-                    useMockData ? "translate-x-3" : "translate-x-0",
+                    "relative inline-flex h-[14px] w-6 shrink-0 items-center rounded-full border-2 border-transparent transition-colors duration-200",
+                    useExampleData ? "bg-amber-400" : "bg-slate-700",
                   ].join(" ")}
-                />
+                >
+                  <span className={[
+                    "inline-block h-2 w-2 transform rounded-full bg-white shadow transition-transform duration-200",
+                    useExampleData ? "translate-x-2.5" : "translate-x-0.5",
+                  ].join(" ")} />
+                </span>
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Version badge */}
           {!collapsed && (
@@ -331,6 +335,92 @@ function SidebarContent({
         </div>
       </div>
     </>
+  );
+}
+
+// ── Microsoft 365 — 4-square grid icon (ported from Pre-Redux AppSidebar) ─────
+function IconM365({ size = 19, className }: { size?: number; className?: string }) {
+  const s = Math.round(size * 0.38);   // square size — ~38 % of overall icon
+  const g = Math.round(size * 0.08);   // gap between squares
+  const o = Math.round((size - 2 * s - g) / 2); // offset to center the 2×2 grid
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      fill="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <rect x={o}         y={o}         width={s} height={s} rx="1.5" />
+      <rect x={o + s + g} y={o}         width={s} height={s} rx="1.5" />
+      <rect x={o}         y={o + s + g} width={s} height={s} rx="1.5" />
+      <rect x={o + s + g} y={o + s + g} width={s} height={s} rx="1.5" />
+    </svg>
+  );
+}
+
+// ── Microsoft 365 nav item — auth-gated, placed beneath Notifications ─────────
+function M365NavItem({
+  collapsed,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  const dispatch  = useAppDispatch();
+  const navigate  = useNavigate();
+  const location  = useLocation();
+  const isActive  = location.pathname.startsWith("/m365");
+
+  const accessToken = useAppSelector((s) => s.m365.accessToken);
+  const tokenExpiry = useAppSelector((s) => s.m365.tokenExpiry);
+  const ssoLoading  = useAppSelector((s) => s.m365.status === "loading");
+  const userEmail   = useAppSelector((s) => s.m365.userEmail);
+  const isConnected = !!accessToken && !!tokenExpiry && Date.now() < tokenExpiry;
+
+  async function handleClick() {
+    if (isConnected) {
+      navigate("/m365");
+      onNavigate?.();
+      return;
+    }
+    // Token absent or expired — broker SSO status from the API gateway.
+    const result = await dispatch(brokerM365SsoStatus());
+    if (brokerM365SsoStatus.fulfilled.match(result)) {
+      const { enabled, redirect_url } = result.payload;
+      if (enabled && redirect_url) {
+        window.location.href = redirect_url;
+        return;
+      }
+    }
+    // SSO not configured on the backend — open the hub anyway (shows connect UI).
+    navigate("/m365");
+    onNavigate?.();
+  }
+
+  return (
+    <button
+      type="button"
+      title={collapsed ? "Microsoft 365" : undefined}
+      onClick={handleClick}
+      disabled={ssoLoading}
+      className={linkClass(isActive, collapsed)}
+    >
+      <IconM365 size={19} className="shrink-0" />
+      {!collapsed && (
+        <>
+          <span className="sidebar-label flex-1">Microsoft 365</span>
+          {isConnected && (
+            <span
+              title={userEmail ?? "Connected"}
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
+              aria-label="Connected"
+            />
+          )}
+        </>
+      )}
+    </button>
   );
 }
 

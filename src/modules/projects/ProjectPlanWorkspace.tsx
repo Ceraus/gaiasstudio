@@ -570,7 +570,7 @@ export function ProjectPlanWorkspace({ project, projectPlans, projectTasks, init
     const comment: TaskComment = {
       id: `${selectedTask.id}-comment-${Date.now()}`,
       taskId: selectedTask.id,
-      author: "Jordan Lee",
+      author: "You",
       message: commentDraft.trim(),
       imageUrl: imageFile ? URL.createObjectURL(imageFile) : undefined,
       createdAt: "Just now"

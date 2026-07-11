@@ -1,8 +1,8 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit'
 
-const STORAGE_KEY = 'cvg.account.useMockData'
+const STORAGE_KEY = 'cvg.account.useExampleData'
 
-function loadUseMockData(): boolean {
+function loadUseExampleData(): boolean {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw === 'true') return true
@@ -10,34 +10,34 @@ function loadUseMockData(): boolean {
   } catch {
     // Storage unavailable — default to live API.
   }
-  return import.meta.env.VITE_USE_MOCKS === 'true'
+  return import.meta.env.VITE_USE_EXAMPLE_DATA === 'true'
 }
 
 export interface AccountState {
-  /** When true, the Axios gateway resolves taxonomy-compliant seed data locally. */
-  useMockData: boolean
+  /** When true, the API gateway resolves taxonomy-compliant example data locally. */
+  useExampleData: boolean
 }
 
 const initialState: AccountState = {
-  useMockData: loadUseMockData(),
+  useExampleData: loadUseExampleData(),
 }
 
 const accountSlice = createSlice({
   name: 'account',
   initialState,
   reducers: {
-    setUseMockData(state, action: PayloadAction<boolean>) {
-      state.useMockData = action.payload
+    setUseExampleData(state, action: PayloadAction<boolean>) {
+      state.useExampleData = action.payload
       try {
         localStorage.setItem(STORAGE_KEY, String(action.payload))
       } catch {
         // Best-effort persistence.
       }
     },
-    toggleUseMockData(state) {
-      state.useMockData = !state.useMockData
+    toggleUseExampleData(state) {
+      state.useExampleData = !state.useExampleData
       try {
-        localStorage.setItem(STORAGE_KEY, String(state.useMockData))
+        localStorage.setItem(STORAGE_KEY, String(state.useExampleData))
       } catch {
         // Best-effort persistence.
       }
@@ -45,5 +45,5 @@ const accountSlice = createSlice({
   },
 })
 
-export const { setUseMockData, toggleUseMockData } = accountSlice.actions
+export const { setUseExampleData, toggleUseExampleData } = accountSlice.actions
 export default accountSlice.reducer

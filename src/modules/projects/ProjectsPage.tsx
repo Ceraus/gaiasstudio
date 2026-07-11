@@ -19,6 +19,8 @@ import { useNavigate } from "react-router-dom";
 import { Modal } from "@/shared/components/Modal";
 import { clients, dashboardProjectId, employees } from "@/infrastructure/offline/mockData";
 import { useDemoData } from "@/app/providers/DemoDataProvider";
+import { useAppSelector } from "@/store/hooks";
+import { EXAMPLE_DASHBOARD_PROJECTS } from "@/core/example/exampleDataPayloads";
 import type { ProjectStatus } from "@/shared/types/domain";
 import { hapticImpact, hapticSelection, hapticSuccess, ImpactStyle } from "@/infrastructure/capacitor/haptics";
 import { phaseStatuses, statusByCode, statusByLegacy } from "./statusModel";
@@ -44,54 +46,37 @@ type DashboardOverlay =
 
 const phaseOptions = ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5", "Phase 6", "Phase 7"];
 
-const seededDashboardProjects: DashboardProject[] = [
-  ["dash-1", "HERE Arts Center", "145 6th Ave", "Phase 3", "Approved", 3, 8, false, "proj-1"],
-  ["dash-2", "Adaptive Build", "200 Park Ave S, Suite 1702", "Phase 2", "Quote Sent", 5, 12, false, "proj-2"],
-  ["dash-3", "AO Management", "287 Park Ave S", "Phase 1", "Site Visit", 3, 9, false, "proj-3"],
-  ["dash-4", "Atlas Wellness Clinic", "505 8th Ave, 12th Floor", "Phase 2", "Quote Sent", 3, 11, false, "proj-1"],
-  ["dash-5", "Bharati Center", "305 Schermerhorn St", "Phase 2", "Quote Sent", 3, 10, false, "proj-2"],
-  ["dash-6", "Dailymotion", "150 W 22nd St 12 Floor", "Phase 7", "Job Completed Pending Payment", 5, 18, false, "proj-3"],
-  ["dash-7", "Earned", "287 Park Ave S 7th Floor", "Phase 5", "Job Completed", 5, 16, false, "proj-1"],
-  ["dash-8", "Fever Up", "483-485 Broadway", "Phase 4", "Installation in Progress", 5, 14, false, "proj-2"],
-  ["dash-9", "Herald Center", "1239 Broadway", "Phase 3", "Approved", 3, 8, false, "proj-3"],
-  ["dash-10", "Herald Towers Elevator project", "HT Elevators 2026", "Phase 3", "Approved", 3, 7, false, "proj-1"],
-  ["dash-11", "Instant One", "53W 21th St", "Phase 2", "Quote Sent", 3, 9, false, "proj-2"],
-  ["dash-12", "Irving Realty", "33W 17th St", "Phase 1", "Site Visit", 3, 6, false, "proj-3"],
-  ["dash-13", "Jembrealty", "150 Broadway 4th Floor", "Phase 1", "Site Visit", 5, 13, false, "proj-1"],
-  ["dash-14", "Khaite", "65 Bleeker Street 9th floor", "Phase 3", "Approved", 5, 19, false, "proj-2"],
-  ["dash-15", "Le Parc", "287 Park Ave S", "Phase 4", "Installation in Progress", 4, 15, false, "proj-3"],
-  ["dash-16", "Metaforms AI", "30 East 23rd Street", "Phase 7", "Job Completed Pending Payment", 5, 20, false, "proj-1"],
-  ["dash-17", "Neighborhood Restore", "150 Broadway", "Phase 7", "Job Completed Pending Payment", 4, 17, false, "proj-2"],
-  ["dash-18", "Park Pictures", "184 5th Ave", "Phase 1", "Site Visit", 6, 14, false, "proj-3"],
-  ["dash-19", "Pharsalus", "200 Varick St, Floor 8", "Phase 2", "Quote Sent", 3, 8, false, "proj-1"],
-  ["dash-20", "Phaze App", "330 7th Ave 21th Floor", "Phase 5", "Job Completed", 5, 16, false, "proj-2"],
-  ["dash-21", "Probook AI", "130 Madison Avenue", "Phase 2", "Quote Sent", 3, 9, false, "proj-3"],
-  ["dash-22", "Runway", "18 West 18th Street, Floor 8", "Phase 7", "Job Completed Pending Payment", 3, 11, false, "proj-1"],
-  ["dash-23", "SFI Sunbeth", "375 9th Avenue", "Phase 1", "Site Visit", 3, 7, false, "proj-2"],
-  ["dash-24", "Skillz", "150 Broadway 15th Floor", "Phase 4", "Installation in Progress", 5, 13, false, "proj-3"],
-  ["dash-25", "Sola Salon", "50 W 17th Street", "Phase 4", "Installation in Progress", 5, 15, false, "proj-1"],
-  ["dash-26", "Sola Salon", "666 Broadway", "Phase 4", "Installation in Progress", 5, 12, false, "proj-2"],
-  ["dash-27", "Still Here", "905 Madison Ave", "Phase 2", "Quote Sent", 3, 10, false, "proj-3"],
-  ["dash-28", "Sutton Smyth", "155 E 55th St #6C", "Phase 7", "Job Completed Pending Payment", 5, 17, false, "proj-1"],
-  ["dash-29", "The Globe Show Room", "236W 38th St", "Phase 2", "Quote Sent", 3, 8, false, "proj-2"],
-  ["dash-30", "Too Lost", "915 Broadway 801", "Phase 5", "Job Completed", 5, 15, false, "proj-3"]
-].map(([id, name, address, phase, phaseDetail, people, tasks, favorite]) => ({
-  id: String(id),
-  name: String(name),
-  address: String(address),
-  phase: phase as DashboardPhase,
-  phaseDetail: String(phaseDetail),
-  statusCode: statusByLegacy(String(phase), String(phaseDetail)).code,
-  people: Number(people),
-  tasks: Number(tasks),
-  favorite: Boolean(favorite),
-  detailProjectId: dashboardProjectId(String(id))
-}));
 
 export function ProjectsPage() {
   const navigate = useNavigate();
   const { projects: cachedProjects, addProject, updateProject } = useDemoData();
-  const [projects, setProjects] = useState<DashboardProject[]>(seededDashboardProjects);
+  const useExampleData = useAppSelector((s) => s.account.useExampleData);
+
+  // Blank-slate default — projects only appear when the backend returns data
+  // or when Example Data mode is toggled on.
+  const [projects, setProjects] = useState<DashboardProject[]>([]);
+
+  // Inject or flush example data whenever the toggle changes.
+  useEffect(() => {
+    if (useExampleData) {
+      setProjects(
+        EXAMPLE_DASHBOARD_PROJECTS.map((p) => ({
+          id: p.id,
+          name: p.name,
+          address: p.address,
+          phase: p.phase as DashboardPhase,
+          phaseDetail: p.phaseDetail,
+          statusCode: statusByLegacy(p.phase, p.phaseDetail).code,
+          people: p.people,
+          tasks: p.tasks,
+          favorite: false,
+          detailProjectId: dashboardProjectId(p.id),
+        }))
+      );
+    } else {
+      setProjects([]);
+    }
+  }, [useExampleData]);
   const [search, setSearch] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState<DashboardPhase | "All">("All");
@@ -590,7 +575,7 @@ function phaseToProjectStatus(phase: DashboardPhase): ProjectStatus {
 function defaultPhaseDetail(phase: DashboardPhase) {
   const details: Record<DashboardPhase, string> = {
     "Phase 1": "Site Visit",
-    "Phase 2": "Quote Sent",
+    "Phase 2": "Proposal Sent",
     "Phase 3": "Approved",
     "Phase 4": "Installation in Progress",
     "Phase 5": "Job Completed",

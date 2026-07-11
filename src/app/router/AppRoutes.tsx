@@ -20,6 +20,8 @@ const ProjectsPage = lazy(() => import("@/modules/projects/ProjectsPage").then((
 const ProfilePage = lazy(() => import("@/modules/profile/ProfilePage").then((module) => ({ default: module.ProfilePage })));
 const TaskDetailPage = lazy(() => import("@/modules/projects/TaskDetailPage").then((module) => ({ default: module.TaskDetailPage })));
 const TimeMaterialPage = lazy(() => import("@/modules/time-material/TimeMaterialPage").then((module) => ({ default: module.TimeMaterialPage })));
+const M365HubPage = lazy(() => import("@/modules/m365/M365HubPage").then((module) => ({ default: module.M365HubPage })));
+const SettingsHubPage = lazy(() => import("@/modules/settings/SettingsHubPage").then((module) => ({ default: module.SettingsHubPage })));
 
 export function AppRoutes() {
   return (
@@ -48,9 +50,14 @@ export function AppRoutes() {
         <Route path="/documents" element={<HubPlaceholderPage title="Documents" />} />
         <Route path="/calendar" element={<HubPlaceholderPage title="Calendar" />} />
         <Route path="/notifications" element={<HubPlaceholderPage title="Notifications" />} />
-        <Route path="/ai-hub" element={<HubPlaceholderPage title="AI Hub" />} />
-        <Route path="/integrations" element={<HubPlaceholderPage title="Integrations" />} />
-        <Route path="/settings" element={<HubPlaceholderPage title="Settings" />} />
+        <Route path="/m365" element={<M365HubPage />} />
+        <Route path="/m365/:tab" element={<M365HubPage />} />
+        {/* Settings hub — tabbed shell at /settings/:section */}
+        <Route path="/settings"           element={<SettingsHubPage />} />
+        <Route path="/settings/:section"  element={<SettingsHubPage />} />
+        {/* Redirect shims — old flat paths point into the Settings hub */}
+        <Route path="/ai-hub"       element={<Navigate to="/settings/ai-hub"       replace />} />
+        <Route path="/integrations" element={<Navigate to="/settings/integrations" replace />} />
         <Route path="/time-material" element={<TimeMaterialPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         {/* /map → Blueprint Hub (Dexie offline-first plan workspace selector) */}
@@ -75,7 +82,7 @@ export function AppRoutes() {
         <Route path="/checklists" element={<AdminPages page="checklists" />} />
         <Route path="/categories" element={<AdminPages page="categories" />} />
         <Route path="/users" element={<AdminPages page="users" />} />
-        <Route path="/account" element={<AdminPages page="account" />} />
+        <Route path="/account" element={<Navigate to="/settings/account" replace />} />
         <Route path="/mobile" element={<MobileHomePage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

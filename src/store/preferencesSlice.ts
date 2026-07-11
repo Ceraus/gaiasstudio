@@ -34,21 +34,39 @@ export interface PreferencesState {
    */
   shortcutOverrides: ShortcutOverrides
 
+  /**
+   * Master gate for all rebindable global hotkeys. When false, the global
+   * `keydown` listener returns early and no app shortcuts fire.
+   * F11 fullscreen and Ctrl+, settings are always active regardless.
+   */
+  globalShortcutsEnabled: boolean
+
   /** Enables the right-click radial context menu. */
   radialMenuEnabled: boolean
+
+  /**
+   * Radial ring action slot IDs, in clockwise order from 12 o'clock.
+   * Empty array means "use role defaults" (resolved at render time).
+   */
+  radialActions: string[]
+
+  /** User-configured slot count for the radial ring (0 = use role default). */
+  radialCount: number
+
+  /** Inverts the scroll wheel direction across the entire app. */
+  invertScroll: boolean
+
+  /**
+   * Scroll velocity multiplier applied on top of the native delta.
+   * Range: 0.5 (slow) → 3.0 (fast). Default 1.0 = native speed.
+   */
+  scrollSensitivity: number
 
   /** Reduces CSS animations app-wide. */
   reducedMotion: boolean
 
   /** Compact content density. */
   compactDensity: boolean
-
-  /**
-   * Mock Data Gateway flag.
-   * When true, all async thunks return local seed data instead of hitting the
-   * Laravel backend. Defaults strictly to false — live data on first boot.
-   */
-  useMockData: boolean
 
   saveStatus: 'idle' | 'saving' | 'saved' | 'failed'
   saveError: string | null
@@ -57,11 +75,15 @@ export interface PreferencesState {
 function buildInitialState(): PreferencesState {
   const stored = loadStoredPreferences()
   return {
-    shortcutOverrides: stored.shortcutOverrides ?? {},
-    radialMenuEnabled: stored.radialMenuEnabled ?? false,
-    reducedMotion: stored.reducedMotion ?? false,
-    compactDensity: stored.compactDensity ?? false,
-    useMockData: stored.useMockData ?? false,
+    shortcutOverrides:     stored.shortcutOverrides     ?? {},
+    globalShortcutsEnabled: stored.globalShortcutsEnabled ?? true,
+    radialMenuEnabled:     stored.radialMenuEnabled     ?? false,
+    radialActions:         stored.radialActions         ?? [],
+    radialCount:           stored.radialCount           ?? 0,
+    invertScroll:          stored.invertScroll          ?? false,
+    scrollSensitivity:     stored.scrollSensitivity     ?? 1.0,
+    reducedMotion:         stored.reducedMotion         ?? false,
+    compactDensity:        stored.compactDensity        ?? false,
     saveStatus: 'idle',
     saveError: null,
   }
@@ -94,14 +116,6 @@ const preferencesSlice = createSlice({
       const { saveStatus, saveError, ...fields } = action.payload
       Object.assign(state, fields)
     },
-    /**
-     * Flips the Mock Data Gateway flag and immediately writes the new value to
-     * localStorage so that async thunks can read it via `isMockMode()`.
-     */
-    toggleMockData(state) {
-      state.useMockData = !state.useMockData
-      persistPreferences({ useMockData: state.useMockData })
-    },
     resetSaveStatus(state) {
       state.saveStatus = 'idle'
       state.saveError = null
@@ -126,5 +140,5 @@ const preferencesSlice = createSlice({
   },
 })
 
-export const { patchPreferences, toggleMockData, resetSaveStatus } = preferencesSlice.actions
+export const { patchPreferences, resetSaveStatus } = preferencesSlice.actions
 export default preferencesSlice.reducer

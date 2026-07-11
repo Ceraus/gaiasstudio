@@ -9,7 +9,7 @@ export interface PhaseStatus {
 
 export const phaseStatuses: PhaseStatus[] = [
   { code: "phase-1", label: "Phase 1 - Site Visit", projectStatus: "Planning", classes: "border-blue-200/70 bg-blue-50/70 text-blue-700" },
-  { code: "phase-2", label: "Phase 2 - Quote Sent", projectStatus: "Planning", classes: "border-orange-200/70 bg-orange-50/70 text-orange-700" },
+  { code: "phase-2", label: "Phase 2 - Proposal Sent", projectStatus: "Planning", classes: "border-orange-200/70 bg-orange-50/70 text-orange-700" },
   { code: "phase-2-1", label: "Phase 2.1 - Pending", projectStatus: "Planning", classes: "border-orange-200/70 bg-orange-50/70 text-orange-700" },
   { code: "phase-2-2", label: "Phase 2.2 - Cancelled", projectStatus: "Review", classes: "border-red-200/70 bg-red-50/70 text-red-700" },
   { code: "phase-3", label: "Phase 3 - Approved", projectStatus: "Active", classes: "border-fuchsia-200/70 bg-fuchsia-50/70 text-fuchsia-700" },

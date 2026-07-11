@@ -9,8 +9,6 @@ import type {
   LocalDraft,
 } from '@/shared/types/contract'
 import { emptyFormDraft } from '@/shared/types/contract'
-import { isMockMode } from '@/core/mock/isMockMode'
-import { MOCK_CONTRACTS } from '@/core/mock/seedData'
 
 interface ContractsState {
   records: Contract[]
@@ -58,12 +56,11 @@ const initialState: ContractsState = {
 export const loadContracts = createAsyncThunk<Contract[], void, { rejectValue: string }>(
   'contracts/load',
   async (_, { rejectWithValue }) => {
-    if (isMockMode()) return MOCK_CONTRACTS
     try {
       return await fetchContracts()
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load contracts.'
-      // 404 / "Not Found" means the endpoint is not wired yet — return empty list.
+      // 404 / "Not Found" means the endpoint is not yet wired — return empty list.
       if (/not.?found|404/i.test(msg)) return []
       return rejectWithValue(msg)
     }
@@ -73,35 +70,6 @@ export const loadContracts = createAsyncThunk<Contract[], void, { rejectValue: s
 export const submitContract = createAsyncThunk<Contract, ContractDraft, { rejectValue: string }>(
   'contracts/submit',
   async (draft, { rejectWithValue }) => {
-    if (isMockMode()) {
-      // Return a plausible mock response so the Live Studio state-flow completes.
-      const mock: Contract = {
-        id:               `mock-submitted-${Date.now()}`,
-        client_id:        null,
-        client_name:      draft.client_name,
-        client_email:     draft.client_email,
-        client_address:   draft.client_address,
-        billing_address:  draft.billing_address,
-        contract_type:    draft.contract_type as Contract['contract_type'],
-        contract_title:   draft.contract_title,
-        issue_date:       draft.issue_date,
-        expires_at:       draft.expires_at || null,
-        scope_of_work:    draft.scope_of_work,
-        line_items:       draft.line_items.map((li, i) => ({
-          id:         `mock-li-${i}`,
-          description: li.description,
-          quantity:    li.quantity,
-          unit_price:  li.unit_price,
-          line_total:  li.quantity * li.unit_price,
-          sort_order:  i,
-        })),
-        total_investment: draft.line_items.reduce((s, li) => s + li.quantity * li.unit_price, 0),
-        status:           'pending_approval',
-        created_at:       new Date().toISOString(),
-        updated_at:       new Date().toISOString(),
-      }
-      return mock
-    }
     try {
       return await createContract(draft)
     } catch (err) {
@@ -127,13 +95,6 @@ export const brokerMeilisearchQuery = createAsyncThunk<
   async (query, { rejectWithValue }) => {
     const trimmed = query.trim()
     if (trimmed.length < 2) return []
-    if (isMockMode()) {
-      return MOCK_CONTRACTS.filter(
-        (c) =>
-          c.client_name.toLowerCase().includes(trimmed.toLowerCase()) ||
-          c.contract_type.toLowerCase().includes(trimmed.toLowerCase()),
-      )
-    }
     try {
       return await searchContractsApi({ q: trimmed, per_page: 25 })
     } catch (err) {
@@ -295,6 +256,23 @@ const contractsSlice = createSlice({
       state.searchStatus = 'idle'
       state.searchError = null
     },
+
+    /**
+     * Flush all contract data arrays back to empty and reset status to 'idle'.
+     * Called when the Example Data toggle is switched off so the dashboard
+     * instantly reverts to a blank slate and re-triggers a live API fetch.
+     */
+    flushExampleData(state) {
+      state.records = []
+      state.localDrafts = []
+      state.activeDraftId = null
+      state.status = 'idle'
+      state.error = null
+      state.searchQuery = ''
+      state.searchResults = []
+      state.searchStatus = 'idle'
+      state.searchError = null
+    },
   },
 
   extraReducers: (builder) => {
@@ -354,6 +332,7 @@ export const {
   removeDraftLineItem,
   resetDraft,
   clearSearch,
+  flushExampleData,
 } = contractsSlice.actions
 
 export default contractsSlice.reducer

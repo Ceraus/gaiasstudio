@@ -40,7 +40,7 @@ export function useGlobalHotkeys(handlers: {
         tag === 'SELECT' ||
         target?.isContentEditable
 
-      // F11 fullscreen — always active.
+      // F11 fullscreen — always active regardless of globalShortcutsEnabled.
       if (e.key === 'F11') {
         e.preventDefault()
         try {
@@ -52,12 +52,16 @@ export function useGlobalHotkeys(handlers: {
         return
       }
 
-      // Ctrl+, → open settings.
+      // Ctrl+, → open settings — always active.
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault()
         handlers.onOpenSettings?.()
         return
       }
+
+      // All remaining shortcuts respect the globalShortcutsEnabled gate.
+      // Flipping it off in Mouse & Keyboard settings causes instant suspension.
+      if (!store.getState().preferences.globalShortcutsEnabled) return
 
       // Global Search
       if (shortcutMatches(e, 'globalSearch')) {

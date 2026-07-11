@@ -1,11 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  floorPlans as initialFloorPlans,
-  galleryPhotos as initialGalleryPhotos,
   projects as initialProjects,
-  tasks as initialTasks,
-  timeEntries as initialTimeEntries
 } from "@/infrastructure/offline/mockData";
+import {
+  EXAMPLE_FLOOR_PLANS,
+  EXAMPLE_GALLERY_PHOTOS,
+  EXAMPLE_PROJECTS,
+  EXAMPLE_TASKS,
+  EXAMPLE_TIME_ENTRIES,
+} from "@/core/example/exampleDataPayloads";
+import { useAppSelector } from "@/store/hooks";
 import type { FloorPlan, GalleryPhoto, Project, ProjectStatus, Task, TaskStatus, TimeEntry } from "@/shared/types/domain";
 import { deletePersistedPlan, duplicatePersistedPlan, loadOfflineState, persistPhoto, persistPlan, persistPlanPatch, persistProject, persistProjectPatch, persistTask, updatePlanPreview } from "@/core/storage/repositories/offlineRepository";
 import { PDF_COMPRESSION_ERROR, PDF_PREVIEW_VERSION, renderPdfFirstPage } from "@/shared/utils/renderPdfPreview";
@@ -53,13 +57,17 @@ interface DemoDataContextValue {
 const DemoDataContext = createContext<DemoDataContextValue | null>(null);
 
 export function DemoDataProvider({ children }: { children: ReactNode }) {
-  const [projects, setProjects] = useState<Project[]>(initialProjects);
-  const [floorPlans, setFloorPlans] = useState<FloorPlan[]>(initialFloorPlans);
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
-  const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>(initialGalleryPhotos);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>(initialTimeEntries);
+  const useExampleData = useAppSelector((s) => s.account.useExampleData);
+
+  // All arrays start empty — Example Data gateway or the backend populates them.
+  const [projects, setProjects]         = useState<Project[]>(initialProjects);
+  const [floorPlans, setFloorPlans]     = useState<FloorPlan[]>([]);
+  const [tasks, setTasks]               = useState<Task[]>([]);
+  const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([]);
+  const [timeEntries, setTimeEntries]   = useState<TimeEntry[]>([]);
   const objectUrlsRef = useRef(new Set<string>());
-  const latestFloorPlansRef = useRef<FloorPlan[]>(initialFloorPlans);
+  const latestFloorPlansRef = useRef<FloorPlan[]>([]);
+  const prevExampleRef = useRef(useExampleData);
 
   function registerObjectUrl(url?: string) {
     if (url?.startsWith("blob:")) objectUrlsRef.current.add(url);
@@ -78,6 +86,36 @@ export function DemoDataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     latestFloorPlansRef.current = floorPlans;
   }, [floorPlans]);
+
+  // Inject or flush example data when the toggle changes.
+  // On initial mount the ref matches the current value, so only real changes fire.
+  useEffect(() => {
+    if (prevExampleRef.current === useExampleData) return;
+    prevExampleRef.current = useExampleData;
+
+    if (useExampleData) {
+      setProjects(EXAMPLE_PROJECTS as Project[]);
+      setTasks(EXAMPLE_TASKS as Task[]);
+      setFloorPlans(EXAMPLE_FLOOR_PLANS as FloorPlan[]);
+      setTimeEntries(EXAMPLE_TIME_ENTRIES as TimeEntry[]);
+      setGalleryPhotos(EXAMPLE_GALLERY_PHOTOS as GalleryPhoto[]);
+    } else {
+      // Flush all example arrays to empty, then reload any real user data.
+      setProjects([]);
+      setTasks([]);
+      setFloorPlans([]);
+      setTimeEntries([]);
+      setGalleryPhotos([]);
+      loadOfflineState().then((state) => {
+        if (prevExampleRef.current) return; // toggled back on before load completed
+        setProjects(state.projects);
+        setTasks(state.tasks);
+        setFloorPlans(state.floorPlans);
+        setGalleryPhotos(state.galleryPhotos);
+        setTimeEntries(state.timeEntries);
+      }).catch(() => undefined);
+    }
+  }, [useExampleData]);
 
   const value = useMemo<DemoDataContextValue>(() => ({
     projects,
@@ -260,15 +298,26 @@ export function DemoDataProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     loadOfflineState().then((state) => {
       if (cancelled) return;
-      setProjects(state.projects);
       state.floorPlans.forEach((plan) => {
         registerObjectUrl(plan.previewUrl);
         registerObjectUrl(plan.sourceUrl);
       });
-      setFloorPlans(state.floorPlans);
-      setTasks(state.tasks);
-      setGalleryPhotos(state.galleryPhotos);
-      setTimeEntries(state.timeEntries);
+
+      if (prevExampleRef.current) {
+        // Example Data is active on mount — inject example payloads; discard offline state.
+        setProjects(EXAMPLE_PROJECTS as Project[]);
+        setFloorPlans(EXAMPLE_FLOOR_PLANS as FloorPlan[]);
+        setTasks(EXAMPLE_TASKS as Task[]);
+        setGalleryPhotos(EXAMPLE_GALLERY_PHOTOS as GalleryPhoto[]);
+        setTimeEntries(EXAMPLE_TIME_ENTRIES as TimeEntry[]);
+      } else {
+        // Live mode — use only real user data from the local store.
+        setProjects(state.projects);
+        setFloorPlans(state.floorPlans);
+        setTasks(state.tasks);
+        setGalleryPhotos(state.galleryPhotos);
+        setTimeEntries(state.timeEntries);
+      }
     }).catch(() => undefined);
     return () => {
       cancelled = true;

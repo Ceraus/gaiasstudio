@@ -1502,7 +1502,7 @@ export function ContractCreation({
                 />
               ) : (
                 <SlaEditorContent
-                  type={activeContractType}
+                  type={activeContractType as ContractTier}
                   draft={draft}
                   dispatch={dispatch}
                   disabled={disabled}

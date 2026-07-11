@@ -17,6 +17,7 @@ export type ContractFieldTone =
   | 'companyEmail'
   | 'companyPhone'
   | 'intro'
+  | 'scopeOfWork'
 
 type ToneSpec = {
   border: string
@@ -44,6 +45,7 @@ const TONES: Record<ContractFieldTone, ToneSpec> = {
   companyEmail:     { border: 'border-[#8fbf62]/60', bg: 'bg-[#8fbf62]/18', label: 'text-[#6c9f42]', inputBorder: 'border-[#8fbf62]/50', focusRing: 'focus:border-[#8fbf62] focus:ring-[#8fbf62]' },
   companyPhone:     { border: 'border-[#9acb6e]/60', bg: 'bg-[#9acb6e]/18', label: 'text-[#6a9438]', inputBorder: 'border-[#9acb6e]/50', focusRing: 'focus:border-[#9acb6e] focus:ring-[#9acb6e]' },
   intro:            { border: 'border-[#c48a2f]/65', bg: 'bg-[#c48a2f]/18', label: 'text-[#a67324]', inputBorder: 'border-[#c48a2f]/55', focusRing: 'focus:border-[#c48a2f] focus:ring-[#c48a2f]' },
+  scopeOfWork:      { border: 'border-[#7c3aed]/55', bg: 'bg-[#7c3aed]/12', label: 'text-[#6d28d9]', inputBorder: 'border-[#7c3aed]/45', focusRing: 'focus:border-[#7c3aed] focus:ring-[#7c3aed]' },
 }
 
 export function fieldBlockClasses(tone: ContractFieldTone): string {

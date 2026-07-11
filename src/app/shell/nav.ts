@@ -1,11 +1,9 @@
 import {
   BarChart3,
   Bell,
-  Bot,
   CalendarDays,
   CalendarCheck,
   CheckSquare,
-  CircleUser,
   ContactRound,
   FileSignature,
   Files,
@@ -14,7 +12,6 @@ import {
   Layers,
   Map,
   Network,
-  Plug,
   Settings,
   Smartphone,
   Tags,
@@ -38,7 +35,6 @@ export interface NavGroup {
 export const CORE_NAV: NavItem[] = [
   { label: "Dashboard",     path: "/dashboard",     icon: BarChart3 },
   { label: "Notifications", path: "/notifications", icon: Bell      },
-  { label: "AI Hub",        path: "/ai-hub",        icon: Bot       },
 ];
 
 // ── Accordion groups ──────────────────────────────────────────────────────────
@@ -77,9 +73,8 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 // ── Bottom utility dock — pinned, no accordion ────────────────────────────────
+// AI Hub, Integrations, and Account are now Settings sub-tabs (/settings/:section).
 export const DOCK_NAV: NavItem[] = [
-  { label: "Integrations", path: "/integrations", icon: Plug       },
-  { label: "Mobile",       path: "/mobile",       icon: Smartphone },
-  { label: "Settings",     path: "/settings",     icon: Settings   },
-  { label: "Account",      path: "/account",      icon: CircleUser },
+  { label: "Mobile",   path: "/mobile",   icon: Smartphone },
+  { label: "Settings", path: "/settings", icon: Settings   },
 ];

@@ -18,11 +18,12 @@
  *   └──────────┴──────────────────────────────────┴───────────────┘
  */
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import {
-  DollarSign, GripVertical, Map, MousePointer, Pencil,
-  Ruler, Shapes, Square, Trash2, Upload, WifiOff, X,
+  CheckCircle2, CloudUpload, DollarSign, GripVertical,
+  Loader2, Map, MousePointer, Pencil,
+  Ruler, Save, Shapes, Square, Trash2, Upload, WifiOff, X,
 } from 'lucide-react'
 import {
   useBlueprintStore,
@@ -513,10 +514,36 @@ function CanvasDropZone({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+/** Default plan identifier — unique per user once a user-context API is wired. */
+const DEFAULT_PLAN_ID = 'default'
+
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 export function BlueprintHubPage() {
-  const { pins, zones, clearAll, planImageUrl, stagePin } = useBlueprintStore()
+  const { pins, zones, clearAll, planImageUrl, stagePin, brokerBlueprintSave, brokerBlueprintLoad } = useBlueprintStore()
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const isOnline = typeof navigator !== 'undefined' && navigator.onLine
+  const isOnline     = typeof navigator !== 'undefined' && navigator.onLine
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
+
+  // Auto-load persisted state on mount.
+  useEffect(() => {
+    brokerBlueprintLoad(DEFAULT_PLAN_ID).catch(() => {
+      // 404 on first load is expected — blueprint starts empty.
+    })
+  }, [brokerBlueprintLoad])
+
+  const handleSave = useCallback(async () => {
+    if (saveStatus === 'saving') return
+    setSaveStatus('saving')
+    try {
+      await brokerBlueprintSave(DEFAULT_PLAN_ID)
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2500)
+    } catch {
+      setSaveStatus('error')
+      setTimeout(() => setSaveStatus('idle'), 3000)
+    }
+  }, [brokerBlueprintSave, saveStatus])
 
   function handleAddToQueue(tier: BlueprintTier) {
     stagePin({ tier, label: BLUEPRINT_TIER_LABELS[tier] })
@@ -544,6 +571,33 @@ export function BlueprintHubPage() {
             </span>
           )}
           <PlanUploader />
+
+          {/* Save button — brokers spatial state to Global-API */}
+          {(pins.length > 0 || zones.length > 0) && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saveStatus === 'saving'}
+              className={[
+                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all',
+                saveStatus === 'saved'
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                  : saveStatus === 'error'
+                  ? 'border-red-200/60 bg-red-50 text-red-600'
+                  : 'border-[#166eb4]/30 bg-white text-[#166eb4] hover:bg-[#166eb4]/5',
+              ].join(' ')}
+            >
+              {saveStatus === 'saving' && <Loader2 size={12} className="animate-spin" aria-hidden />}
+              {saveStatus === 'saved'  && <CheckCircle2 size={12} aria-hidden />}
+              {saveStatus === 'error'  && <CloudUpload  size={12} aria-hidden />}
+              {saveStatus === 'idle'   && <Save         size={12} aria-hidden />}
+              {saveStatus === 'saving' ? 'Saving…'  :
+               saveStatus === 'saved'  ? 'Saved'     :
+               saveStatus === 'error'  ? 'Retry Save' :
+               'Save Plan'}
+            </button>
+          )}
+
           {(pins.length > 0 || zones.length > 0) && (
             <button
               type="button"

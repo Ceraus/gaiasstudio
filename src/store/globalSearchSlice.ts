@@ -6,12 +6,6 @@ import {
   searchProjectsGlobal,
   searchVaultGlobal,
 } from '@/core/api/globalSearchApi'
-import { isMockMode } from '@/core/mock/isMockMode'
-import {
-  MOCK_SEARCH_CONTRACTS,
-  MOCK_SEARCH_PROJECTS,
-  MOCK_SEARCH_VAULT,
-} from '@/core/mock/seedData'
 
 export type { ProjectHit, VaultHit }
 
@@ -60,21 +54,6 @@ export const brokerGlobalSearch = createAsyncThunk<
   async (query, { rejectWithValue }) => {
     const q = query.trim()
     if (q.length < 2) return EMPTY_RESULTS
-
-    if (isMockMode()) {
-      const lc = q.toLowerCase()
-      return {
-        contracts: MOCK_SEARCH_CONTRACTS.filter(
-          (c) => c.client_name.toLowerCase().includes(lc) || c.contract_type.toLowerCase().includes(lc),
-        ),
-        projects: MOCK_SEARCH_PROJECTS.filter(
-          (p) => p.name.toLowerCase().includes(lc) || p.company.toLowerCase().includes(lc),
-        ),
-        vault: MOCK_SEARCH_VAULT.filter(
-          (v) => v.document_title.toLowerCase().includes(lc) || (v.tier ?? '').toLowerCase().includes(lc),
-        ),
-      }
-    }
 
     try {
       const [contractsResult, projectsResult, vaultResult] = await Promise.allSettled([
