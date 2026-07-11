@@ -13,7 +13,7 @@ import {
   Trash2,
   Users
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ComponentType, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Modal } from "@/shared/components/Modal";
@@ -52,31 +52,67 @@ export function ProjectsPage() {
   const { projects: cachedProjects, addProject, updateProject } = useDemoData();
   const useExampleData = useAppSelector((s) => s.account.useExampleData);
 
-  // Blank-slate default — projects only appear when the backend returns data
-  // or when Example Data mode is toggled on.
-  const [projects, setProjects] = useState<DashboardProject[]>([]);
-
-  // Inject or flush example data whenever the toggle changes.
-  useEffect(() => {
+  // ── Base list — derived synchronously from Redux toggle. ──────────────────
+  // Using useMemo instead of useState+useEffect means the list is ALWAYS in sync
+  // with useExampleData. No stale state, no HMR preservation issues.
+  const baseProjects = useMemo<DashboardProject[]>(() => {
     if (useExampleData) {
-      setProjects(
-        EXAMPLE_DASHBOARD_PROJECTS.map((p) => ({
-          id: p.id,
-          name: p.name,
-          address: p.address,
-          phase: p.phase as DashboardPhase,
-          phaseDetail: p.phaseDetail,
-          statusCode: statusByLegacy(p.phase, p.phaseDetail).code,
-          people: p.people,
-          tasks: p.tasks,
-          favorite: false,
-          detailProjectId: dashboardProjectId(p.id),
-        }))
-      );
-    } else {
-      setProjects([]);
+      return EXAMPLE_DASHBOARD_PROJECTS.map((p) => ({
+        id: p.id,
+        name: p.name,
+        address: p.address,
+        phase: p.phase as DashboardPhase,
+        phaseDetail: p.phaseDetail,
+        statusCode: statusByLegacy(p.phase, p.phaseDetail).code,
+        people: p.people,
+        tasks: p.tasks,
+        favorite: false,
+        detailProjectId: dashboardProjectId(p.id),
+      }));
     }
+    // Live mode: only show user-created projects from DemoDataProvider ([] until backend connects).
+    return cachedProjects.map((p) => {
+      const status = statusByCode(p.phaseCode ?? "phase-2");
+      return {
+        id: `dash-${p.id}`,
+        name: p.name,
+        address: p.address,
+        phase: status.label.split(" - ")[0] as DashboardPhase,
+        phaseDetail: status.label.split(" - ").slice(1).join(" - "),
+        statusCode: status.code,
+        people: p.assignedUserIds.length,
+        tasks: 0,
+        favorite: false,
+        detailProjectId: p.id,
+      };
+    });
+  }, [useExampleData, cachedProjects]);
+
+  // ── Session-local overlay — tracks mutations on top of the base list. ──────
+  // Cleared automatically whenever the toggle flips (base list is entirely new).
+  const [localPatches,    setLocalPatches]    = useState<Map<string, Partial<DashboardProject>>>(new Map());
+  const [localAdditions,  setLocalAdditions]  = useState<DashboardProject[]>([]);
+  const [deletedIds,      setDeletedIds]      = useState<Set<string>>(new Set());
+
+  const prevToggleRef = useRef(useExampleData);
+  useEffect(() => {
+    if (prevToggleRef.current === useExampleData) return;
+    prevToggleRef.current = useExampleData;
+    setLocalPatches(new Map());
+    setLocalAdditions([]);
+    setDeletedIds(new Set());
   }, [useExampleData]);
+
+  // Merged view: additions first, then base, filtered by deletions, patched inline.
+  const projects = useMemo(() => {
+    return [...localAdditions, ...baseProjects]
+      .filter((p) => !deletedIds.has(p.id))
+      .map((p) => {
+        const patch = localPatches.get(p.id);
+        return patch ? { ...p, ...patch } : p;
+      });
+  }, [baseProjects, localAdditions, localPatches, deletedIds]);
+
   const [search, setSearch] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState<DashboardPhase | "All">("All");
@@ -86,30 +122,6 @@ export function ProjectsPage() {
   const [overlay, setOverlay] = useState<DashboardOverlay | null>(null);
   const [deleteProject, setDeleteProject] = useState<DashboardProject | null>(null);
   const [draft, setDraft] = useState({ name: "", address: "", phase: "Phase 2" as DashboardPhase });
-
-  useEffect(() => {
-    setProjects((current) => {
-      const knownDetailIds = new Set(current.map((project) => project.detailProjectId));
-      const additions = cachedProjects
-        .filter((project) => !knownDetailIds.has(project.id))
-        .map((project) => {
-          const status = statusByCode(project.phaseCode ?? "phase-2");
-          return {
-            id: `dash-${project.id}`,
-            name: project.name,
-            address: project.address,
-            phase: status.label.split(" - ")[0] as DashboardPhase,
-            phaseDetail: status.label.split(" - ").slice(1).join(" - "),
-            statusCode: status.code,
-            people: project.assignedUserIds.length,
-            tasks: 0,
-            favorite: false,
-            detailProjectId: project.id
-          };
-        });
-      return additions.length ? [...additions, ...current] : current;
-    });
-  }, [cachedProjects]);
 
   const visibleProjects = useMemo(() => {
     return projects
@@ -142,14 +154,15 @@ export function ProjectsPage() {
       favorite: false,
       detailProjectId: created.id
     };
-    setProjects((current) => [dashboardProject, ...current]);
+    setLocalAdditions((a) => [dashboardProject, ...a]);
     setDraft({ name: "", address: "", phase: "Phase 2" });
     setModalOpen(false);
     hapticSuccess();
   }
 
   function toggleFavorite(projectId: string) {
-    setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, favorite: !project.favorite } : project)));
+    const current = projects.find((p) => p.id === projectId);
+    setLocalPatches((m) => new Map(m).set(projectId, { ...m.get(projectId), favorite: !current?.favorite }));
   }
 
   function showToast(message: string) {
@@ -161,7 +174,7 @@ export function ProjectsPage() {
     const status = statusByCode(statusCode);
     const phase = status.label.split(" - ")[0] as DashboardPhase;
     const phaseDetail = status.label.split(" - ").slice(1).join(" - ");
-    setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, phase, phaseDetail, statusCode } : project)));
+    setLocalPatches((m) => new Map(m).set(projectId, { ...m.get(projectId), phase, phaseDetail, statusCode }));
     const project = projects.find((item) => item.id === projectId);
     if (project) updateProject(project.detailProjectId, { status: status.projectStatus, phaseCode: status.code, phaseLabel: status.label });
     setOverlay(null);
@@ -177,13 +190,13 @@ export function ProjectsPage() {
       managerId: employees[0]?.id ?? "emp-1",
       status: statusByCode(project.statusCode).projectStatus
     });
-    setProjects((current) => [{ ...project, id: `dash-${Date.now()}`, name: `${project.name} Copy`, detailProjectId: created.id, favorite: false }, ...current]);
+    setLocalAdditions((a) => [{ ...project, id: `dash-${Date.now()}`, name: `${project.name} Copy`, detailProjectId: created.id, favorite: false }, ...a]);
     setOverlay(null);
     showToast("Project duplicated");
   }
 
   function removeDashboardProject(projectId: string) {
-    setProjects((current) => current.filter((project) => project.id !== projectId));
+    setDeletedIds((s) => new Set(s).add(projectId));
     setDeleteProject(null);
     setOverlay(null);
     showToast("Project deleted");
@@ -304,7 +317,7 @@ export function ProjectsPage() {
               }}
               onDuplicate={() => duplicateDashboardProject(project)}
               onArchive={() => {
-                setProjects((current) => current.filter((item) => item.id !== project.id));
+                setDeletedIds((s) => new Set(s).add(project.id));
                 setOverlay(null);
                 showToast("Project archived");
               }}
@@ -327,7 +340,7 @@ export function ProjectsPage() {
           }}
           onDuplicate={() => duplicateDashboardProject(overlayProject)}
           onArchive={() => {
-            setProjects((current) => current.filter((item) => item.id !== overlayProject.id));
+            setDeletedIds((s) => new Set(s).add(overlayProject.id));
             setOverlay(null);
             showToast("Project archived");
           }}

@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.1] — 2026-07-11
+
+### Example Data — Project List Stale-State Fix
+
+#### Fixed
+- **`ProjectsPage`** — replaced `useState<DashboardProject[]>` + two `useEffect` hooks with a
+  synchronous `useMemo`-based architecture. React Fast Refresh (HMR) was preserving the old
+  28-item state across code saves; because `useExampleData` had not changed value, the effect
+  never re-fired and stale example projects stayed visible even with the toggle OFF.
+- **Base list** (`baseProjects` useMemo) — derived directly from `useExampleData` + `cachedProjects`
+  on every render. Toggle OFF → `[]` instantly. Toggle ON → `EXAMPLE_DASHBOARD_PROJECTS`. No effect
+  timing, no stale state, no HMR preservation issues.
+- **Session overlay** — mutations (favorites, phase/status changes, new project additions,
+  archive/delete) now route through three lightweight state atoms (`localPatches` Map,
+  `localAdditions` array, `deletedIds` Set) that are cleared automatically when the toggle flips.
+- **`DemoDataProvider`** — removed `setProjects(state.projects)` from both the toggle-OFF branch
+  and the initial mount live-mode branch. Projects in live mode stay `[]`; backend API is the
+  source of truth. Old IndexedDB sample project records can no longer leak back through
+  `cachedProjects` into `ProjectsPage`.
+
+---
+
 ## [1.2.0] — 2026-07-11
 
 ### Navigation Restructure, Microsoft 365 Integration & Settings Hub Consolidation

@@ -100,7 +100,9 @@ export function DemoDataProvider({ children }: { children: ReactNode }) {
       setTimeEntries(EXAMPLE_TIME_ENTRIES as TimeEntry[]);
       setGalleryPhotos(EXAMPLE_GALLERY_PHOTOS as GalleryPhoto[]);
     } else {
-      // Flush all example arrays to empty, then reload any real user data.
+      // Flush to blank slate. Projects are NOT reloaded from IndexedDB because
+      // in live mode they come from the backend API. Other offline arrays (tasks,
+      // floor plans, etc.) are restored so Blueprint Hub keeps working offline.
       setProjects([]);
       setTasks([]);
       setFloorPlans([]);
@@ -108,7 +110,7 @@ export function DemoDataProvider({ children }: { children: ReactNode }) {
       setGalleryPhotos([]);
       loadOfflineState().then((state) => {
         if (prevExampleRef.current) return; // toggled back on before load completed
-        setProjects(state.projects);
+        // projects intentionally left as [] — backend is the source of truth in live mode.
         setTasks(state.tasks);
         setFloorPlans(state.floorPlans);
         setGalleryPhotos(state.galleryPhotos);
@@ -311,8 +313,8 @@ export function DemoDataProvider({ children }: { children: ReactNode }) {
         setGalleryPhotos(EXAMPLE_GALLERY_PHOTOS as GalleryPhoto[]);
         setTimeEntries(EXAMPLE_TIME_ENTRIES as TimeEntry[]);
       } else {
-        // Live mode — use only real user data from the local store.
-        setProjects(state.projects);
+        // Live mode — projects come from the backend API, not IndexedDB,
+        // so they stay as []. Other arrays are restored for offline Blueprint Hub use.
         setFloorPlans(state.floorPlans);
         setTasks(state.tasks);
         setGalleryPhotos(state.galleryPhotos);
