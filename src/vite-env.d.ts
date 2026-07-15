@@ -24,6 +24,14 @@ declare module 'three/addons/controls/OrbitControls.js' {
 
 declare const __APP_VERSION__: string
 
+interface ImportMetaEnv {
+  readonly VITE_DEV_OFFLINE_PASSWORD?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 interface SyncManager {
   register(tag: string): Promise<void>;
 }

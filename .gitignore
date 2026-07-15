@@ -7,5 +7,8 @@ DerivedData/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+# Local env overrides — never commit secrets
+.env.local
+.env.*.local
 # Dev-only offline account — never commit
 src/dev/*.local.ts

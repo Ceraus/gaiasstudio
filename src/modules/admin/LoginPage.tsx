@@ -1,20 +1,8 @@
 import { Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/core/auth/AuthContext";
-import { activateDevSession } from "@/core/auth/devSession";
-import type { AuthUser } from "@/core/auth/authSession";
 import { LoginAuthLayout } from "./LoginAuthLayout";
 import { AnimatedCommandLogo } from "@/shared/components/branding/AnimatedCommandLogo";
-
-// Dev-only: loads an untracked *.local.ts account file. Resolves to nothing
-// in production since the glob is guarded by import.meta.env.DEV.
-const devOfflineModules = import.meta.env.DEV
-  ? import.meta.glob("@/dev/*.local.ts", { eager: true })
-  : {};
-const devOfflineAccount = (
-  Object.values(devOfflineModules)[0] as
-    | { devOfflineAccount?: { user: AuthUser; label?: string } }
-    | undefined
-)?.devOfflineAccount;
+import { DevOfflineLoginPanel } from "./DevOfflineLoginPanel";
 
 const MICROSOFT_SSO_URL = "https://api.clearviewglobal.net/api/v1/auth/sso/microsoft/redirect";
 
@@ -63,12 +51,6 @@ export function LoginPage() {
   }
   // ───────────────────────────────────────────────────────────────────────────
 
-  function handleDevOfflineLogin() {
-    if (!devOfflineAccount) return;
-    activateDevSession(devOfflineAccount.user);
-    window.location.assign("/dashboard");
-  }
-
   const ssoCallbackError = searchParams.get("error");
   const alertMessage = ssoCallbackError
     ? (SSO_ERROR_MESSAGES[ssoCallbackError] ?? `Microsoft sign-in failed (${ssoCallbackError}).`)
@@ -109,27 +91,7 @@ export function LoginPage() {
           OAuth 2.0 • Microsoft Identity Platform
         </p>
 
-        {import.meta.env.DEV && devOfflineAccount ? (
-          <>
-            <div className="my-5 flex items-center gap-3">
-              <div className="h-px flex-1 bg-amber-300/40" />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-500">
-                Dev Only
-              </span>
-              <div className="h-px flex-1 bg-amber-300/40" />
-            </div>
-            <button
-              type="button"
-              onClick={handleDevOfflineLogin}
-              className="w-full rounded-md border border-amber-400/60 bg-amber-50/10 px-4 py-2 text-sm font-semibold text-amber-400 transition hover:bg-amber-400/10"
-            >
-              {devOfflineAccount.label ?? "Dev Offline Login"}
-            </button>
-            <p className="mt-2 text-center text-[11px] text-amber-600/70">
-              Offline — bypasses Microsoft SSO. Dev builds only.
-            </p>
-          </>
-        ) : null}
+        {import.meta.env.DEV ? <DevOfflineLoginPanel /> : null}
 
         <div className="mt-5 border-t border-slate-800 pt-4">
           <p className="text-center text-[11px] font-semibold text-slate-600">
