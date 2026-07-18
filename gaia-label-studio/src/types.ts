@@ -106,4 +106,6 @@ export interface AppSettings {
   pixabayKey?: string;
   bleedIn: number;
   safeIn: number;
+  /** First-run coach marks are shown until the user dismisses them. */
+  onboarded?: boolean;
 }

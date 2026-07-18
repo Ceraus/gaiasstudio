@@ -132,6 +132,10 @@
     "strokeWidth": "Outline width",
     "position": "Position",
     "size": "Size",
+    "sizePosition": "Size & position (inches)",
+    "width": "Width",
+    "height": "Height",
+    "lockAspect": "Lock proportions",
     "rotation": "Rotation",
     "cornerRadius": "Corner roundness",
     "empty": "Nothing yet"
@@ -254,5 +258,15 @@
     "step2": "Add your photos, logo & text",
     "step3": "Arrange it visually",
     "step4": "Print on Avery sheets"
+  },
+  "onboarding": {
+    "title": "Let's make your first label",
+    "subtitle": "Four simple steps — everything is visual and stays on this computer.",
+    "step1": "Pick a template: choose a shape, size, and which side of the product it's for.",
+    "step2": "Add your own photo or logo, then some text — drag things right onto the label.",
+    "step3": "Use auto-layout from a recipe, or arrange it yourself with smart guides.",
+    "step4": "Print & export a ready-to-print PDF onto Avery sheets.",
+    "dismiss": "Skip for now",
+    "start": "Start designing"
   }
 }

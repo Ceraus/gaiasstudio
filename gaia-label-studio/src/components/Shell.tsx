@@ -1,13 +1,18 @@
+import { lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, FlaskConical, Leaf, Plus, Settings as SettingsIcon } from 'lucide-react';
+import { BookOpen, FlaskConical, Leaf, Loader2, Plus, Settings as SettingsIcon } from 'lucide-react';
 import { useAppStore, type Screen } from '@/store/useAppStore';
 import WelcomeScreen from '@/components/screens/WelcomeScreen';
 import TemplateScreen from '@/components/screens/TemplateScreen';
-import EditorScreen from '@/components/screens/EditorScreen';
-import ExportScreen from '@/components/screens/ExportScreen';
 import RecipesScreen from '@/components/screens/RecipesScreen';
 import IngredientsScreen from '@/components/screens/IngredientsScreen';
 import SettingsScreen from '@/components/screens/SettingsScreen';
+import OnboardingCoach from '@/components/OnboardingCoach';
+
+// Editor pulls in Fabric.js and Export pulls in pdf-lib — load these heavy
+// libraries on demand so the initial bundle stays light.
+const EditorScreen = lazy(() => import('@/components/screens/EditorScreen'));
+const ExportScreen = lazy(() => import('@/components/screens/ExportScreen'));
 
 export default function Shell() {
   const screen = useAppStore((s) => s.screen);
@@ -80,14 +85,27 @@ export default function Shell() {
       )}
 
       <main className="relative flex-1 overflow-hidden">
-        {screen === 'welcome' && <WelcomeScreen />}
-        {screen === 'template' && <TemplateScreen />}
-        {screen === 'editor' && <EditorScreen />}
-        {screen === 'export' && <ExportScreen />}
-        {screen === 'recipes' && <RecipesScreen />}
-        {screen === 'ingredients' && <IngredientsScreen />}
-        {screen === 'settings' && <SettingsScreen />}
+        <Suspense fallback={<ScreenLoader label={t('common.loading')} />}>
+          {screen === 'welcome' && <WelcomeScreen />}
+          {screen === 'template' && <TemplateScreen />}
+          {screen === 'editor' && <EditorScreen />}
+          {screen === 'export' && <ExportScreen />}
+          {screen === 'recipes' && <RecipesScreen />}
+          {screen === 'ingredients' && <IngredientsScreen />}
+          {screen === 'settings' && <SettingsScreen />}
+        </Suspense>
       </main>
+
+      <OnboardingCoach />
+    </div>
+  );
+}
+
+function ScreenLoader({ label }: { label: string }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-gaia-500">
+      <Loader2 className="h-7 w-7 animate-spin" />
+      <p className="text-sm text-slate-500">{label}</p>
     </div>
   );
 }

@@ -43,6 +43,8 @@ export default function AssetsDrawer() {
           <button
             key={tb.id}
             onClick={() => setTab(tb.id)}
+            aria-label={tb.label}
+            aria-pressed={tab === tb.id}
             className={`rounded-lg px-1 py-1.5 text-[11px] font-semibold transition ${
               tab === tb.id ? 'bg-gaia-600 text-white' : 'text-slate-500 hover:bg-slate-100'
             }`}

@@ -132,6 +132,10 @@
     "strokeWidth": "Grosor del contorno",
     "position": "Posición",
     "size": "Tamaño",
+    "sizePosition": "Tamaño y posición (pulgadas)",
+    "width": "Ancho",
+    "height": "Alto",
+    "lockAspect": "Bloquear proporciones",
     "rotation": "Rotación",
     "cornerRadius": "Redondez de esquinas",
     "empty": "Nada todavía"
@@ -254,5 +258,15 @@
     "step2": "Agrega tus fotos, logo y texto",
     "step3": "Acomódalo visualmente",
     "step4": "Imprime en hojas Avery"
+  },
+  "onboarding": {
+    "title": "Hagamos tu primera etiqueta",
+    "subtitle": "Cuatro pasos sencillos — todo es visual y permanece en esta computadora.",
+    "step1": "Elige una plantilla: forma, tamaño y para qué lado del producto es.",
+    "step2": "Agrega tu foto o logo y algo de texto — arrastra las cosas a la etiqueta.",
+    "step3": "Usa el diseño automático desde una receta, o acomódalo con guías inteligentes.",
+    "step4": "Imprime y exporta un PDF listo para imprimir en hojas Avery.",
+    "dismiss": "Omitir por ahora",
+    "start": "Empezar a diseñar"
   }
 }

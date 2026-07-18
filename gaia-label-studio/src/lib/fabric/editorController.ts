@@ -7,7 +7,13 @@ import { versionsRepo } from '@/db/repositories';
 import { useEditorStore, type SelectionInfo } from '@/store/useEditorStore';
 import { configureFabricOnce, CUSTOM_PROPS } from './fabricConfig';
 import { drawBleedOverlay, type OverlayConfig } from './overlay';
-import { computeSnapGuides, drawGuides, type Guide, type TrimBox } from './snapping';
+import {
+  computeResizeGuides,
+  computeSnapGuides,
+  drawGuides,
+  type Guide,
+  type TrimBox,
+} from './snapping';
 
 const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -19,6 +25,8 @@ type Gaia = fabric.FabricObject & {
   name?: string;
   gaiaKind?: string;
   locked?: boolean;
+  gaiaCurve?: number;
+  gaiaLockAspect?: boolean;
 };
 
 export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
@@ -169,6 +177,16 @@ class EditorController {
       this.activeGuides = computeSnapGuides(canvas, target, this.trim);
       canvas.requestRenderAll();
     });
+    canvas.on('object:scaling', (opt) => {
+      if (!this.guidesEnabled || this.cropMode) {
+        this.clearGuides();
+        return;
+      }
+      const target = opt.target as fabric.FabricObject | undefined;
+      if (!target) return;
+      this.activeGuides = computeResizeGuides(canvas, target, this.trim);
+      canvas.requestRenderAll();
+    });
     canvas.on('mouse:up', () => {
       if (this.activeGuides.length) this.clearGuides();
     });
@@ -263,7 +281,21 @@ class EditorController {
   }
 
   serialize(): string {
-    return JSON.stringify(this.canvas!.toJSON());
+    const canvas = this.canvas!;
+    // Detach curved-text paths before serializing so the JSON stays portable and
+    // never trips loadFromJSON. Paths are rebuilt deterministically from
+    // `gaiaCurve` on load.
+    const detached: { obj: Gaia; path: unknown }[] = [];
+    for (const o of canvas.getObjects()) {
+      const g = o as Gaia & { path?: unknown };
+      if (g.gaiaCurve && g.path) {
+        detached.push({ obj: g, path: g.path });
+        (g as { path?: unknown }).path = undefined;
+      }
+    }
+    const json = JSON.stringify(canvas.toJSON());
+    for (const d of detached) (d.obj as { path?: unknown }).path = d.path;
+    return json;
   }
 
   private async load(json: string) {
@@ -271,6 +303,7 @@ class EditorController {
     this.isRestoring = true;
     try {
       await this.canvas.loadFromJSON(json);
+      this.rebuildCurves();
       this.canvas?.requestRenderAll();
     } catch {
       // Canvas may have been disposed mid-load (e.g. fast navigation); ignore.
@@ -279,6 +312,17 @@ class EditorController {
     }
     this.refreshLayers();
     this.syncSelection();
+  }
+
+  /** Re-applies curved-text paths from each object's saved `gaiaCurve` amount. */
+  private rebuildCurves() {
+    if (!this.canvas) return;
+    for (const o of this.canvas.getObjects()) {
+      const g = o as Gaia;
+      if (typeof g.gaiaCurve === 'number' && g.gaiaCurve !== 0 && isTextObject(o)) {
+        applyCurveToText(o as fabric.Textbox, g.gaiaCurve);
+      }
+    }
   }
 
   async undo() {
@@ -501,6 +545,86 @@ class EditorController {
   centerSelected() {
     this.align('centerH');
     this.align('centerV');
+  }
+
+  // -- curved text ----------------------------------------------------------
+
+  /** Bends the selected text along a circular arc. amount: -100…0…100. */
+  setTextCurve(amount: number) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const o = canvas.getActiveObject();
+    if (!o || !isTextObject(o)) return;
+    applyCurveToText(o as fabric.Textbox, amount);
+    canvas.requestRenderAll();
+    this.syncSelection();
+    this.onChanged();
+  }
+
+  // -- precise (inch-based) geometry ---------------------------------------
+
+  /** Move the selection by a pixel delta (used by arrow-key nudging). */
+  nudge(dx: number, dy: number) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const objs = canvas.getActiveObjects();
+    if (!objs.length) return;
+    for (const o of objs) {
+      o.set({ left: (o.left ?? 0) + dx, top: (o.top ?? 0) + dy });
+      o.setCoords();
+    }
+    canvas.requestRenderAll();
+    this.syncSelection();
+    this.onChanged();
+  }
+
+  setSelectedSizeIn(widthIn: number, heightIn: number) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const o = canvas.getActiveObject();
+    if (!o) return;
+    const baseW = o.width || 1;
+    const baseH = o.height || 1;
+    const targetW = Math.max(0.05, widthIn) * EDITOR_PPI;
+    const targetH = Math.max(0.05, heightIn) * EDITOR_PPI;
+    if ((o as Gaia).gaiaLockAspect) {
+      const s = targetW / baseW;
+      o.set({ scaleX: s, scaleY: s });
+    } else {
+      o.set({ scaleX: targetW / baseW, scaleY: targetH / baseH });
+    }
+    o.setCoords();
+    canvas.requestRenderAll();
+    this.syncSelection();
+    this.onChanged();
+  }
+
+  setSelectedPositionIn(leftIn: number, topIn: number) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const o = canvas.getActiveObject();
+    if (!o) return;
+    const br = o.getBoundingRect();
+    const targetLeft = this.trim.left + leftIn * EDITOR_PPI;
+    const targetTop = this.trim.top + topIn * EDITOR_PPI;
+    o.set({
+      left: (o.left ?? 0) + (targetLeft - br.left),
+      top: (o.top ?? 0) + (targetTop - br.top),
+    });
+    o.setCoords();
+    canvas.requestRenderAll();
+    this.syncSelection();
+    this.onChanged();
+  }
+
+  toggleLockAspect() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const o = canvas.getActiveObject() as Gaia | undefined;
+    if (!o) return;
+    o.gaiaLockAspect = !o.gaiaLockAspect;
+    this.syncSelection();
+    this.onChanged();
   }
 
   stack(action: 'forward' | 'backward' | 'front' | 'back') {
@@ -758,6 +882,7 @@ class EditorController {
     const type = a.type;
     const isText = type === 'textbox' || type === 'i-text' || type === 'text';
     const fontWeight = a.fontWeight as string | number | undefined;
+    const br = a.getBoundingRect();
     const info: SelectionInfo = {
       count: objs.length,
       isText,
@@ -773,6 +898,11 @@ class EditorController {
       angle: (a.angle as number) ?? 0,
       cornerRadius: type === 'rect' ? ((a.rx as number) ?? 0) : 0,
       hasCornerRadius: type === 'rect',
+      widthIn: br.width / EDITOR_PPI,
+      heightIn: br.height / EDITOR_PPI,
+      leftIn: (br.left - this.trim.left) / EDITOR_PPI,
+      topIn: (br.top - this.trim.top) / EDITOR_PPI,
+      lockAspect: !!(a as Gaia).gaiaLockAspect,
       fontFamily: (a.fontFamily as string) ?? DEFAULT_FONT,
       fontSize: (a.fontSize as number) ?? 20,
       bold: fontWeight === 'bold' || Number(fontWeight) >= 700,
@@ -781,6 +911,7 @@ class EditorController {
       textAlign: (a.textAlign as string) ?? 'left',
       lineHeight: (a.lineHeight as number) ?? 1.16,
       charSpacing: (a.charSpacing as number) ?? 0,
+      curve: (a as Gaia).gaiaCurve ?? 0,
       fontLoading: false,
     };
     useEditorStore.getState().set({ selection: info, activeIds: objs.map((o) => (o as Gaia).id ?? '') });
@@ -856,6 +987,52 @@ class EditorController {
   getObjectsByKind(kind: string) {
     return (this.canvas?.getObjects() ?? []).filter((o) => (o as Gaia).gaiaKind === kind);
   }
+}
+
+export function isTextObject(o: fabric.FabricObject): boolean {
+  return o.type === 'textbox' || o.type === 'i-text' || o.type === 'text';
+}
+
+/**
+ * Builds a smooth circular-arc path (approximated by a fine polyline so we never
+ * fight SVG sweep-flag ambiguity). Positive amount arches the text upward
+ * (a "smile"), negative arches it downward. Returns null for a straight line.
+ */
+export function buildCurvePath(width: number, amount: number): fabric.Path | null {
+  const a = Math.max(-100, Math.min(100, amount)) / 100;
+  if (a === 0 || width <= 0) return null;
+  const dir = a < 0 ? -1 : 1;
+  const theta = Math.abs(a) * Math.PI * 0.9; // total sweep, up to ~162°
+  const radius = width / theta; // arc length ≈ width
+  const steps = 72;
+  const cosHalf = Math.cos(theta / 2);
+  let d = '';
+  for (let i = 0; i <= steps; i++) {
+    const ang = -theta / 2 + (theta * i) / steps;
+    const x = radius * Math.sin(ang) + width / 2;
+    const sag = radius * (Math.cos(ang) - cosHalf);
+    const y = dir > 0 ? -sag : sag;
+    d += `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)} `;
+  }
+  return new fabric.Path(d.trim(), { fill: '', stroke: '' });
+}
+
+/** Applies (or clears) a curved-text path on a text object and records the amount. */
+export function applyCurveToText(text: fabric.Textbox, amount: number) {
+  const g = text as fabric.Textbox & Gaia;
+  const clamped = Math.max(-100, Math.min(100, Math.round(amount)));
+  if (clamped === 0) {
+    (text as { path?: unknown }).path = undefined;
+    g.gaiaCurve = 0;
+  } else {
+    const width = text.width || 200;
+    const path = buildCurvePath(width, clamped);
+    if (path) {
+      text.set({ path, pathAlign: 'center', pathStartOffset: 0, pathSide: 'left' } as never);
+    }
+    g.gaiaCurve = clamped;
+  }
+  text.set('dirty', true);
 }
 
 function defaultName(kind: string) {

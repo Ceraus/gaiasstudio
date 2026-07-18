@@ -30,6 +30,8 @@ export default function EditorControlWindow() {
             <button
               key={tb.id}
               onClick={() => setTab(tb.id)}
+              aria-label={tb.label}
+              aria-pressed={tab === tb.id}
               className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition ${
                 tab === tb.id ? 'bg-gaia-100 text-gaia-700' : 'text-slate-500 hover:bg-slate-100'
               }`}

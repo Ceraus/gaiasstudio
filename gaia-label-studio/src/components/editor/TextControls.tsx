@@ -139,6 +139,21 @@ export default function TextControls() {
           onChange={(e) => set({ charSpacing: Number(e.target.value) })}
         />
       </div>
+      <div>
+        <label className="label">
+          {t('text.curve')} · {Math.round(sel.curve)}
+        </label>
+        <input
+          type="range"
+          min={-100}
+          max={100}
+          step={1}
+          className="w-full accent-gaia-600"
+          value={sel.curve}
+          aria-label={t('text.curve')}
+          onChange={(e) => editor.setTextCurve(Number(e.target.value))}
+        />
+      </div>
     </div>
   );
 }

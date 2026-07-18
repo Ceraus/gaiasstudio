@@ -1,6 +1,7 @@
 import ReactDOM from 'react-dom/client';
 import './i18n';
 import './lib/fontManager';
+import './lib/testBridge';
 import './index.css';
 import App from './App';
 

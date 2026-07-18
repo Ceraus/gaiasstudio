@@ -24,6 +24,12 @@ export interface SelectionInfo {
   angle: number;
   cornerRadius: number;
   hasCornerRadius: boolean;
+  // Precise, zero-math geometry shown to the user in INCHES.
+  widthIn: number;
+  heightIn: number;
+  leftIn: number;
+  topIn: number;
+  lockAspect: boolean;
   // Text-only fields
   fontFamily: string;
   fontSize: number;
@@ -33,6 +39,8 @@ export interface SelectionInfo {
   textAlign: string;
   lineHeight: number;
   charSpacing: number;
+  /** Curved-text amount: -100 (arch down) … 0 (straight) … 100 (arch up). */
+  curve: number;
   fontLoading: boolean;
 }
 

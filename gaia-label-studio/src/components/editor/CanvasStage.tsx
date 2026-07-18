@@ -70,18 +70,50 @@ export default function CanvasStage() {
       const active = editor.canvas?.getActiveObject() as { isEditing?: boolean } | undefined;
       if (active?.isEditing) return;
       const meta = e.ctrlKey || e.metaKey;
-      if (meta && e.key.toLowerCase() === 'z') {
+      const key = e.key.toLowerCase();
+      const hasSelection = !!editor.canvas?.getActiveObject();
+      if (meta && key === 'z') {
         e.preventDefault();
         if (e.shiftKey) void editor.redo();
         else void editor.undo();
-      } else if (meta && e.key.toLowerCase() === 'y') {
+      } else if (meta && key === 'y') {
         e.preventDefault();
         void editor.redo();
-      } else if (meta && e.key.toLowerCase() === 'd') {
+      } else if (meta && key === 'd') {
         e.preventDefault();
         void editor.duplicateSelected();
+      } else if (meta && key === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) editor.ungroup();
+        else editor.group();
+      } else if (e.key === '[') {
+        if (hasSelection) {
+          e.preventDefault();
+          editor.stack('backward');
+        }
+      } else if (e.key === ']') {
+        if (hasSelection) {
+          e.preventDefault();
+          editor.stack('forward');
+        }
+      } else if (e.key === 'Escape') {
+        if (editor.cropMode) {
+          e.preventDefault();
+          editor.cancelCrop();
+        } else if (hasSelection) {
+          e.preventDefault();
+          editor.canvas?.discardActiveObject();
+          editor.canvas?.requestRenderAll();
+        }
+      } else if (e.key.startsWith('Arrow')) {
+        if (!hasSelection) return;
+        e.preventDefault();
+        const step = e.shiftKey ? 20 : 2;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        editor.nudge(dx, dy);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (editor.canvas?.getActiveObject()) {
+        if (hasSelection) {
           e.preventDefault();
           editor.deleteSelected();
         }

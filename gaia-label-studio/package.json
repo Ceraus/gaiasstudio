@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc -b --noEmit",
     "avery:generate": "node scripts/generate-avery-dataset.mjs",
     "avery:scrape": "node scripts/scrape-avery.mjs"
@@ -42,6 +43,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
+    "puppeteer-core": "^23.11.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"

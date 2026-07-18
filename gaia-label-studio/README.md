@@ -12,6 +12,7 @@ library, recipes, saved images and version history all live on your computer.
 npm install
 npm run dev      # open the printed local URL
 npm run build    # production build into dist/ (host it anywhere, or open locally)
+npm run smoke    # headless-Chrome smoke test (run after `npm run build`)
 ```
 
 ## What it does
@@ -23,11 +24,19 @@ npm run build    # production build into dist/ (host it anywhere, or open locall
   (22807 2″ round, 6871 back label, and many more). No pixels, no coordinates.
 - **A real editor.** Move / resize / rotate / crop / group, a full **layers panel**
   (reorder, hide, lock, rename, delete), **smart snapping guides** (magenta lines
-  when things line up or center), **visual bleed masks** (a dimmed ring + cut line
-  + safe zone), rich **typography** with elegant Google Fonts, opacity & blend
+  when things line up or center — on move *and* resize, plus equal-spacing guides),
+  **visual bleed masks** (a dimmed ring + cut line + safe zone), rich **typography**
+  with elegant Google Fonts, **curved text** on round/oval labels, opacity & blend
   modes, undo/redo, and a **movable properties window**.
-- **Auto-layouts from your recipes.** Front (logo + name), Back (ingredients,
-  directions, warnings, footer wrapped inside the safe zone), and Side (ribbon)
+- **Precise, zero-math properties.** Size & position are shown in **inches** with a
+  **lock-proportions** toggle and a **center-on-label** button. Arrow keys nudge
+  (Shift = larger), plus `Ctrl/Cmd+Z/Y/D/G`, `[`/`]` stacking, and `Del`/`Esc` —
+  none of which fire while you're typing.
+- **First-run coach marks** gently walk you through pick template → add photo/logo →
+  auto-layout → export (dismissed state is remembered).
+- **Auto-layouts from your recipes.** Front (curved product name on round labels +
+  centered logo), Back (a guaranteed-fit, measure-and-shrink text block that flows
+  long ingredient lists into **two columns** and never clips), and Side (ribbon)
   layouts are generated from your saved recipes and constrained to the safe area.
 - **Recipe & ingredient manager** with a live checklist (has a name / has
   ingredients / includes a soap base / has a benefit).
@@ -79,6 +88,12 @@ npm run avery:scrape     # pull Avery's full live catalog and merge (see note)
 - `src/lib/fabric/snapping.ts` — smart alignment guides + snap-to-center.
 - `src/lib/layoutEngine.ts` — context-specific Front/Back/Side auto-layouts.
 - `src/lib/pdfExport.ts` — exact Avery-grid PDF stamping (handles rotated ribbons).
+- `src/components/Shell.tsx` — lazy-loads the Editor (Fabric) and Export (pdf-lib)
+  screens so those heavy libraries stay out of the initial bundle.
+- `scripts/smoke.mjs` — a headless-Chrome smoke test driving the real app via
+  `window.gaiaEditor` / `window.gaiaTest` (add/undo/redo/align/flip/crop, curved
+  text, recipe auto-layouts, a 25-ingredient back label fitting the safe zone,
+  transparent logo → PDF, and correct page counts at 612×792pt).
 
 ### This is the requested Electron/SQLite app, delivered web-first
 

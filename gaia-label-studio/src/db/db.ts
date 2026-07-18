@@ -46,4 +46,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   filenamePrefix: 'GAIA',
   bleedIn: 0.0625,
   safeIn: 0.0625,
+  onboarded: false,
 };

@@ -21,6 +21,12 @@
   h3 {
     font-family: 'Playfair Display', Georgia, serif;
   }
+  /* Clear, consistent keyboard focus for accessibility (mouse clicks stay clean). */
+  :focus-visible {
+    outline: 2px solid theme('colors.gaia.500');
+    outline-offset: 2px;
+    border-radius: 0.35rem;
+  }
 }
 
 @layer components {

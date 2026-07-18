@@ -58,6 +58,8 @@ export function computeSnapGuides(
     { pos: trim.top, center: false },
     { pos: trim.bottom, center: false },
   ];
+  const centersX: number[] = [];
+  const centersY: number[] = [];
   for (const o of others) {
     const b = o.getBoundingRect();
     candX.push(
@@ -70,7 +72,14 @@ export function computeSnapGuides(
       { pos: b.top + b.height / 2, center: false },
       { pos: b.top + b.height, center: false },
     );
+    centersX.push(b.left + b.width / 2);
+    centersY.push(b.top + b.height / 2);
   }
+
+  // Equal-spacing guides: when there are 2+ other objects, offer positions that
+  // make the moving object's center evenly spaced with an existing pair (3+ total).
+  for (const p of equalSpacingCandidates(centersX)) candX.push({ pos: p, center: false });
+  for (const p of equalSpacingCandidates(centersY)) candY.push({ pos: p, center: false });
 
   const bestX = pickBest(candX, edgesX, threshold);
   const bestY = pickBest(candY, edgesY, threshold);
@@ -85,6 +94,80 @@ export function computeSnapGuides(
     guides.push({ vertical: false, pos: bestY.cand.pos, center: bestY.cand.center });
   }
   if (bestX || bestY) target.setCoords();
+  return guides;
+}
+
+/**
+ * Given the centers of the other objects, returns positions that would make the
+ * moving object evenly spaced with an adjacent pair — powering equal-gap guides.
+ */
+function equalSpacingCandidates(centers: number[]): number[] {
+  if (centers.length < 2) return [];
+  const sorted = [...centers].sort((a, b) => a - b);
+  const out = new Set<number>();
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    const gap = b - a;
+    out.add(a - gap); // extend the pattern to the left
+    out.add(b + gap); // extend the pattern to the right
+    out.add((a + b) / 2); // sit exactly between the pair
+  }
+  return [...out];
+}
+
+/**
+ * Alignment guides shown while resizing an (unrotated) object: highlights when an
+ * edge or center lines up with the label or another object. Visual only.
+ */
+export function computeResizeGuides(
+  canvas: Canvas,
+  target: FabricObject,
+  trim: TrimBox,
+  threshold = 6,
+): Guide[] {
+  if (Math.round((target.angle ?? 0) % 360) !== 0) return [];
+  const others = canvas
+    .getObjects()
+    .filter(
+      (o) =>
+        o !== target &&
+        o.visible !== false &&
+        !String((o as { gaiaKind?: string }).gaiaKind ?? '').startsWith('__'),
+    );
+  const br = target.getBoundingRect();
+  const edgesX = [br.left, br.left + br.width / 2, br.left + br.width];
+  const edgesY = [br.top, br.top + br.height / 2, br.top + br.height];
+  const candX: Candidate[] = [
+    { pos: trim.cx, center: true },
+    { pos: trim.left, center: false },
+    { pos: trim.right, center: false },
+  ];
+  const candY: Candidate[] = [
+    { pos: trim.cy, center: true },
+    { pos: trim.top, center: false },
+    { pos: trim.bottom, center: false },
+  ];
+  for (const o of others) {
+    const b = o.getBoundingRect();
+    candX.push(
+      { pos: b.left, center: false },
+      { pos: b.left + b.width, center: false },
+    );
+    candY.push(
+      { pos: b.top, center: false },
+      { pos: b.top + b.height, center: false },
+    );
+  }
+  const guides: Guide[] = [];
+  for (const edge of edgesX) {
+    const hit = candX.find((c) => Math.abs(c.pos - edge) <= threshold);
+    if (hit) guides.push({ vertical: true, pos: hit.pos, center: hit.center });
+  }
+  for (const edge of edgesY) {
+    const hit = candY.find((c) => Math.abs(c.pos - edge) <= threshold);
+    if (hit) guides.push({ vertical: false, pos: hit.pos, center: hit.center });
+  }
   return guides;
 }
 

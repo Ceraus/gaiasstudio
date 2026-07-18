@@ -6,6 +6,11 @@ export const CUSTOM_PROPS = [
   'name',
   'gaiaKind',
   'locked',
+  // Curved-text amount (-100…100). The Fabric `path` itself is rebuilt from this
+  // on load so serialized JSON stays portable (see editorController.load).
+  'gaiaCurve',
+  // Whether numeric width/height edits keep the original proportions.
+  'gaiaLockAspect',
   'selectable',
   'evented',
   'editable',

@@ -1,6 +1,6 @@
 import * as fabric from 'fabric';
 import type { Ingredient, LabelContext, Recipe } from '@/types';
-import { editor } from '@/lib/fabric/editorController';
+import { applyCurveToText, editor } from '@/lib/fabric/editorController';
 import { ptToPx } from '@/lib/units';
 import { loadFont } from '@/lib/fontManager';
 
@@ -117,8 +117,16 @@ function layoutFront(recipe: Recipe) {
     editor.addCustom(hint, 'text', 'Logo hint');
   }
 
-  const name = new fabric.Textbox(recipe.name || 'Product Name', {
-    width: s.width * 0.96,
+  const shape = editor.template!.shape;
+  const rounded = shape === 'circle' || shape === 'oval';
+  const nameText = recipe.name || 'Product Name';
+  // On round/oval labels the name curves along an arc; size the box to the text so
+  // it stays centered on the path.
+  const nameWidth = rounded
+    ? Math.min(s.width * 0.96, measureLineWidth(nameText, namePt) + ptToPx(namePt))
+    : s.width * 0.96;
+  const name = new fabric.Textbox(nameText, {
+    width: nameWidth,
     fontFamily: HEADING_FONT,
     fontSize: ptToPx(namePt),
     fill: INK,
@@ -129,6 +137,7 @@ function layoutFront(recipe: Recipe) {
     top: s.cy + s.height * 0.24,
   });
   editor.addCustom(name, 'text', 'Product name');
+  if (rounded) applyCurveToText(name, 38);
 
   if (recipe.benefit?.trim()) {
     const benefit = new fabric.Textbox(recipe.benefit, {
@@ -150,6 +159,7 @@ function layoutBack(recipe: Recipe, ingredients: Ingredient[]) {
   const s = safeRect();
   const wIn = editor.template!.labelWidthIn;
 
+  // --- Title (top) ---------------------------------------------------------
   const titlePt = clamp(wIn * 6, 8, 14);
   const title = new fabric.Textbox(recipe.name || 'Product', {
     width: s.width,
@@ -163,37 +173,16 @@ function layoutBack(recipe: Recipe, ingredients: Ingredient[]) {
     top: s.top,
   });
   editor.addCustom(title, 'text', 'Title');
+  const titleH = title.height ?? ptToPx(titlePt) * 1.3;
 
-  const sections: string[] = [];
-  const inci = inciList(recipe, ingredients);
-  if (inci) sections.push(`INGREDIENTS: ${inci}.`);
-  if (recipe.directions?.trim()) sections.push(`DIRECTIONS: ${recipe.directions}`);
-  if (recipe.warnings?.trim()) sections.push(`WARNING: ${recipe.warnings}`);
-  if (recipe.netWeight?.trim()) sections.push(`NET WT ${recipe.netWeight}`);
-
-  const bodyText = sections.join('\n\n');
-  // Estimate a font size that keeps the body inside the safe zone.
-  const availableH = s.height * 0.72;
-  const bodyPt = fitBodyFont(bodyText, s.width, availableH);
-  const body = new fabric.Textbox(bodyText || 'Add ingredients & directions to your recipe.', {
-    width: s.width,
-    fontFamily: BODY_FONT,
-    fontSize: ptToPx(bodyPt),
-    fill: INK,
-    lineHeight: 1.22,
-    textAlign: 'left',
-    originX: 'center',
-    originY: 'top',
-    left: s.cx,
-    top: s.top + ptToPx(titlePt) * 1.6,
-  });
-  editor.addCustom(body, 'text', 'Ingredients & info');
-
+  // --- Footer (bottom, optional) ------------------------------------------
+  let footerH = 0;
   if (recipe.footer?.trim()) {
+    const footerPt = clamp(wIn * 3.4, 5, 8);
     const footer = new fabric.Textbox(recipe.footer, {
       width: s.width,
       fontFamily: BODY_FONT,
-      fontSize: ptToPx(clamp(wIn * 3.4, 5, 8)),
+      fontSize: ptToPx(footerPt),
       fill: '#6a6a6a',
       textAlign: 'center',
       originX: 'center',
@@ -202,7 +191,123 @@ function layoutBack(recipe: Recipe, ingredients: Ingredient[]) {
       top: s.top + s.height,
     });
     editor.addCustom(footer, 'text', 'Footer');
+    footerH = (footer.height ?? ptToPx(footerPt) * 1.3) + ptToPx(footerPt) * 0.5;
   }
+
+  // --- Body between title and footer, always fit inside the safe zone ------
+  const gap = ptToPx(titlePt) * 0.5;
+  const bodyTop = s.top + titleH + gap;
+  const availH = Math.max(ptToPx(4), s.top + s.height - footerH - bodyTop);
+
+  const inci = inciList(recipe, ingredients);
+  const extra: string[] = [];
+  if (recipe.directions?.trim()) extra.push(`DIRECTIONS: ${recipe.directions}`);
+  if (recipe.warnings?.trim()) extra.push(`WARNING: ${recipe.warnings}`);
+  if (recipe.netWeight?.trim()) extra.push(`NET WT ${recipe.netWeight}`);
+  const extraText = extra.join('\n\n');
+
+  if (!inci && !extraText) {
+    const hint = new fabric.Textbox('Add ingredients & directions to your recipe.', {
+      width: s.width,
+      fontFamily: BODY_FONT,
+      fontSize: ptToPx(7),
+      fill: INK,
+      lineHeight: 1.22,
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'top',
+      left: s.cx,
+      top: bodyTop,
+    });
+    editor.addCustom(hint, 'text', 'Ingredients & info');
+    return;
+  }
+
+  // First try a single measured-and-shrunk column for everything.
+  const singleText = [inci ? `INGREDIENTS: ${inci}.` : '', extraText]
+    .filter(Boolean)
+    .join('\n\n');
+  const singlePt = fitFont(singleText, s.width, availH, 9, 4);
+
+  // If the single column would be uncomfortably small and the ingredient list is
+  // long, switch INGREDIENTS to two columns for legibility.
+  const longList = recipe.ingredientIds.length >= 12 && !!inci;
+  if (singlePt >= 5.5 || !longList) {
+    const body = new fabric.Textbox(singleText, {
+      width: s.width,
+      fontFamily: BODY_FONT,
+      fontSize: ptToPx(singlePt),
+      fill: INK,
+      lineHeight: 1.2,
+      textAlign: 'left',
+      originX: 'center',
+      originY: 'top',
+      left: s.cx,
+      top: bodyTop,
+    });
+    editor.addCustom(body, 'text', 'Ingredients & info');
+    return;
+  }
+
+  // --- Two-column INCI layout ---------------------------------------------
+  // Header holds directions / warnings / net weight; the ingredient list flows
+  // beneath it in two balanced columns.
+  let colTop = bodyTop;
+  if (extraText) {
+    const headPt = fitFont(extraText, s.width, availH * 0.4, 8, 4);
+    const head = new fabric.Textbox(extraText, {
+      width: s.width,
+      fontFamily: BODY_FONT,
+      fontSize: ptToPx(headPt),
+      fill: INK,
+      lineHeight: 1.2,
+      textAlign: 'left',
+      originX: 'center',
+      originY: 'top',
+      left: s.cx,
+      top: bodyTop,
+    });
+    editor.addCustom(head, 'text', 'Directions & warnings');
+    colTop = bodyTop + (head.height ?? ptToPx(headPt) * 2) + ptToPx(headPt) * 0.6;
+  }
+
+  const gutter = ptToPx(6);
+  const colW = (s.width - gutter) / 2;
+  const items = inci.split(', ');
+  const half = Math.ceil(items.length / 2);
+  const leftText = `INGREDIENTS: ${items.slice(0, half).join(', ')},`;
+  const rightText = `${items.slice(half).join(', ')}.`;
+  const colAvailH = Math.max(ptToPx(4), s.top + s.height - footerH - colTop);
+  const colPt = Math.min(
+    fitFont(leftText, colW, colAvailH, 8, 4),
+    fitFont(rightText, colW, colAvailH, 8, 4),
+  );
+  const leftCol = new fabric.Textbox(leftText, {
+    width: colW,
+    fontFamily: BODY_FONT,
+    fontSize: ptToPx(colPt),
+    fill: INK,
+    lineHeight: 1.2,
+    textAlign: 'left',
+    originX: 'left',
+    originY: 'top',
+    left: s.left,
+    top: colTop,
+  });
+  editor.addCustom(leftCol, 'text', 'Ingredients (1)');
+  const rightCol = new fabric.Textbox(rightText, {
+    width: colW,
+    fontFamily: BODY_FONT,
+    fontSize: ptToPx(colPt),
+    fill: INK,
+    lineHeight: 1.2,
+    textAlign: 'left',
+    originX: 'left',
+    originY: 'top',
+    left: s.left + colW + gutter,
+    top: colTop,
+  });
+  editor.addCustom(rightCol, 'text', 'Ingredients (2)');
 }
 
 function layoutSide(recipe: Recipe) {
@@ -246,18 +351,29 @@ function layoutSide(recipe: Recipe) {
   }
 }
 
-function fitBodyFont(text: string, widthPx: number, availableHpx: number): number {
-  // Rough character-based estimate: chars-per-line from width, lines from count.
-  for (let pt = 9; pt >= 4.5; pt -= 0.5) {
-    const charW = ptToPx(pt) * 0.52;
-    const perLine = Math.max(8, Math.floor(widthPx / charW));
-    const paras = text.split('\n');
-    let lines = 0;
-    for (const p of paras) lines += Math.max(1, Math.ceil(p.length / perLine));
-    const totalH = lines * ptToPx(pt) * 1.28;
-    if (totalH <= availableHpx) return pt;
+/** Real rendered height (px) of a wrapped text block using Fabric's measurer. */
+function measuredHeight(text: string, widthPx: number, pt: number, lineHeight = 1.2): number {
+  const tb = new fabric.Textbox(text, {
+    width: widthPx,
+    fontFamily: BODY_FONT,
+    fontSize: ptToPx(pt),
+    lineHeight,
+  });
+  return tb.height ?? 0;
+}
+
+/** Largest font (pt) whose measured height fits the available height. Guarantees fit. */
+function fitFont(text: string, widthPx: number, availHpx: number, maxPt = 9, minPt = 4): number {
+  for (let pt = maxPt; pt >= minPt; pt -= 0.25) {
+    if (measuredHeight(text, widthPx, pt) <= availHpx) return pt;
   }
-  return 4.5;
+  return minPt;
+}
+
+/** Single-line rendered width (px) of a string at a given point size. */
+function measureLineWidth(text: string, pt: number, fontFamily = HEADING_FONT): number {
+  const t = new fabric.Text(text, { fontFamily, fontSize: ptToPx(pt) });
+  return t.width ?? 0;
 }
 
 function clamp(v: number, lo: number, hi: number) {
