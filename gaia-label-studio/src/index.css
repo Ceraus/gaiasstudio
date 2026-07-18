@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-gaia-50 text-slate-800 antialiased;
+    font-family: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    margin: 0;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition
+      disabled:cursor-not-allowed disabled:opacity-40 select-none;
+  }
+  .btn-primary {
+    @apply btn bg-gaia-600 text-white hover:bg-gaia-700 shadow-sm;
+  }
+  .btn-secondary {
+    @apply btn bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50;
+  }
+  .btn-ghost {
+    @apply btn text-slate-600 hover:bg-slate-100;
+  }
+  .btn-danger {
+    @apply btn bg-rose-600 text-white hover:bg-rose-700;
+  }
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition
+      hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent;
+  }
+  .icon-btn-active {
+    @apply bg-gaia-100 text-gaia-700 hover:bg-gaia-100;
+  }
+  .input {
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800
+      shadow-sm outline-none transition focus:border-gaia-400 focus:ring-2 focus:ring-gaia-200;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500;
+  }
+  .card {
+    @apply rounded-2xl bg-white p-5 shadow-panel ring-1 ring-slate-100;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600;
+  }
+}
+
+/* The editor scroll area gets a subtle checkerboard so transparent art reads clearly. */
+.canvas-checkerboard {
+  background-color: #eceef0;
+  background-image:
+    linear-gradient(45deg, #dfe3e6 25%, transparent 25%),
+    linear-gradient(-45deg, #dfe3e6 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dfe3e6 75%),
+    linear-gradient(-45deg, transparent 75%, #dfe3e6 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

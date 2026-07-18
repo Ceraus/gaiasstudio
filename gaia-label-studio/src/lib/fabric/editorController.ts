@@ -1,0 +1,876 @@
+import * as fabric from 'fabric';
+import type { AppSettings, AveryTemplate, LabelContext } from '@/types';
+import { EDITOR_PPI, EXPORT_PPI, ptToPx } from '@/lib/units';
+import { DEFAULT_FONT } from '@/data/googleFonts';
+import { loadFont } from '@/lib/fontManager';
+import { versionsRepo } from '@/db/repositories';
+import { useEditorStore, type SelectionInfo } from '@/store/useEditorStore';
+import { configureFabricOnce, CUSTOM_PROPS } from './fabricConfig';
+import { drawBleedOverlay, type OverlayConfig } from './overlay';
+import { computeSnapGuides, drawGuides, type Guide, type TrimBox } from './snapping';
+
+const uid = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `o-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+type Gaia = fabric.FabricObject & {
+  id?: string;
+  name?: string;
+  gaiaKind?: string;
+  locked?: boolean;
+};
+
+export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
+
+export interface InitOptions {
+  el: HTMLCanvasElement;
+  template: AveryTemplate;
+  context: LabelContext;
+  settings: AppSettings;
+  designId: string;
+  initialJson?: string | null;
+}
+
+const SHAPE_TYPES = ['rect', 'circle', 'ellipse', 'triangle', 'line', 'polygon', 'path'];
+
+class EditorController {
+  canvas: fabric.Canvas | null = null;
+  template: AveryTemplate | null = null;
+  context: LabelContext = 'front';
+  settings: AppSettings | null = null;
+  designId = '';
+
+  bleedPx = 0;
+  safePx = 0;
+  labelWpx = 0;
+  labelHpx = 0;
+  trim: TrimBox = { left: 0, top: 0, right: 0, bottom: 0, cx: 0, cy: 0 };
+
+  private overlayVisible = true;
+  private guidesEnabled = true;
+  private activeGuides: Guide[] = [];
+  private isRestoring = false;
+
+  private history: string[] = [];
+  private historyIndex = -1;
+  private historyTimer: ReturnType<typeof setTimeout> | null = null;
+  private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private cropRect: Gaia | null = null;
+  private cropTarget: fabric.FabricImage | null = null;
+
+  // -- lifecycle ------------------------------------------------------------
+
+  async init(opts: InitOptions) {
+    configureFabricOnce();
+    this.dispose();
+
+    this.template = opts.template;
+    this.context = opts.context;
+    this.settings = opts.settings;
+    this.designId = opts.designId;
+
+    this.bleedPx = opts.settings.bleedIn * EDITOR_PPI;
+    this.safePx = opts.settings.safeIn * EDITOR_PPI;
+    this.labelWpx = opts.template.labelWidthIn * EDITOR_PPI;
+    this.labelHpx = opts.template.labelHeightIn * EDITOR_PPI;
+
+    const w = this.labelWpx + this.bleedPx * 2;
+    const h = this.labelHpx + this.bleedPx * 2;
+    this.trim = {
+      left: this.bleedPx,
+      top: this.bleedPx,
+      right: this.bleedPx + this.labelWpx,
+      bottom: this.bleedPx + this.labelHpx,
+      cx: w / 2,
+      cy: h / 2,
+    };
+
+    const canvas = new fabric.Canvas(opts.el, {
+      width: w,
+      height: h,
+      backgroundColor: '#ffffff',
+      preserveObjectStacking: true,
+      enableRetinaScaling: false,
+      controlsAboveOverlay: true,
+      selectionColor: 'rgba(124,58,237,0.12)',
+      selectionBorderColor: '#7c3aed',
+      selectionLineWidth: 1,
+    });
+    this.canvas = canvas;
+
+    this.attachEvents();
+
+    const store = useEditorStore.getState();
+    store.set({
+      ready: true,
+      overlayVisible: this.overlayVisible,
+      guidesEnabled: this.guidesEnabled,
+      zoom: 1,
+      cropMode: false,
+      saveState: 'idle',
+    });
+
+    if (opts.initialJson) {
+      await this.load(opts.initialJson);
+    }
+    this.history = [this.serialize()];
+    this.historyIndex = 0;
+    this.updateHistoryFlags();
+    this.refreshLayers();
+    canvas.requestRenderAll();
+  }
+
+  dispose() {
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    this.historyTimer = null;
+    this.autosaveTimer = null;
+    if (this.canvas) {
+      this.canvas.dispose();
+      this.canvas = null;
+    }
+    this.history = [];
+    this.historyIndex = -1;
+    this.activeGuides = [];
+    this.cropRect = null;
+    this.cropTarget = null;
+  }
+
+  private attachEvents() {
+    const canvas = this.canvas!;
+    canvas.on('selection:created', () => this.syncSelection());
+    canvas.on('selection:updated', () => this.syncSelection());
+    canvas.on('selection:cleared', () =>
+      useEditorStore.getState().set({ selection: null, activeIds: [] }),
+    );
+    canvas.on('object:added', () => this.onChanged());
+    canvas.on('object:removed', () => this.onChanged());
+    canvas.on('object:modified', () => {
+      this.clearGuides();
+      this.onChanged();
+    });
+    canvas.on('text:changed', () => {
+      this.onChanged();
+      this.syncSelection();
+    });
+    canvas.on('object:moving', (opt) => {
+      if (!this.guidesEnabled || this.cropMode) {
+        this.clearGuides();
+        return;
+      }
+      const target = opt.target as fabric.FabricObject | undefined;
+      if (!target) return;
+      this.activeGuides = computeSnapGuides(canvas, target, this.trim);
+      canvas.requestRenderAll();
+    });
+    canvas.on('mouse:up', () => {
+      if (this.activeGuides.length) this.clearGuides();
+    });
+    canvas.on('after:render', (opt) => {
+      // Only decorate the visible canvas, never export / offscreen renders.
+      if (!this.canvas || opt.ctx !== this.canvas.getContext()) return;
+      drawBleedOverlay(this.canvas, this.overlayConfig());
+      drawGuides(this.canvas, this.activeGuides);
+    });
+  }
+
+  private overlayConfig(): OverlayConfig {
+    return {
+      shape: this.template!.shape,
+      bleedPx: this.bleedPx,
+      safePx: this.safePx,
+      cornerRadiusPx: (this.template!.cornerRadiusIn || 0) * EDITOR_PPI,
+      visible: this.overlayVisible,
+    };
+  }
+
+  private clearGuides() {
+    if (!this.activeGuides.length) return;
+    this.activeGuides = [];
+    this.canvas?.requestRenderAll();
+  }
+
+  // -- change / history / autosave -----------------------------------------
+
+  private onChanged() {
+    if (this.isRestoring || !this.canvas) return;
+    this.refreshLayers();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  private scheduleHistory() {
+    if (this.isRestoring) return;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyTimer = setTimeout(() => this.commitHistory(), 350);
+  }
+
+  private commitHistory() {
+    if (!this.canvas) return;
+    const json = this.serialize();
+    if (json === this.history[this.historyIndex]) return;
+    this.history = this.history.slice(0, this.historyIndex + 1);
+    this.history.push(json);
+    if (this.history.length > 60) this.history.shift();
+    this.historyIndex = this.history.length - 1;
+    this.updateHistoryFlags();
+  }
+
+  private scheduleAutosave() {
+    if (this.isRestoring) return;
+    useEditorStore.getState().set({ saveState: 'saving' });
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => this.commitAutosave(), 2000);
+  }
+
+  private async commitAutosave() {
+    if (!this.canvas || !this.template) return;
+    try {
+      await versionsRepo.create({
+        designId: this.designId,
+        templateId: this.template.id,
+        context: this.context,
+        canvasJson: this.serialize(),
+        thumbnail: this.thumbnail(140),
+        label: new Date().toLocaleString(),
+      });
+      useEditorStore.getState().set({ saveState: 'saved', historyTick: Date.now() });
+    } catch {
+      useEditorStore.getState().set({ saveState: 'idle' });
+    }
+  }
+
+  private updateHistoryFlags() {
+    useEditorStore.getState().set({
+      canUndo: this.historyIndex > 0,
+      canRedo: this.historyIndex < this.history.length - 1,
+    });
+  }
+
+  serialize(): string {
+    return JSON.stringify(this.canvas!.toJSON());
+  }
+
+  private async load(json: string) {
+    if (!this.canvas) return;
+    this.isRestoring = true;
+    try {
+      await this.canvas.loadFromJSON(json);
+      this.canvas.requestRenderAll();
+    } finally {
+      this.isRestoring = false;
+    }
+    this.refreshLayers();
+    this.syncSelection();
+  }
+
+  async undo() {
+    if (this.historyIndex <= 0) return;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyIndex -= 1;
+    await this.load(this.history[this.historyIndex]);
+    this.updateHistoryFlags();
+    this.scheduleAutosave();
+  }
+
+  async redo() {
+    if (this.historyIndex >= this.history.length - 1) return;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyIndex += 1;
+    await this.load(this.history[this.historyIndex]);
+    this.updateHistoryFlags();
+    this.scheduleAutosave();
+  }
+
+  async restoreJson(json: string) {
+    await this.load(json);
+    this.commitHistory();
+    this.scheduleAutosave();
+  }
+
+  // -- object factory helpers ----------------------------------------------
+
+  private tag(obj: Gaia, kind: string, name?: string) {
+    obj.id = uid();
+    obj.gaiaKind = kind;
+    obj.name = name ?? defaultName(kind);
+    obj.locked = false;
+  }
+
+  private place(obj: Gaia, select = true) {
+    const canvas = this.canvas!;
+    canvas.add(obj);
+    if (select) {
+      canvas.setActiveObject(obj);
+      this.syncSelection();
+    }
+    canvas.requestRenderAll();
+  }
+
+  async addImageFromUrl(url: string, kind: AddImageKind = 'image', name?: string) {
+    if (!this.canvas) return;
+    const img = (await fabric.FabricImage.fromURL(url, {
+      crossOrigin: 'anonymous',
+    })) as fabric.FabricImage & Gaia;
+
+    const isBg = kind === 'background';
+    const targetW = isBg ? this.canvas.getWidth() : this.labelWpx * (kind === 'logo' ? 0.55 : 0.9);
+    const targetH = isBg ? this.canvas.getHeight() : this.labelHpx * (kind === 'logo' ? 0.55 : 0.9);
+    const iw = img.width || 1;
+    const ih = img.height || 1;
+    const scale = isBg
+      ? Math.max(targetW / iw, targetH / ih)
+      : Math.min(targetW / iw, targetH / ih);
+
+    img.set({
+      originX: 'center',
+      originY: 'center',
+      left: this.trim.cx,
+      top: this.trim.cy,
+      scaleX: scale,
+      scaleY: scale,
+    });
+    this.tag(img, kind, name);
+    this.place(img, !isBg);
+    if (isBg) {
+      this.canvas.sendObjectToBack(img);
+      this.canvas.requestRenderAll();
+      this.onChanged();
+    }
+    return img;
+  }
+
+  addText(kind: 'heading' | 'body' | string = 'body', text?: string) {
+    if (!this.canvas) return;
+    const isHeading = kind === 'heading';
+    const t = new fabric.Textbox(text ?? (isHeading ? 'Your Product' : 'Add your text here'), {
+      width: this.labelWpx * 0.82,
+      fontFamily: DEFAULT_FONT,
+      fontSize: ptToPx(isHeading ? 20 : 11),
+      fill: '#2b2b2b',
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'center',
+      left: this.trim.cx,
+      top: this.trim.cy,
+    }) as fabric.Textbox & Gaia;
+    this.tag(t, 'text', text ? clip(text) : isHeading ? 'Heading' : 'Text');
+    loadFont(DEFAULT_FONT);
+    this.place(t);
+    return t;
+  }
+
+  addShape(kind: 'rect' | 'circle' | 'triangle' | 'line') {
+    if (!this.canvas) return;
+    const size = Math.min(this.labelWpx, this.labelHpx) * 0.5;
+    let obj: (fabric.FabricObject & Gaia) | null = null;
+    const base = {
+      originX: 'center' as const,
+      originY: 'center' as const,
+      left: this.trim.cx,
+      top: this.trim.cy,
+      fill: '#a7c4a0',
+      stroke: '',
+      strokeWidth: 0,
+    };
+    if (kind === 'rect') {
+      obj = new fabric.Rect({ ...base, width: this.labelWpx * 0.6, height: this.labelHpx * 0.4, rx: 0, ry: 0 }) as fabric.Rect & Gaia;
+    } else if (kind === 'circle') {
+      obj = new fabric.Circle({ ...base, radius: size / 2 }) as fabric.Circle & Gaia;
+    } else if (kind === 'triangle') {
+      obj = new fabric.Triangle({ ...base, width: size, height: size }) as fabric.Triangle & Gaia;
+    } else {
+      obj = new fabric.Line([0, 0, this.labelWpx * 0.6, 0], {
+        ...base,
+        fill: '',
+        stroke: '#6b7c66',
+        strokeWidth: 4,
+      }) as fabric.Line & Gaia;
+    }
+    this.tag(obj, 'shape', shapeName(kind));
+    this.place(obj);
+    return obj;
+  }
+
+  // -- editing operations ---------------------------------------------------
+
+  deleteSelected() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const active = canvas.getActiveObject() as (fabric.FabricObject & { isEditing?: boolean }) | undefined;
+    if (active && 'isEditing' in active && active.isEditing) return;
+    const objs = canvas.getActiveObjects();
+    if (!objs.length) return;
+    canvas.discardActiveObject();
+    objs.forEach((o) => canvas.remove(o));
+    canvas.requestRenderAll();
+  }
+
+  async duplicateSelected() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const actives = canvas.getActiveObjects();
+    if (!actives.length) return;
+    canvas.discardActiveObject();
+    const clones: fabric.FabricObject[] = [];
+    for (const o of actives) {
+      const c = (await o.clone(CUSTOM_PROPS)) as Gaia;
+      c.id = uid();
+      c.set({ left: (o.left ?? 0) + 20, top: (o.top ?? 0) + 20 });
+      canvas.add(c);
+      clones.push(c);
+    }
+    if (clones.length === 1) {
+      canvas.setActiveObject(clones[0]);
+    } else if (clones.length > 1) {
+      canvas.setActiveObject(new fabric.ActiveSelection(clones, { canvas }));
+    }
+    canvas.requestRenderAll();
+    this.syncSelection();
+  }
+
+  group() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== 'activeselection') return;
+    const objects = (active as fabric.ActiveSelection).getObjects();
+    if (objects.length < 2) return;
+    canvas.discardActiveObject();
+    objects.forEach((o) => canvas.remove(o));
+    const group = new fabric.Group(objects) as fabric.Group & Gaia;
+    this.tag(group, 'group', 'Group');
+    canvas.add(group);
+    canvas.setActiveObject(group);
+    canvas.requestRenderAll();
+    this.onChanged();
+    this.syncSelection();
+  }
+
+  ungroup() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== 'group') return;
+    const group = active as fabric.Group;
+    const items = group.removeAll() as fabric.FabricObject[];
+    canvas.remove(group);
+    items.forEach((o) => canvas.add(o));
+    canvas.setActiveObject(new fabric.ActiveSelection(items, { canvas }));
+    canvas.requestRenderAll();
+    this.onChanged();
+    this.syncSelection();
+  }
+
+  align(type: 'left' | 'right' | 'centerH' | 'top' | 'bottom' | 'centerV') {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const objs = canvas.getActiveObjects();
+    if (!objs.length) return;
+    for (const o of objs) {
+      const br = o.getBoundingRect();
+      if (type === 'left') o.set('left', (o.left ?? 0) + (this.trim.left - br.left));
+      else if (type === 'right') o.set('left', (o.left ?? 0) + (this.trim.right - (br.left + br.width)));
+      else if (type === 'centerH') o.set('left', (o.left ?? 0) + (this.trim.cx - (br.left + br.width / 2)));
+      else if (type === 'top') o.set('top', (o.top ?? 0) + (this.trim.top - br.top));
+      else if (type === 'bottom') o.set('top', (o.top ?? 0) + (this.trim.bottom - (br.top + br.height)));
+      else if (type === 'centerV') o.set('top', (o.top ?? 0) + (this.trim.cy - (br.top + br.height / 2)));
+      o.setCoords();
+    }
+    canvas.requestRenderAll();
+    this.onChanged();
+  }
+
+  centerSelected() {
+    this.align('centerH');
+    this.align('centerV');
+  }
+
+  stack(action: 'forward' | 'backward' | 'front' | 'back') {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const o = canvas.getActiveObject();
+    if (!o) return;
+    if (action === 'forward') canvas.bringObjectForward(o);
+    else if (action === 'backward') canvas.sendObjectBackwards(o);
+    else if (action === 'front') canvas.bringObjectToFront(o);
+    else canvas.sendObjectToBack(o);
+    canvas.requestRenderAll();
+    this.onChanged();
+  }
+
+  flip(axis: 'h' | 'v') {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const o = canvas.getActiveObject();
+    if (!o) return;
+    if (axis === 'h') o.set('flipX', !o.flipX);
+    else o.set('flipY', !o.flipY);
+    canvas.requestRenderAll();
+    this.onChanged();
+  }
+
+  async setActiveProps(patch: Record<string, unknown>) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const objs = canvas.getActiveObjects();
+    if (!objs.length) return;
+
+    if (typeof patch.fontFamily === 'string') {
+      const sel = useEditorStore.getState().selection;
+      if (sel) useEditorStore.getState().set({ selection: { ...sel, fontLoading: true } });
+      await loadFont(patch.fontFamily);
+    }
+
+    for (const o of objs) {
+      for (const [k, v] of Object.entries(patch)) {
+        if (k === 'blend') o.set('globalCompositeOperation', v as GlobalCompositeOperation);
+        else if (k === 'cornerRadius') {
+          if (o.type === 'rect') {
+            o.set('rx', v as number);
+            o.set('ry', v as number);
+          }
+        } else o.set(k, v as never);
+      }
+      o.set('dirty', true);
+    }
+    canvas.requestRenderAll();
+    this.syncSelection();
+    this.onChanged();
+  }
+
+  // -- crop -----------------------------------------------------------------
+
+  get cropMode() {
+    return !!this.cropRect;
+  }
+
+  startCrop() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const target = canvas.getActiveObject();
+    if (!target || target.type !== 'image') return;
+    const img = target as fabric.FabricImage;
+    const br = img.getBoundingRect();
+    const rect = new fabric.Rect({
+      left: br.left,
+      top: br.top,
+      width: br.width,
+      height: br.height,
+      fill: 'rgba(124,58,237,0.15)',
+      stroke: '#7c3aed',
+      strokeWidth: 1.5,
+      strokeDashArray: [6, 4],
+      originX: 'left',
+      originY: 'top',
+      cornerColor: '#ffffff',
+      cornerStrokeColor: '#7c3aed',
+      transparentCorners: false,
+    }) as fabric.Rect & Gaia;
+    rect.gaiaKind = '__crop';
+    rect.id = uid();
+    this.cropRect = rect;
+    this.cropTarget = img;
+    canvas.getObjects().forEach((o) => {
+      if (o !== rect) o.set({ selectable: false, evented: false });
+    });
+    canvas.add(rect);
+    canvas.setActiveObject(rect);
+    canvas.requestRenderAll();
+    useEditorStore.getState().set({ cropMode: true });
+  }
+
+  applyCrop() {
+    const canvas = this.canvas;
+    if (!canvas || !this.cropRect || !this.cropTarget) return this.cancelCrop();
+    const img = this.cropTarget;
+    const rect = this.cropRect;
+    const sx = img.scaleX || 1;
+    const sy = img.scaleY || 1;
+    const ib = img.getBoundingRect();
+    const rb = rect.getBoundingRect();
+
+    // Intersect crop rect with the image, in canvas pixels.
+    const ix = Math.max(ib.left, rb.left);
+    const iy = Math.max(ib.top, rb.top);
+    const ix2 = Math.min(ib.left + ib.width, rb.left + rb.width);
+    const iy2 = Math.min(ib.top + ib.height, rb.top + rb.height);
+    const cw = Math.max(8, ix2 - ix);
+    const ch = Math.max(8, iy2 - iy);
+
+    const newCropX = (img.cropX || 0) + (ix - ib.left) / sx;
+    const newCropY = (img.cropY || 0) + (iy - ib.top) / sy;
+
+    img.set({
+      cropX: newCropX,
+      cropY: newCropY,
+      width: cw / sx,
+      height: ch / sy,
+      originX: 'center',
+      originY: 'center',
+      left: ix + cw / 2,
+      top: iy + ch / 2,
+    });
+    img.setCoords();
+    this.finishCrop();
+    this.onChanged();
+  }
+
+  cancelCrop() {
+    this.finishCrop();
+  }
+
+  private finishCrop() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    if (this.cropRect) canvas.remove(this.cropRect);
+    canvas.getObjects().forEach((o) => o.set({ selectable: true, evented: true }));
+    if (this.cropTarget) canvas.setActiveObject(this.cropTarget);
+    this.cropRect = null;
+    this.cropTarget = null;
+    canvas.requestRenderAll();
+    useEditorStore.getState().set({ cropMode: false });
+    this.syncSelection();
+  }
+
+  // -- layers ---------------------------------------------------------------
+
+  private findById(id: string): Gaia | undefined {
+    return this.canvas?.getObjects().find((o) => (o as Gaia).id === id) as Gaia | undefined;
+  }
+
+  private refreshLayers() {
+    if (!this.canvas) return;
+    const layers = this.canvas
+      .getObjects()
+      .filter((o) => !String((o as Gaia).gaiaKind ?? '').startsWith('__'))
+      .slice()
+      .reverse()
+      .map((o) => {
+        const g = o as Gaia;
+        return {
+          id: g.id ?? '',
+          name: g.name ?? g.type,
+          kind: g.gaiaKind ?? g.type,
+          type: g.type,
+          visible: g.visible !== false,
+          locked: !!g.locked,
+        };
+      });
+    useEditorStore.getState().set({ layers });
+  }
+
+  selectLayer(id: string) {
+    const o = this.findById(id);
+    if (!o || !this.canvas) return;
+    this.canvas.setActiveObject(o);
+    this.canvas.requestRenderAll();
+    this.syncSelection();
+  }
+
+  toggleLayerVisible(id: string) {
+    const o = this.findById(id);
+    if (!o) return;
+    o.set('visible', o.visible === false);
+    this.canvas?.requestRenderAll();
+    this.refreshLayers();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  toggleLayerLock(id: string) {
+    const o = this.findById(id);
+    if (!o || !this.canvas) return;
+    const locked = !o.locked;
+    o.locked = locked;
+    o.set({
+      selectable: !locked,
+      evented: !locked,
+      lockMovementX: locked,
+      lockMovementY: locked,
+      lockRotation: locked,
+      lockScalingX: locked,
+      lockScalingY: locked,
+      hasControls: !locked,
+    });
+    if (locked && this.canvas.getActiveObject() === o) this.canvas.discardActiveObject();
+    this.canvas.requestRenderAll();
+    this.refreshLayers();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  renameLayer(id: string, name: string) {
+    const o = this.findById(id);
+    if (!o) return;
+    o.name = name;
+    this.refreshLayers();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  moveLayer(id: string, dir: 'up' | 'down') {
+    const o = this.findById(id);
+    if (!o || !this.canvas) return;
+    // Panel shows top layer first, so "up" == bring forward.
+    if (dir === 'up') this.canvas.bringObjectForward(o);
+    else this.canvas.sendObjectBackwards(o);
+    this.canvas.requestRenderAll();
+    this.onChanged();
+  }
+
+  deleteLayer(id: string) {
+    const o = this.findById(id);
+    if (!o || !this.canvas) return;
+    if (this.canvas.getActiveObject() === o) this.canvas.discardActiveObject();
+    this.canvas.remove(o);
+    this.canvas.requestRenderAll();
+  }
+
+  // -- selection sync -------------------------------------------------------
+
+  private syncSelection() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const objs = canvas.getActiveObjects();
+    if (!objs.length) {
+      useEditorStore.getState().set({ selection: null, activeIds: [] });
+      return;
+    }
+    const a = canvas.getActiveObject() as fabric.FabricObject & Record<string, unknown>;
+    const type = a.type;
+    const isText = type === 'textbox' || type === 'i-text' || type === 'text';
+    const fontWeight = a.fontWeight as string | number | undefined;
+    const info: SelectionInfo = {
+      count: objs.length,
+      isText,
+      isImage: type === 'image',
+      isGroup: type === 'group',
+      isShape: SHAPE_TYPES.includes(type),
+      type,
+      fill: typeof a.fill === 'string' ? a.fill : '#000000',
+      stroke: typeof a.stroke === 'string' ? a.stroke : '',
+      strokeWidth: (a.strokeWidth as number) ?? 0,
+      opacity: (a.opacity as number) ?? 1,
+      blend: (a.globalCompositeOperation as string) || 'source-over',
+      angle: (a.angle as number) ?? 0,
+      cornerRadius: type === 'rect' ? ((a.rx as number) ?? 0) : 0,
+      hasCornerRadius: type === 'rect',
+      fontFamily: (a.fontFamily as string) ?? DEFAULT_FONT,
+      fontSize: (a.fontSize as number) ?? 20,
+      bold: fontWeight === 'bold' || Number(fontWeight) >= 700,
+      italic: a.fontStyle === 'italic',
+      underline: !!a.underline,
+      textAlign: (a.textAlign as string) ?? 'left',
+      lineHeight: (a.lineHeight as number) ?? 1.16,
+      charSpacing: (a.charSpacing as number) ?? 0,
+      fontLoading: false,
+    };
+    useEditorStore.getState().set({ selection: info, activeIds: objs.map((o) => (o as Gaia).id ?? '') });
+  }
+
+  // -- view / export --------------------------------------------------------
+
+  setOverlayVisible(v: boolean) {
+    this.overlayVisible = v;
+    useEditorStore.getState().set({ overlayVisible: v });
+    this.canvas?.requestRenderAll();
+  }
+
+  setGuidesEnabled(v: boolean) {
+    this.guidesEnabled = v;
+    useEditorStore.getState().set({ guidesEnabled: v });
+  }
+
+  thumbnail(maxDim = 140): string | undefined {
+    if (!this.canvas) return undefined;
+    const mult = maxDim / Math.max(this.labelWpx, this.labelHpx);
+    return this.canvas.toDataURL({
+      left: this.bleedPx,
+      top: this.bleedPx,
+      width: this.labelWpx,
+      height: this.labelHpx,
+      multiplier: mult,
+      format: 'png',
+    });
+  }
+
+  /** PNG of just the trim region at print resolution (used by the PDF engine). */
+  exportLabelPng(ppi = EXPORT_PPI): string {
+    if (!this.canvas) return '';
+    this.canvas.discardActiveObject();
+    this.canvas.requestRenderAll();
+    return this.canvas.toDataURL({
+      left: this.bleedPx,
+      top: this.bleedPx,
+      width: this.labelWpx,
+      height: this.labelHpx,
+      multiplier: ppi / EDITOR_PPI,
+      format: 'png',
+    });
+  }
+
+  hasContent(): boolean {
+    return (
+      !!this.canvas &&
+      this.canvas.getObjects().filter((o) => !String((o as Gaia).gaiaKind ?? '').startsWith('__')).length > 0
+    );
+  }
+
+  // -- helpers used by the auto-layout engine -------------------------------
+
+  addCustom(obj: fabric.FabricObject, kind: string, name?: string, select = false) {
+    this.tag(obj as Gaia, kind, name);
+    this.place(obj as Gaia, select);
+    return obj;
+  }
+
+  clearContent() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    canvas.discardActiveObject();
+    canvas
+      .getObjects()
+      .filter((o) => !String((o as Gaia).gaiaKind ?? '').startsWith('__'))
+      .forEach((o) => canvas.remove(o));
+    canvas.requestRenderAll();
+  }
+
+  getObjectsByKind(kind: string) {
+    return (this.canvas?.getObjects() ?? []).filter((o) => (o as Gaia).gaiaKind === kind);
+  }
+}
+
+function defaultName(kind: string) {
+  const map: Record<string, string> = {
+    logo: 'Logo',
+    background: 'Background',
+    photo: 'Photo',
+    ai: 'AI image',
+    stock: 'Stock photo',
+    image: 'Image',
+    text: 'Text',
+    shape: 'Shape',
+    group: 'Group',
+  };
+  return map[kind] ?? 'Layer';
+}
+
+function shapeName(kind: string) {
+  const map: Record<string, string> = {
+    rect: 'Rectangle',
+    circle: 'Circle',
+    triangle: 'Triangle',
+    line: 'Line',
+  };
+  return map[kind] ?? 'Shape';
+}
+
+function clip(text: string) {
+  const t = text.trim().replace(/\s+/g, ' ');
+  return t.length > 24 ? `${t.slice(0, 24)}…` : t || 'Text';
+}
+
+export const editor = new EditorController();

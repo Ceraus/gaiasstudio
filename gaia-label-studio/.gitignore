@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tsbuildinfo
+# Raw output from the live Avery scraper
+scripts/avery-raw.json
