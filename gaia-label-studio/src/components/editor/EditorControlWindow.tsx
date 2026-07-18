@@ -19,7 +19,10 @@ export default function EditorControlWindow() {
   ];
 
   return (
-    <FloatingPanel title={<span className="text-sm font-semibold text-slate-700">{t('panels.properties')}</span>}>
+    <FloatingPanel
+      defaultY={100}
+      title={<span className="text-sm font-semibold text-slate-700">{t('panels.properties')}</span>}
+    >
       <div className="grid grid-cols-3 gap-1 border-b border-slate-100 p-1.5">
         {tabs.map((tb) => {
           const Icon = tb.icon;

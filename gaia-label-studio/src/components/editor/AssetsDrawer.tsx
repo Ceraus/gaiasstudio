@@ -154,7 +154,8 @@ function UploadZone({ kind }: { kind: AssetRecord['kind'] }) {
 }
 
 function MyPhotosTab() {
-  const assets = useLibraryStore((s) => s.assets.filter((a) => a.kind === 'photo' || a.kind === 'logo'));
+  const all = useLibraryStore((s) => s.assets);
+  const assets = all.filter((a) => a.kind === 'photo' || a.kind === 'logo');
   return (
     <div>
       <UploadZone kind="photo" />

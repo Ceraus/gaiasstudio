@@ -56,6 +56,7 @@ class EditorController {
   private historyIndex = -1;
   private historyTimer: ReturnType<typeof setTimeout> | null = null;
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private initToken = 0;
 
   private cropRect: Gaia | null = null;
   private cropTarget: fabric.FabricImage | null = null;
@@ -65,6 +66,7 @@ class EditorController {
   async init(opts: InitOptions) {
     configureFabricOnce();
     this.dispose();
+    const token = this.initToken;
 
     this.template = opts.template;
     this.context = opts.context;
@@ -114,6 +116,7 @@ class EditorController {
 
     if (opts.initialJson) {
       await this.load(opts.initialJson);
+      if (token !== this.initToken || !this.canvas) return; // a newer init/dispose superseded us
     }
     this.history = [this.serialize()];
     this.historyIndex = 0;
@@ -123,6 +126,7 @@ class EditorController {
   }
 
   dispose() {
+    this.initToken++;
     if (this.historyTimer) clearTimeout(this.historyTimer);
     if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
     this.historyTimer = null;
@@ -145,8 +149,8 @@ class EditorController {
     canvas.on('selection:cleared', () =>
       useEditorStore.getState().set({ selection: null, activeIds: [] }),
     );
-    canvas.on('object:added', () => this.onChanged());
-    canvas.on('object:removed', () => this.onChanged());
+    canvas.on('object:added', () => this.onStructuralChange());
+    canvas.on('object:removed', () => this.onStructuralChange());
     canvas.on('object:modified', () => {
       this.clearGuides();
       this.onChanged();
@@ -198,6 +202,15 @@ class EditorController {
     if (this.isRestoring || !this.canvas) return;
     this.refreshLayers();
     this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  /** Structural edits (add/remove/group) snapshot history immediately so undo is precise. */
+  private onStructuralChange() {
+    if (this.isRestoring || !this.canvas) return;
+    this.refreshLayers();
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.commitHistory();
     this.scheduleAutosave();
   }
 
@@ -258,7 +271,9 @@ class EditorController {
     this.isRestoring = true;
     try {
       await this.canvas.loadFromJSON(json);
-      this.canvas.requestRenderAll();
+      this.canvas?.requestRenderAll();
+    } catch {
+      // Canvas may have been disposed mid-load (e.g. fast navigation); ignore.
     } finally {
       this.isRestoring = false;
     }
@@ -874,3 +889,8 @@ function clip(text: string) {
 }
 
 export const editor = new EditorController();
+
+// Handy for debugging and automated smoke tests.
+if (typeof window !== 'undefined') {
+  (window as unknown as { gaiaEditor: EditorController }).gaiaEditor = editor;
+}
