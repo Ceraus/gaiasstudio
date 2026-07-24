@@ -47,6 +47,7 @@ const STEPS: Step[] = [
 const ALL_WORKFLOW_SCREENS: Screen[] = [
   ...STEPS.flatMap((s) => s.screens),
   'drafts',
+  'batch',
   'inventory',
   'promptBuilder',
 ];

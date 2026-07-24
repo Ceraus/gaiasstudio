@@ -25,10 +25,13 @@ import { seedRecipes } from '@/data/recipeSeed';
 // libraries on demand so the initial bundle stays light.
 const EditorScreen = lazy(() => import('@/components/screens/EditorScreen'));
 const ExportScreen = lazy(() => import('@/components/screens/ExportScreen'));
+// Mixed batch printing pulls in both Fabric (to rasterize each saved design)
+// and pdf-lib, so it stays out of the initial bundle too.
+const BatchPrintScreen = lazy(() => import('@/components/screens/BatchPrintScreen'));
 
 /** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings). */
 const STEPPER_SCREENS: Screen[] = [
-  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'inventory', 'promptBuilder',
+  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder',
 ];
 
 /** Library tabs shown in the center of the browsing-mode header. */
@@ -204,6 +207,7 @@ export default function Shell() {
           {screen === 'promptBuilder' && <PromptBuilderScreen />}
           {screen === 'sets'          && <LabelSetsScreen />}
           {screen === 'drafts'        && <DraftsScreen />}
+          {screen === 'batch'         && <BatchPrintScreen />}
         </Suspense>
       </main>
 
