@@ -124,6 +124,7 @@ export const useAppStore = create<AppState>((set) => ({
     const settings = await settingsRepo.get();
     if (settings.language !== i18n.language) await i18n.changeLanguage(settings.language);
     document.documentElement.lang = settings.language;
+    applyUiScale(settings.uiScale);
     set({ settings, settingsLoaded: true });
   },
 
@@ -133,6 +134,13 @@ export const useAppStore = create<AppState>((set) => ({
       await i18n.changeLanguage(patch.language);
       document.documentElement.lang = patch.language;
     }
+    if (patch.uiScale !== undefined) applyUiScale(next.uiScale);
     set({ settings: next });
   },
 }));
+
+/** Drives the rem-based interface zoom declared in index.css. */
+function applyUiScale(scale: number | undefined) {
+  const clamped = Math.min(1.6, Math.max(0.9, scale ?? 1.25));
+  document.documentElement.style.setProperty('--gaia-ui-scale', String(clamped));
+}

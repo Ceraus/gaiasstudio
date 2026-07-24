@@ -121,4 +121,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bleedIn: 0.0625,
   safeIn: 0.0625,
   onboarded: false,
+  uiScale: 1.25,
 };

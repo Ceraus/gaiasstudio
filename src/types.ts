@@ -187,6 +187,11 @@ export interface AppSettings {
   businessAddress?: string;
   /** Contact info (email, phone, or website) printed on back labels. */
   contact?: string;
+  /**
+   * Interface zoom (1 = 100%). Defaults to 1.25 so every control and label is
+   * 25% larger out of the box.
+   */
+  uiScale?: number;
   /** Enables the floating debug panel in production builds. */
   debugMode?: boolean;
   /** Show/hide the Label Sets tab in navigation (default: false). */

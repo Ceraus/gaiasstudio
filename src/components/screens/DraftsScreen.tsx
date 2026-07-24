@@ -624,6 +624,7 @@ function DraftCard({
 
   return (
     <div
+      data-testid="draft-card"
       className={`group flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition hover:shadow-md ${
         isActive ? 'border-orange-400 ring-2 ring-orange-200' : 'border-slate-200'
       }`}
@@ -632,6 +633,7 @@ function DraftCard({
       {/* Collection header — the instant visual identifier for a product line */}
       {collection && (
         <div
+          data-testid="draft-collection-header"
           className="truncate px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide"
           style={{ background: collection.color, color: readableTextOn(collection.color) }}
         >

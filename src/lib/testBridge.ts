@@ -10,6 +10,7 @@
 
 import type { AveryDataset, Ingredient, LabelContext, Recipe } from '@/types';
 import { useAppStore } from '@/store/useAppStore';
+import { useEditorStore } from '@/store/useEditorStore';
 import dataset from '@/data/averyTemplates.json';
 
 interface GaiaEditorLike {
@@ -31,6 +32,13 @@ export interface GaiaTestApi {
     quantity: number,
     fillSheet: boolean,
   ) => Promise<{ pages: number; width: number; height: number }>;
+  /** Mixed batch sheet built from the live canvas, repeated with the given counts. */
+  buildBatchPdf: (
+    quantities: number[],
+  ) => Promise<{ pages: number; width: number; height: number; slots: number }>;
+  /** Writes a deterministic set of collections + drafts for Workspace UI tests. */
+  seedWorkspace: () => Promise<{ collections: number; drafts: number }>;
+  clearWorkspace: () => Promise<void>;
 }
 
 const data = dataset as unknown as AveryDataset;
@@ -92,8 +100,76 @@ const api: GaiaTestApi = {
     const { width, height } = first.getSize();
     return { pages: doc.getPageCount(), width, height };
   },
+
+  buildBatchPdf: async (quantities) => {
+    const template = useAppStore.getState().template;
+    if (!template) throw new Error('no active template');
+    const editor = (window as unknown as { gaiaEditor: GaiaEditorLike }).gaiaEditor;
+    const png = editor.exportLabelPng();
+    const { buildMixedSheetPdf, planBatchSlots } = await import('@/lib/pdfExport');
+    const items = quantities.map((quantity) => ({ pngDataUrl: png, quantity }));
+    const bytes = await buildMixedSheetPdf({ template, items });
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.load(bytes);
+    const { width, height } = doc.getPage(0).getSize();
+    return { pages: doc.getPageCount(), width, height, slots: planBatchSlots(items).length };
+  },
+
+  seedWorkspace: async () => {
+    const { collectionsRepo, draftsRepo, recipesRepo, ingredientsRepo } = await import('@/db/repositories');
+    const oily = await collectionsRepo.create('Oily Skin', '#a7d7c5');
+    const gifts = await collectionsRepo.create('Holiday Gifts', '#f6c6c0');
+
+    const lavender = await ingredientsRepo.create({
+      name: 'Lavender Essential Oil',
+      benefit: 'Calming',
+      isSoapBase: false,
+      active: true,
+    });
+    const recipe = await recipesRepo.create({
+      name: 'Charcoal Detox',
+      ingredientIds: [lavender.id],
+      benefit: 'Deep cleansing',
+    });
+
+    const tpl = data.templates[0];
+    await draftsRepo.save({
+      name: 'Mint Bar Front',
+      designJson: '{"objects":[]}',
+      templateId: tpl.id,
+      context: 'front',
+      collectionId: oily.id,
+      recipeId: recipe.id,
+    });
+    await draftsRepo.save({
+      name: 'Cocoa Bar Front',
+      designJson: '{"objects":[]}',
+      templateId: tpl.id,
+      context: 'front',
+      collectionId: gifts.id,
+    });
+    await draftsRepo.save({
+      name: 'Unsorted Sample',
+      designJson: '{"objects":[]}',
+      templateId: tpl.id,
+      context: 'front',
+    });
+
+    return { collections: 2, drafts: 3 };
+  },
+
+  clearWorkspace: async () => {
+    const { db } = await import('@/db/db');
+    await Promise.all([db.drafts.clear(), db.collections.clear()]);
+  },
 };
 
 if (typeof window !== 'undefined') {
   (window as unknown as { gaiaTest: GaiaTestApi }).gaiaTest = api;
+  // The smoke test drives screen navigation and editor view toggles through the
+  // same stores the UI uses, rather than reaching into React internals.
+  (window as unknown as { gaiaTestStores: unknown }).gaiaTestStores = {
+    useAppStore,
+    useEditorStore,
+  };
 }

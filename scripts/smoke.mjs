@@ -10,6 +10,8 @@
 //   • a 25-ingredient back label fits inside the safe zone
 //   • a transparent logo survives to the exported PNG/PDF
 //   • PDF export yields correct page counts at 612×792pt US Letter
+//   • photo adjustments, drag-to-reorder, object clipboard, inch rulers
+//   • mixed batch sheets, Workspace search / collections, 125% interface scale
 //
 // Chrome/Edge is located automatically; override with CHROME_PATH=... if needed.
 // ---------------------------------------------------------------------------
@@ -287,6 +289,141 @@ async function main() {
       'PDF page is US Letter (612×792pt)',
       Math.round(pdf1.width) === 612 && Math.round(pdf1.height) === 792,
       `${Math.round(pdf1.width)}×${Math.round(pdf1.height)}pt`,
+    );
+
+    // --- G. Photo adjustments (brightness / contrast / saturation) ---------
+    const adjust = await page.evaluate(async () => {
+      const e = window.gaiaEditor;
+      const img = e.canvas.getObjects().find((o) => o.type === 'image');
+      e.canvas.setActiveObject(img);
+      e.setImageAdjust({ brightness: 0.4, contrast: -0.2 });
+      // The filter rebuild is coalesced into one animation frame.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const filterCount = (img.filters || []).length;
+      const stored = img.gaiaAdjust;
+      const survivesSave = JSON.parse(e.serialize()).objects.some(
+        (o) => o.gaiaAdjust && o.gaiaAdjust.brightness === 0.4,
+      );
+      e.resetImageAdjust();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { filterCount, stored, survivesSave, afterReset: (img.filters || []).length };
+    });
+    check('image adjustments build one filter per changed amount', adjust.filterCount === 2, `filters=${adjust.filterCount}`);
+    check('image adjustment amounts are stored on the object', adjust.stored && adjust.stored.brightness === 0.4);
+    check('image adjustments survive serialization', adjust.survivesSave);
+    check('reset clears every image filter', adjust.afterReset === 0);
+
+    // --- H. Layers: drag-to-reorder ----------------------------------------
+    const reorder = await page.evaluate(() => {
+      const e = window.gaiaEditor;
+      const visible = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
+      const before = visible();
+      // The panel lists top-most first, so index 0 == front of the stack.
+      const bottom = before[0];
+      e.reorderLayer(bottom.id, 0);
+      const after = visible();
+      return { movedToFront: after[after.length - 1].id === bottom.id, count: after.length, wasCount: before.length };
+    });
+    check('drag-to-reorder moves a layer to the front', reorder.movedToFront);
+    check('reorder keeps every layer', reorder.count === reorder.wasCount, `layers=${reorder.count}`);
+
+    // --- I. Object clipboard (copy / paste) --------------------------------
+    const clipboard = await page.evaluate(async () => {
+      const e = window.gaiaEditor;
+      const count = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__')).length;
+      const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
+      const source = objs[objs.length - 1];
+      e.canvas.setActiveObject(source);
+      const copied = e.copySelected();
+      const before = count();
+      await e.pasteClipboard();
+      const after = count();
+      const pastedId = e.canvas.getActiveObject()?.id;
+      // Deleting the original must not stop a further paste.
+      e.canvas.setActiveObject(source);
+      e.deleteSelected();
+      await e.pasteClipboard();
+      return { copied, added: after - before, freshId: pastedId !== source.id, afterDelete: count() === after };
+    });
+    check('copy reports success', clipboard.copied === true);
+    check('paste adds exactly one layer', clipboard.added === 1, `added=${clipboard.added}`);
+    check('pasted object gets a fresh id', clipboard.freshId);
+    check('clipboard survives deleting the original', clipboard.afterDelete);
+
+    // --- J. Mixed batch sheet ----------------------------------------------
+    const batchOne = await page.evaluate((per) => window.gaiaTest.buildBatchPdf([Math.ceil(per / 2), Math.floor(per / 2)]), tpl.perSheet);
+    const batchTwo = await page.evaluate((per) => window.gaiaTest.buildBatchPdf([per, per, 1]), tpl.perSheet);
+    check('mixed batch fills exactly one sheet', batchOne.pages === 1 && batchOne.slots === tpl.perSheet, `slots=${batchOne.slots}`);
+    check('mixed batch overflows onto more sheets', batchTwo.pages === 3, `pages=${batchTwo.pages}`);
+    check(
+      'mixed batch page is US Letter (612×792pt)',
+      Math.round(batchOne.width) === 612 && Math.round(batchOne.height) === 792,
+      `${Math.round(batchOne.width)}×${Math.round(batchOne.height)}pt`,
+    );
+
+    // --- K. Inch rulers -----------------------------------------------------
+    const rulers = await page.evaluate(async () => {
+      const { useEditorStore } = window.gaiaTestStores;
+      const before = document.querySelectorAll('canvas').length;
+      useEditorStore.getState().set({ rulersVisible: true });
+      await new Promise((r) => setTimeout(r, 120));
+      const withRulers = document.querySelectorAll('canvas').length;
+      useEditorStore.getState().set({ rulersVisible: false });
+      await new Promise((r) => setTimeout(r, 120));
+      return { before, withRulers, after: document.querySelectorAll('canvas').length };
+    });
+    check('ruler toggle adds two ruler canvases', rulers.withRulers === rulers.before + 2, `${rulers.before} → ${rulers.withRulers}`);
+    check('ruler toggle removes them again', rulers.after === rulers.before);
+
+    // --- L. Interface scale -------------------------------------------------
+    const scale = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+    check('interface renders 25% larger by default', Math.abs(scale - 20) < 0.5, `root font-size=${scale}px`);
+
+    // --- M. Workspace search, collections and batch selection ---------------
+    const workspace = await page.evaluate(async () => {
+      await window.gaiaTest.clearWorkspace();
+      await window.gaiaTest.seedWorkspace();
+      window.gaiaTestStores.useAppStore.getState().goto('drafts');
+      await new Promise((r) => setTimeout(r, 350));
+
+      const cards = () => document.querySelectorAll('[data-testid="draft-card"]').length;
+      const search = document.querySelector('input[type="search"]');
+      const setSearch = async (value) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(search, value);
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 120));
+        return cards();
+      };
+
+      const all = cards();
+      const byName = await setSearch('cocoa');
+      // "lavender" only appears as an ingredient of the recipe behind one design.
+      const byIngredient = await setSearch('lavender');
+      const byCollection = await setSearch('holiday');
+      const noMatch = await setSearch('zzzznope');
+      await setSearch('');
+
+      const chips = [...document.querySelectorAll('button[aria-pressed]')]
+        .map((b) => b.textContent || '')
+        .filter((txt) => /Oily Skin|Holiday Gifts|Unfiled/.test(txt));
+
+      const headers = [...document.querySelectorAll('[data-testid="draft-collection-header"]')]
+        .map((d) => getComputedStyle(d).backgroundColor);
+
+      await window.gaiaTest.clearWorkspace();
+      return { all, byName, byIngredient, byCollection, noMatch, chips: chips.length, headers };
+    });
+    check('workspace lists every saved design', workspace.all === 3, `cards=${workspace.all}`);
+    check('search matches a design name', workspace.byName === 1, `cards=${workspace.byName}`);
+    check('search reaches through recipe to ingredient', workspace.byIngredient === 1, `cards=${workspace.byIngredient}`);
+    check('search matches a collection name', workspace.byCollection === 1, `cards=${workspace.byCollection}`);
+    check('search with no matches shows nothing', workspace.noMatch === 0);
+    check('collection filter chips are rendered', workspace.chips === 3, `chips=${workspace.chips}`);
+    check(
+      'cards are colour-coded by collection',
+      workspace.headers.length === 2 && new Set(workspace.headers).size === 2,
+      workspace.headers.join(' / '),
     );
 
     check('no uncaught page errors', pageErrors.length === 0, pageErrors[0] || '');

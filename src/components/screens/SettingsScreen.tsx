@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Building2, Bug, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Palette, Plus, Ruler, Trash2, X } from 'lucide-react';
+import { Building2, Bug, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Palette, Plus, Ruler, Trash2, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useLibraryStore } from '@/store/useLibraryStore';
+
+/** Interface zoom presets. 125% is the default for readability. */
+const UI_SCALES = [1, 1.1, 1.25, 1.4];
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -75,6 +78,35 @@ export default function SettingsScreen() {
                   {lng === 'en' ? t('settings.english') : t('settings.spanish')}
                 </button>
               ))}
+            </div>
+          </section>
+
+          <section className="card">
+            <p className="label flex items-center gap-2">
+              <ZoomIn className="h-4 w-4" /> {t('settings.uiScale', 'Interface size')}
+            </p>
+            <p className="mb-3 text-xs text-slate-400">
+              {t('settings.uiScaleHint', 'Makes every button and label bigger or smaller. The canvas has its own zoom.')}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {UI_SCALES.map((scale) => {
+                const active = Math.abs((settings.uiScale ?? 1.25) - scale) < 0.001;
+                return (
+                  <button
+                    key={scale}
+                    aria-pressed={active}
+                    onClick={() => void updateSettings({ uiScale: scale })}
+                    className={`btn ${active ? 'btn-primary' : 'btn-secondary'}`}
+                  >
+                    {Math.round(scale * 100)}%
+                    {scale === 1.25 && (
+                      <span className="text-[10px] font-normal opacity-70">
+                        {t('settings.uiScaleDefault', 'default')}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </section>
 
