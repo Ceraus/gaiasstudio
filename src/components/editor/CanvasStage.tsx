@@ -11,6 +11,55 @@ import { fileToDataUrl, isImageFile, normalizeImage } from '@/lib/files';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
+/** Thickness (screen px) of the physical inch-ruler gutters. */
+const RULER = 22;
+
+/**
+ * A crisp SVG inch-ruler with quarter-inch minor ticks. `offsetPx` is where the
+ * label trim edge sits (after the bleed); ticks span the label's physical size.
+ */
+function Ruler({
+  orientation,
+  inches,
+  pxPerInch,
+  offsetPx,
+  lengthPx,
+}: {
+  orientation: 'h' | 'v';
+  inches: number;
+  pxPerInch: number;
+  offsetPx: number;
+  lengthPx: number;
+}) {
+  const quarter = pxPerInch / 4;
+  const steps = Math.round(inches * 4);
+  const nodes: React.ReactNode[] = [];
+  for (let q = 0; q <= steps; q++) {
+    const pos = offsetPx + q * quarter;
+    const isInch = q % 4 === 0;
+    const isHalf = q % 2 === 0;
+    const len = isInch ? 11 : isHalf ? 7 : 4;
+    if (orientation === 'h') {
+      nodes.push(<line key={`k${q}`} x1={pos} y1={RULER} x2={pos} y2={RULER - len} stroke="#94a3b8" strokeWidth={1} />);
+      if (isInch) nodes.push(<text key={`t${q}`} x={pos + 2} y={9} fontSize={8} fill="#64748b">{q / 4}</text>);
+    } else {
+      nodes.push(<line key={`k${q}`} x1={RULER} y1={pos} x2={RULER - len} y2={pos} stroke="#94a3b8" strokeWidth={1} />);
+      if (isInch && q > 0) nodes.push(<text key={`t${q}`} x={3} y={pos + 3} fontSize={8} fill="#64748b">{q / 4}</text>);
+    }
+  }
+  return (
+    <svg
+      width={orientation === 'h' ? lengthPx : RULER}
+      height={orientation === 'h' ? RULER : lengthPx}
+      className="block"
+      aria-hidden="true"
+    >
+      <rect width="100%" height="100%" fill="#f8fafc" />
+      {nodes}
+    </svg>
+  );
+}
+
 export default function CanvasStage() {
   const { t } = useTranslation();
   const template = useAppStore((s) => s.template);
@@ -21,6 +70,7 @@ export default function CanvasStage() {
   const zoom = useEditorStore((s) => s.zoom);
   const layers = useEditorStore((s) => s.layers);
   const cropMode = useEditorStore((s) => s.cropMode);
+  const rulerVisible = useEditorStore((s) => s.rulerVisible);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -193,28 +243,63 @@ export default function CanvasStage() {
       onWheel={handleWheel}
     >
       <div className="flex min-h-full min-w-full items-center justify-center p-10">
-        <div style={{ width: baseW * zoom, height: baseH * zoom }} className="relative">
-          <div
-            className="shadow-2xl overflow-hidden"
-            style={{
-              width: baseW,
-              height: baseH,
-              transform: `scale(${zoom})`,
-              transformOrigin: 'top left',
-              willChange: 'transform',
-            }}
-          >
-            <canvas ref={canvasRef} style={{ display: 'block' }} />
-          </div>
-
-          {layers.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-              <div className="max-w-[80%] rounded-2xl bg-white/85 px-5 py-4 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-200">
-                <MousePointerSquareDashed className="mx-auto mb-2 h-6 w-6 text-gaia-400" />
-                {t('editor.emptyCanvas')}
+        <div
+          className="relative"
+          style={{ paddingTop: rulerVisible ? RULER : 0, paddingLeft: rulerVisible ? RULER : 0 }}
+        >
+          {rulerVisible && template && (
+            <>
+              {/* Corner box */}
+              <div
+                className="absolute left-0 top-0 border border-slate-200 bg-slate-50"
+                style={{ width: RULER, height: RULER }}
+              />
+              {/* Top ruler */}
+              <div className="absolute top-0 border-b border-slate-200" style={{ left: RULER }}>
+                <Ruler
+                  orientation="h"
+                  inches={template.labelWidthIn}
+                  pxPerInch={EDITOR_PPI * zoom}
+                  offsetPx={bleed * EDITOR_PPI * zoom}
+                  lengthPx={baseW * zoom}
+                />
               </div>
-            </div>
+              {/* Left ruler */}
+              <div className="absolute left-0 border-r border-slate-200" style={{ top: RULER }}>
+                <Ruler
+                  orientation="v"
+                  inches={template.labelHeightIn}
+                  pxPerInch={EDITOR_PPI * zoom}
+                  offsetPx={bleed * EDITOR_PPI * zoom}
+                  lengthPx={baseH * zoom}
+                />
+              </div>
+            </>
           )}
+
+          <div style={{ width: baseW * zoom, height: baseH * zoom }} className="relative">
+            <div
+              className="shadow-2xl overflow-hidden"
+              style={{
+                width: baseW,
+                height: baseH,
+                transform: `scale(${zoom})`,
+                transformOrigin: 'top left',
+                willChange: 'transform',
+              }}
+            >
+              <canvas ref={canvasRef} style={{ display: 'block' }} />
+            </div>
+
+            {layers.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+                <div className="max-w-[80%] rounded-2xl bg-white/85 px-5 py-4 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-200">
+                  <MousePointerSquareDashed className="mx-auto mb-2 h-6 w-6 text-gaia-400" />
+                  {t('editor.emptyCanvas')}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

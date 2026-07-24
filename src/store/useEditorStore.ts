@@ -60,6 +60,8 @@ interface EditorState {
   overlayVisible: boolean;
   guidesEnabled: boolean;
   legibilityOverlayVisible: boolean;
+  /** Physical inch-ruler along the top & left edges of the canvas. */
+  rulerVisible: boolean;
   cropMode: boolean;
   zoom: number;
   historyTick: number;
@@ -79,6 +81,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   overlayVisible: true,
   guidesEnabled: true,
   legibilityOverlayVisible: true,
+  rulerVisible: false,
   cropMode: false,
   zoom: 1,
   historyTick: 0,

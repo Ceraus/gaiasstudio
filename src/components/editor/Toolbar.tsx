@@ -44,6 +44,7 @@ import {
   Paintbrush,
   Plus,
   Redo2,
+  Ruler,
   SquareDashed,
   Strikethrough,
   Trash2,
@@ -400,6 +401,7 @@ export default function Toolbar() {
   const overlayVis              = useEditorStore((s) => s.overlayVisible);
   const guidesEnabled           = useEditorStore((s) => s.guidesEnabled);
   const legibilityOverlayVisible = useEditorStore((s) => s.legibilityOverlayVisible);
+  const rulerVisible            = useEditorStore((s) => s.rulerVisible);
   const hasStyleCopied          = useEditorStore((s) => s.hasStyleCopied);
   const brandColors    = useAppStore((s) => s.settings.brandColors);
 
@@ -550,6 +552,7 @@ export default function Toolbar() {
       <Btn icon={Magnet}       title={t('editor.toggleGuides')}            active={guidesEnabled}            onClick={() => editor.setGuidesEnabled(!guidesEnabled)} />
       <Btn icon={SquareDashed} title={overlayVis ? t('editor.guidesOn', 'Guides On') : t('editor.guidesOff', 'Guides Off')} active={overlayVis} onClick={() => editor.setOverlayVisible(!overlayVis)} />
       <Btn icon={Eye}          title={t('editor.toggleLegibilityOverlay', 'Legibility overlay')} active={legibilityOverlayVisible} onClick={() => editor.toggleLegibilityOverlay()} />
+      <Btn icon={Ruler}        title={t('editor.toggleRuler', 'Ruler (inches)')} active={rulerVisible} onClick={() => useEditorStore.getState().set({ rulerVisible: !rulerVisible })} />
     </div>
   );
 }
