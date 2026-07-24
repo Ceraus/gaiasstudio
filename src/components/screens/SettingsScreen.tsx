@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Building2, Bug, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Palette, Plus, Ruler, Trash2, X } from 'lucide-react';
+import { Building2, Bug, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Palette, Plus, Ruler, Trash2, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
@@ -75,6 +75,33 @@ export default function SettingsScreen() {
                   {lng === 'en' ? t('settings.english') : t('settings.spanish')}
                 </button>
               ))}
+            </div>
+          </section>
+
+          <section className="card">
+            <p className="label flex items-center gap-2">
+              <ZoomIn className="h-4 w-4" /> {t('settings.displaySize', 'Display size')}
+            </p>
+            <p className="mb-3 text-xs text-slate-400">
+              {t('settings.displaySizeHint', 'Make the whole app larger for easier reading. The label canvas is unaffected.')}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { v: 1, label: t('settings.scale100', '100%') },
+                { v: 1.15, label: t('settings.scale115', '115%') },
+                { v: 1.25, label: `${t('settings.scale125', '125%')} · ${t('settings.scaleRecommended', 'Larger')}` },
+              ] as const).map(({ v, label }) => {
+                const active = (settings.uiScale ?? 1) === v;
+                return (
+                  <button
+                    key={v}
+                    onClick={() => void updateSettings({ uiScale: v })}
+                    className={`btn ${active ? 'btn-primary' : 'btn-secondary'}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </section>
 
