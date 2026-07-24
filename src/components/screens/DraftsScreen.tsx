@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -116,7 +116,7 @@ export default function DraftsScreen() {
 
   /**
    * One lower-cased haystack per design: its own name and notes plus the names
-   * of the things it is filed under — template, collection, recipe and every
+   * of the things it is filed under â€” template, collection, recipe and every
    * ingredient in that recipe. Searching "lavender" finds a label whose recipe
    * simply contains lavender oil.
    */
@@ -203,13 +203,12 @@ export default function DraftsScreen() {
             )}
           </div>
           {tab === 'workspace' && (
-            <button
-              className="btn-primary shrink-0"
-              onClick={() => goto('template')}
-            >
-              <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">{t('nav.newLabel')}</span>
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button className="btn-primary" onClick={() => goto('template')}>
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">{t('nav.newLabel')}</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -250,7 +249,7 @@ export default function DraftsScreen() {
                   <input
                     className="input pl-9 pr-9"
                     type="search"
-                    placeholder={t('drafts.searchPlaceholder', 'Search by design, recipe, ingredient or collection…')}
+                    placeholder={t('drafts.searchPlaceholder', 'Search by design, recipe, ingredient or collectionâ€¦')}
                     aria-label={t('drafts.searchLabel', 'Search designs')}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -357,7 +356,7 @@ export default function DraftsScreen() {
         {tab === 'pdfvault' && <PdfVaultPanel />}
       </div>
 
-      {/* Batch-print action bar — appears once designs are ticked */}
+      {/* Batch-print action bar â€” appears once designs are ticked */}
       {tab === 'workspace' && selectedIds.length > 0 && (
         <div className="sticky bottom-4 z-20 mx-auto mt-6 flex w-full max-w-md items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-panel">
           <CheckSquare className="h-4 w-4 shrink-0 text-gaia-300" />
@@ -460,7 +459,7 @@ function FilterChip({
 // ---------------------------------------------------------------------------
 function PdfVaultPanel() {
   const { t } = useTranslation();
-  // Stabilize reference — the API object is always the same singleton or null.
+  // Stabilize reference â€” the API object is always the same singleton or null.
   const apiRef = useRef(getElectronVaultAPI());
   const api = apiRef.current;
 
@@ -630,7 +629,7 @@ function DraftCard({
       }`}
       style={accent && !isActive ? { borderColor: accent, boxShadow: `inset 0 0 0 1px ${accent}` } : undefined}
     >
-      {/* Collection header — the instant visual identifier for a product line */}
+      {/* Collection header â€” the instant visual identifier for a product line */}
       {collection && (
         <div
           data-testid="draft-collection-header"
@@ -749,11 +748,8 @@ function DraftCard({
         </p>
 
         {/* Actions */}
-        <div className="mt-2 flex gap-2">
-          <button
-            className="btn-primary flex-1"
-            onClick={onOpen}
-          >
+        <div className="mt-2 flex items-center gap-1.5">
+          <button className="btn-primary flex-1" onClick={onOpen}>
             {t('drafts.open', 'Open')}
           </button>
           <button
@@ -777,3 +773,4 @@ function DraftCard({
     </div>
   );
 }
+
