@@ -191,6 +191,11 @@ export interface AppSettings {
   debugMode?: boolean;
   /** Show/hide the Label Sets tab in navigation (default: false). */
   showLabelSets?: boolean;
+  /**
+   * Global UI zoom for accessibility, applied as a root font-scale multiplier.
+   * 1 = 100% (default), 1.25 = 125% larger. Kept between 1 and 1.5.
+   */
+  uiScale?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +215,16 @@ export interface Draft {
   thumb?: string;
   /** Optional notes */
   notes?: string;
+  /**
+   * Optional collection / product line this design belongs to (e.g. "Oily Skin",
+   * "Holiday 2025"). Used by the Workspace dashboard for grouping and filtering.
+   */
+  collection?: string;
+  /**
+   * Optional hex accent color for the collection (e.g. "#a7d3a0"). Drives the
+   * color-coded card border/header so a maker can spot a product line at a glance.
+   */
+  color?: string;
   createdAt: number;
   updatedAt: number;
 }

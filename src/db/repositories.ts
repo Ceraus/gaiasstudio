@@ -210,6 +210,29 @@ export const draftsRepo = {
   async rename(id: string, name: string) {
     await db.drafts.update(id, { name, updatedAt: Date.now() });
   },
+  /** Assigns (or clears) a collection label + accent color on a draft. */
+  async setCollection(id: string, collection?: string, color?: string) {
+    await db.drafts.update(id, {
+      collection: collection?.trim() || undefined,
+      color: color || undefined,
+      updatedAt: Date.now(),
+    });
+  },
+  /** Deep-copies a draft into a new record ("… copy"), preserving all design data. */
+  async duplicate(id: string): Promise<Draft | undefined> {
+    const src = await db.drafts.get(id);
+    if (!src) return undefined;
+    const now = Date.now();
+    const copy: Draft = {
+      ...src,
+      id: uid(),
+      name: `${src.name} copy`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.drafts.add(copy);
+    return copy;
+  },
   remove: (id: string) => db.drafts.delete(id),
 };
 

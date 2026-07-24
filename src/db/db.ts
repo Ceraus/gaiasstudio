@@ -99,6 +99,13 @@ export class GaiaDatabase extends Dexie {
     this.version(8).stores({
       setPurchases: 'id, name, createdAt',
     });
+
+    // Version 9 — adds a `collection` index to drafts so the Workspace dashboard
+    // can group/filter designs by product line. `color` is a plain (unindexed)
+    // field, so no data migration is required for existing rows.
+    this.version(9).stores({
+      drafts: 'id, name, templateId, collection, createdAt, updatedAt',
+    });
   }
 }
 
