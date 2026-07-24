@@ -1270,6 +1270,56 @@ class EditorController {
   }
 
 
+  /**
+   * Renders a serialized design (saved draft JSON) to a trim-region PNG on an
+   * off-screen Fabric canvas — no live editor required. Used by Mixed Batch
+   * Printing to rasterize several different saved designs for one Avery sheet.
+   */
+  async renderDesignJsonToPng(
+    canvasJson: string,
+    template: AveryTemplate,
+    settings: AppSettings,
+    ppi = EXPORT_PPI,
+  ): Promise<string> {
+    const bleedPx = (settings.bleedIn ?? 0.0625) * EDITOR_PPI;
+    const labelW = template.labelWidthIn * EDITOR_PPI;
+    const labelH = template.labelHeightIn * EDITOR_PPI;
+    const totalW = Math.round(labelW + bleedPx * 2);
+    const totalH = Math.round(labelH + bleedPx * 2);
+
+    configureFabricOnce();
+
+    const el = document.createElement('canvas');
+    el.width = totalW;
+    el.height = totalH;
+
+    const fc = new fabric.Canvas(el, {
+      width: totalW,
+      height: totalH,
+      backgroundColor: '#ffffff',
+      renderOnAddRemove: false,
+    });
+    try {
+      const parsed = JSON.parse(canvasJson) as { objects?: unknown[] };
+      await fc.loadFromJSON(parsed);
+      if (!fc.backgroundColor) fc.backgroundColor = '#ffffff';
+      fc.discardActiveObject();
+      fc.renderAll();
+      return fc.toDataURL({
+        left: bleedPx,
+        top: bleedPx,
+        width: labelW,
+        height: labelH,
+        multiplier: ppi / EDITOR_PPI,
+        format: 'png',
+      });
+    } finally {
+      fc.dispose();
+      el.remove();
+    }
+  }
+
+
   // -- background & auto-layout helpers -------------------------------------
 
   /**
