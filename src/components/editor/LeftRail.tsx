@@ -125,7 +125,7 @@ function ShapeFlyout({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   return (
     <div
-      className="absolute left-full top-0 z-50 ml-2 min-w-[140px] rounded-xl bg-gray-800 p-2 shadow-2xl ring-1 ring-gray-600"
+      className="absolute left-full top-0 z-50 ml-2 min-w-[8.75rem] rounded-xl bg-gray-800 p-2 shadow-2xl ring-1 ring-gray-600"
       onMouseLeave={onClose}
     >
       <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
@@ -263,7 +263,7 @@ function FloatingToolbar({
         disabled:cursor-not-allowed disabled:opacity-30
         ${active ? 'bg-gaia-600 text-white' : danger ? 'text-rose-400 hover:bg-rose-900/30' : 'text-gray-300 hover:bg-gray-600 hover:text-white'}`}
     >
-      <Icon className="h-[16px] w-[16px]" />
+      <Icon className="h-4 w-4" />
     </button>
   );
 
@@ -380,14 +380,14 @@ export default function LeftRail() {
     return (
       <>
         {/* Minimal collapsed strip */}
-        <aside className="flex w-[80px] shrink-0 flex-col items-center bg-gray-900 py-2">
+        <aside className="flex w-20 shrink-0 flex-col items-center bg-gray-900 py-2">
           <button
             title={t('editor.tools.dockToolbar')}
             aria-label={t('editor.tools.dockToolbar')}
             onClick={() => setFloating(false)}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-300 transition hover:bg-gray-700 hover:text-white"
           >
-            <PanelLeft className="h-[18px] w-[18px]" />
+            <PanelLeft className="h-[1.125rem] w-[1.125rem]" />
           </button>
         </aside>
 
@@ -408,7 +408,7 @@ export default function LeftRail() {
     <aside className="flex shrink-0 flex-row">
 
       {/* ── 80px icon strip ──────────────────────────────────────────────────── */}
-      <div className="relative flex w-[80px] shrink-0 flex-col overflow-y-auto bg-gray-900 py-1.5">
+      <div className="relative flex w-20 shrink-0 flex-col overflow-y-auto bg-gray-900 py-1.5">
 
         {qrOpen && <QrCodeModal open={qrOpen} onClose={() => setQrOpen(false)} />}
 

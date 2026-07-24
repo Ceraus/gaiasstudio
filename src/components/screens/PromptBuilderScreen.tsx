@@ -408,7 +408,7 @@ export default function PromptBuilderScreen() {
     <div className="flex h-full min-w-0 overflow-x-hidden overflow-y-hidden">
 
       {/* ── LEFT: Controls (scrollable) ──────────────────────────────────── */}
-      <div className="flex w-[460px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-gaia-50 p-5">
+      <div className="flex w-[28.75rem] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-gaia-50 p-5">
 
         {/* Header */}
         <div className="flex items-center gap-3">

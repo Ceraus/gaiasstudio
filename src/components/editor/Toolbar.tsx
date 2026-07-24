@@ -120,7 +120,7 @@ function Popover({
     >
       {trigger(open, () => setOpen((o) => !o))}
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 min-w-[200px] rounded-2xl bg-white p-3 shadow-xl ring-1 ring-slate-200">
+        <div className="absolute left-0 top-full z-50 mt-1 min-w-[12.5rem] rounded-2xl bg-white p-3 shadow-xl ring-1 ring-slate-200">
           {children}
         </div>
       )}
@@ -419,7 +419,7 @@ export default function Toolbar() {
   const set = (patch: Record<string, unknown>) => void editor.setActiveProps(patch);
 
   return (
-    <div className="no-scrollbar flex min-h-[44px] items-center gap-1 overflow-x-auto border-b border-slate-200 bg-white px-2 py-1">
+    <div className="no-scrollbar flex min-h-[2.75rem] items-center gap-1 overflow-x-auto border-b border-slate-200 bg-white px-2 py-1">
 
       {/* ── TEXT CONTEXT ───────────────────────────────────────────────── */}
       {isText && (

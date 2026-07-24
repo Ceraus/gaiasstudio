@@ -365,7 +365,7 @@ export default function IngredientsScreen() {
               />
             </div>
 
-            <div className="max-h-[480px] space-y-1.5 overflow-y-auto pr-1">
+            <div className="max-h-[30rem] space-y-1.5 overflow-y-auto pr-1">
               {filteredInactive.length === 0 ? (
                 <div className="rounded-xl bg-white py-8 text-center text-sm text-slate-400 ring-1 ring-slate-100">
                   {inactiveQuery ? t('ingredients.noResults', 'No results') : t('ingredients.allActive', 'All seeded — great!')}
@@ -402,7 +402,7 @@ export default function IngredientsScreen() {
                 onChange={(e) => setActiveQuery(e.target.value)}
               />
             </div>
-            <div className="max-h-[480px] space-y-1.5 overflow-y-auto pr-1">
+            <div className="max-h-[30rem] space-y-1.5 overflow-y-auto pr-1">
               {filteredActive.length === 0 ? (
                 <div className="rounded-xl border-2 border-dashed border-gaia-200 bg-gaia-50 py-8 text-center">
                   <Star className="mx-auto mb-2 h-6 w-6 text-gaia-300" />

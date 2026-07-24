@@ -1628,6 +1628,7 @@ export function applyCurveToText(text: fabric.Textbox, amount: number) {
   if (clamped === 0) {
     (text as { path?: unknown }).path = undefined;
     g.gaiaCurve = 0;
+    text.set('objectCaching', true);
   } else {
     const width = text.width || 200;
     const path = buildCurvePath(width, clamped);
@@ -1635,6 +1636,11 @@ export function applyCurveToText(text: fabric.Textbox, amount: number) {
       text.set({ path, pathAlign: 'center', pathStartOffset: 0, pathSide: 'left' } as never);
     }
     g.gaiaCurve = clamped;
+    // Fabric sizes an object's cache canvas from the text box, which knows
+    // nothing about how far the arc rises above it — a deeply curved headline
+    // gets its ascenders sliced off along the arc. Rendering uncached costs a
+    // little redraw time and is correct at any curve amount.
+    text.set('objectCaching', false);
   }
   text.set('dirty', true);
 }

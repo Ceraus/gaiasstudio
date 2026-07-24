@@ -449,7 +449,7 @@ export default function RecipesScreen() {
                 <div>
                   <label className="label">{t('recipes.directions')}</label>
                   <textarea
-                    className="input min-h-[64px]"
+                    className="input min-h-16"
                     placeholder={t('recipes.directionsPlaceholder')}
                     value={form.directions}
                     onChange={(e) => setForm({ ...form, directions: e.target.value })}
@@ -458,7 +458,7 @@ export default function RecipesScreen() {
                 <div>
                   <label className="label">{t('recipes.warnings')}</label>
                   <textarea
-                    className="input min-h-[64px]"
+                    className="input min-h-16"
                     placeholder={t('recipes.warningsPlaceholder')}
                     value={form.warnings}
                     onChange={(e) => setForm({ ...form, warnings: e.target.value })}

@@ -1,8 +1,8 @@
 import * as fabric from 'fabric';
 import i18next from 'i18next';
 import type { AppSettings, Ingredient, LabelContext, Recipe } from '@/types';
-import { editor } from '@/lib/fabric/editorController';
-import { ptToPx } from '@/lib/units';
+import { applyCurveToText, editor } from '@/lib/fabric/editorController';
+import { EDITOR_PPI, ptToPx } from '@/lib/units';
 import { loadFont } from '@/lib/fontManager';
 
 const HEADING_FONT = 'Playfair Display';
@@ -145,7 +145,7 @@ export async function applyAutoLayout(
   clearForLayout();
 
   if (context === 'front') {
-    layoutFront(recipe, str, ingredients, settings);
+    layoutFront(recipe, str, settings, isRound);
   } else if (context === 'back') {
     if (isRound) {
       layoutRoundBack(recipe, ingredients, str, settings);
@@ -162,8 +162,8 @@ export async function applyAutoLayout(
 function layoutFront(
   recipe: Recipe,
   str: Str,
-  ingredients: Ingredient[],
   settings: Partial<AppSettings> = {},
+  isRound = false,
 ) {
   const canvas = editor.canvas;
   if (!canvas) return;
@@ -176,8 +176,10 @@ function layoutFront(
   canvas.backgroundColor = '#c8d4c0';
 
   // ── Legibility circle ────────────────────────────────────────────────────
-  // Radius ≈ 38% of the label width → diameter ≈ 76% of label width
-  const circleRadius = editor.labelWpx * 0.38;
+  // 33% of the label width leaves a ring roughly 0.28" wide on a 2" label,
+  // which is enough for the curved product name to sit outside the circle
+  // instead of across it.
+  const circleRadius = editor.labelWpx * 0.33;
   const circleOverlay = new fabric.Circle({
     radius: circleRadius,
     fill: 'rgba(255,255,255,0.30)',
@@ -194,115 +196,198 @@ function layoutFront(
   circleOverlay.isLegibilityOverlay = true;
   editor.addCustom(circleOverlay as fabric.FabricObject, 'shape', 'Legibility Overlay');
 
-  // ── Text block ───────────────────────────────────────────────────────────
+  // ── Content ──────────────────────────────────────────────────────────────
+  // A front label is the shop-window face of the bar: what it is, what it does
+  // for you, and how much of it there is. The full ingredient / directions /
+  // warning block belongs on the back, where layoutBack and layoutRoundBack
+  // have the room to typeset it.
+  const productName = (recipe.name || str.productName).trim();
+  const tagline = recipe.benefit?.trim() ?? '';
+  const netWtLine = formatNetWeight(recipe.netWeight);
+  const maker = settings.businessName?.trim() ?? '';
+
   const circleDiameter = circleRadius * 2;
-  const textWidth = circleDiameter * 0.80;
-  const fontFamily = ROUND_BACK_FONT;
-  const LINE_HEIGHT = 1.4;
+  const innerWidth = circleDiameter * 0.8;
+  // Ring between the legibility circle and the safe edge, where curved text sits.
+  const ringMid = (circleRadius + Math.min(s.width, s.height) / 2) / 2;
+  const ringThickness = Math.min(s.width, s.height) / 2 - circleRadius;
+  // Below roughly 6 pt the arc is unreadable and would spill over the die-cut,
+  // so tiny labels (0.75" rounds and the like) keep everything in the middle.
+  const ringUsable = isRound && ringThickness >= ptToPx(6);
 
-  // Resolve ingredient INCI names
-  const byId = new Map(ingredients.map((i) => [i.id, i]));
-  const ingNames = recipe.ingredientIds
-    .map((id) => byId.get(id))
-    .filter((i): i is Ingredient => !!i)
-    .map((i) => (i.inci?.trim() ? i.inci : i.name));
-
-  const directions = recipe.directions?.trim() || 'Lather, rinse, and enjoy.';
-  const warning = recipe.warnings?.trim() || 'For external use only. Avoid contact with eyes.';
-
-  // Net-weight line: parse grams and derive oz
-  let netWtLine = '';
-  if (recipe.netWeight?.trim()) {
-    const gMatch = recipe.netWeight.match(/(\d+(?:\.\d+)?)\s*g\b/i);
-    if (gMatch) {
-      const grams = parseFloat(gMatch[1]);
-      const oz = (grams * 0.035274).toFixed(2);
-      netWtLine = `Net Wt. ${grams}g / ${oz} oz`;
-    } else {
-      netWtLine = `Net Wt. ${recipe.netWeight}`;
-    }
+  // ── Product name ─────────────────────────────────────────────────────────
+  if (ringUsable) {
+    addRingText(productName, {
+      cx,
+      ringMid,
+      ringThickness,
+      safeTop: s.top,
+      safeBottom: s.top + s.height,
+      atTop: true,
+      fontFamily: HEADING_FONT,
+      name: 'Product name',
+    });
+  } else if (!isRound) {
+    const namePt = clamp(editor.template!.labelWidthIn * 7, 8, 18);
+    const title = new fabric.Textbox(productName, {
+      width: s.width,
+      fontFamily: HEADING_FONT,
+      fontSize: ptToPx(namePt),
+      fill: INK,
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'top',
+      left: cx,
+      top: s.top,
+    });
+    editor.addCustom(title, 'text', 'Product name');
   }
 
-  const year = new Date().getFullYear();
+  // ── Everything that lives inside the legibility circle ───────────────────
+  // Ordered by importance: whatever cannot fit is dropped from the bottom
+  // rather than printed over the label's edge.
+  const innerLines: string[] = [];
+  if (!ringUsable && isRound) innerLines.push(productName);
+  if (tagline) innerLines.push(tagline);
+  if (netWtLine) innerLines.push(netWtLine);
+  if (!ringUsable && maker) innerLines.push(`${str.handmadeby}: ${maker}`);
 
-  // Build logical lines with per-span bold flags (same pattern as layoutRoundBack)
-  type LinePart = { text: string; bold?: boolean };
-  type LogicalLine = { parts: LinePart[] };
-  const logicalLines: LogicalLine[] = [];
-
-  const addBoldLine  = (label: string) => logicalLines.push({ parts: [{ text: label, bold: true }] });
-  const addInlineBold = (label: string, body: string) =>
-    logicalLines.push({ parts: [{ text: `${label}: `, bold: true }, { text: body }] });
-  const addNormal = (text: string) => logicalLines.push({ parts: [{ text }] });
-  const addBlank  = () => logicalLines.push({ parts: [{ text: '' }] });
-
-  // Section 1 — Ingredients
-  addBoldLine(`${str.ingredients}:`);
-  for (const name of ingNames) addNormal(name);
-  addBlank();
-
-  // Section 2 — Directions + Warning
-  addInlineBold(str.directionsRound, directions);
-  addInlineBold(str.warningRound, warning);
-  addBlank();
-
-  // Section 3 — Benefits
-  if (recipe.benefit?.trim()) {
-    addInlineBold(str.benefits, recipe.benefit);
-    addBlank();
+  const block = fitBlock(innerLines, innerWidth, circleDiameter * 0.72, 13, 6, ROUND_BACK_FONT, 1.35);
+  if (block) {
+    const textbox = new fabric.Textbox(block.text, {
+      width: innerWidth,
+      fontFamily: ROUND_BACK_FONT,
+      fontSize: ptToPx(block.pt),
+      fill: INK,
+      lineHeight: 1.35,
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'center',
+      left: cx,
+      top: cy,
+    });
+    editor.addCustom(textbox, 'text', 'Label text');
   }
 
-  // Section 4 — Maker info
-  const bizName = settings.businessName?.trim() || "Gaia's Essences";
-  addNormal(`${str.handmadeby}: ${bizName}`);
-  if (settings.businessAddress?.trim()) addNormal(settings.businessAddress);
-  if (settings.contact?.trim()) addNormal(`${str.contact}: ${settings.contact}`);
-
-  // Section 5 — Net weight + year
-  if (netWtLine) {
-    addBlank();
-    addNormal(netWtLine);
+  // ── Maker name along the bottom of the ring (round labels only) ──────────
+  if (ringUsable && maker) {
+    addRingText(maker, {
+      cx,
+      ringMid,
+      ringThickness,
+      safeTop: s.top,
+      safeBottom: s.top + s.height,
+      atTop: false,
+      fontFamily: ROUND_BACK_FONT,
+      name: 'Maker',
+      maxPt: 9,
+    });
   }
-  addNormal(`${str.handcraftedIn} ${year}`);
+}
 
-  // Assemble flat text string and per-character bold styles
-  const textLines = logicalLines.map((l) => l.parts.map((p) => p.text).join(''));
-  const fullText  = textLines.join('\n');
+/**
+ * Fits as many of `lines` as will physically go, largest readable size first.
+ *
+ * `fitFont` alone can only shrink to `minPt` and then gives up, which is how a
+ * 0.75" label ended up printing text past its own die-cut. Here the last line
+ * is dropped and the fit retried, so the label always keeps its most important
+ * information and never overflows.
+ */
+function fitBlock(
+  lines: string[],
+  widthPx: number,
+  availHpx: number,
+  maxPt: number,
+  minPt: number,
+  fontFamily: string,
+  lineHeight: number,
+): { text: string; pt: number } | null {
+  for (let count = lines.length; count > 0; count--) {
+    const text = lines.slice(0, count).join('\n\n');
+    const pt = fitFont(text, widthPx, availHpx, maxPt, minPt, fontFamily, lineHeight);
+    if (measuredHeight(text, widthPx, pt, lineHeight, fontFamily) <= availHpx) return { text, pt };
+  }
+  return null;
+}
 
-  type FabricStyleDecl = { fontWeight?: string };
-  const stylesObj: Record<number, Record<number, FabricStyleDecl>> = {};
+/** `"128 g"` → `"Net Wt. 128g / 4.52 oz"`. Returns '' when there's no weight. */
+function formatNetWeight(raw: string | undefined): string {
+  const value = raw?.trim();
+  if (!value) return '';
+  const grams = value.match(/(\d+(?:\.\d+)?)\s*g\b/i);
+  if (!grams) return `Net Wt. ${value}`;
+  const g = parseFloat(grams[1]);
+  return `Net Wt. ${g}g / ${(g * 0.035274).toFixed(2)} oz`;
+}
 
-  logicalLines.forEach((line, lineIdx) => {
-    let charOffset = 0;
-    for (const part of line.parts) {
-      if (part.bold) {
-        if (!stylesObj[lineIdx]) stylesObj[lineIdx] = {};
-        for (let c = 0; c < part.text.length; c++) {
-          stylesObj[lineIdx][charOffset + c] = { fontWeight: 'bold' };
-        }
-      }
-      charOffset += part.text.length;
-    }
-  });
+interface RingTextOptions {
+  cx: number;
+  /** Radius of the arc the text should follow. */
+  ringMid: number;
+  /** How tall the text may be, i.e. the gap between circle and safe edge. */
+  ringThickness: number;
+  safeTop: number;
+  safeBottom: number;
+  /** Arch upward along the top of the label, or downward along the bottom. */
+  atTop: boolean;
+  fontFamily: string;
+  name: string;
+  maxPt?: number;
+}
 
-  // Auto-scale font size to fit the inscribed text area
-  const availH = circleDiameter * 0.85;
-  const pt = fitFont(fullText, textWidth, availH, 14, 8, fontFamily, LINE_HEIGHT);
+/** Sweep of the arc, in radians. ~130° leaves the label's sides clear. */
+const RING_SWEEP = 2.27;
 
-  const textbox = new fabric.Textbox(fullText, {
-    width: textWidth,
+/**
+ * Sets text on a circular arc in the ring outside the legibility circle.
+ *
+ * Both the curve and the placement are solved from the geometry rather than
+ * eyeballed. `buildCurvePath` uses `radius = width / (amount/100 · π · 0.9)`,
+ * so picking `amount` for the ring radius makes the text follow the label's
+ * edge exactly.
+ *
+ * Fabric renders each glyph at `pathPoint − path.pathOffset` relative to the
+ * text object's centre, which means the arc's bounding-box centre lands on the
+ * object's centre. The object's own bounding box says nothing useful about
+ * where the glyphs ended up, so the arc's height is derived instead: the apex
+ * sits `sagitta / 2` from the centre, and half a line of type beyond that.
+ */
+function addRingText(text: string, opts: RingTextOptions) {
+  const value = text.trim();
+  if (!value) return;
+
+  const { cx, ringMid, ringThickness, safeTop, safeBottom, atTop, fontFamily, name } = opts;
+
+  const arcWidth = ringMid * RING_SWEEP;
+  // Type has to clear the ring's thickness; ringThickness is in canvas px.
+  const ringPt = (ringThickness / EDITOR_PPI) * 72 * 0.85;
+  const maxPt = Math.min(opts.maxPt ?? 14, Math.max(6, ringPt));
+  const pt = fitFont(value, arcWidth, ptToPx(maxPt) * 1.05, maxPt, 5, fontFamily, 1);
+  const fontPx = ptToPx(pt);
+
+  const box = new fabric.Textbox(value, {
+    width: arcWidth,
     fontFamily,
-    fontSize: ptToPx(pt),
+    fontSize: fontPx,
     fill: INK,
-    lineHeight: LINE_HEIGHT,
     textAlign: 'center',
     originX: 'center',
     originY: 'center',
     left: cx,
-    top: cy,
-    styles: stylesObj as Record<number, Record<number, object>>,
+    top: 0,
   });
-  editor.addCustom(textbox, 'text', 'Label text');
+  const amount = clamp(Math.round((arcWidth / (ringMid * Math.PI * 0.9)) * 100), 25, 100);
+  applyCurveToText(box, atTop ? amount : -amount);
+
+  // Sagitta of the arc, i.e. how far the apex rises above its end points.
+  const theta = (amount / 100) * Math.PI * 0.9;
+  const radius = arcWidth / theta;
+  const sagitta = radius * (1 - Math.cos(theta / 2));
+  const apexToCentre = sagitta / 2 + fontPx * 0.6;
+
+  box.set({ top: atTop ? safeTop + apexToCentre : safeBottom - apexToCentre });
+  box.setCoords();
+  editor.addCustom(box, 'text', name);
 }
 
 function layoutBack(recipe: Recipe, ingredients: Ingredient[], str: Str) {

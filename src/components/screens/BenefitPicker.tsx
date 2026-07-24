@@ -128,7 +128,7 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
     <div ref={containerRef} className="relative">
       {/* ── Trigger / selected chips display ──────────────────────────────── */}
       <div
-        className={`flex min-h-[38px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-xl border bg-white px-3 py-2 text-sm transition focus-within:ring-2 focus-within:ring-gaia-400 ${
+        className={`flex min-h-[2.375rem] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-xl border bg-white px-3 py-2 text-sm transition focus-within:ring-2 focus-within:ring-gaia-400 ${
           open ? 'border-gaia-400 ring-2 ring-gaia-400' : 'border-slate-200 hover:border-gaia-300'
         }`}
         onClick={() => setOpen((o) => !o)}

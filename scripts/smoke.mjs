@@ -108,6 +108,15 @@ async function main() {
 
     const templates = await page.evaluate(() => window.gaiaTest.templates());
     const round = templates.find((t) => t.shape === 'circle' && t.contexts.includes('front'));
+    // A typical product round (Avery 22807 is 2"); the ring around the
+    // legibility circle is only wide enough for curved type at this size.
+    const bigRound = templates
+      .filter((t) => t.shape === 'circle' && t.contexts.includes('front') && t.widthIn >= 1.5)
+      .sort((a, b) => a.widthIn - b.widthIn)[0];
+    // The smallest round in the catalogue, where the ring is too thin to use.
+    const tinyRound = templates
+      .filter((t) => t.shape === 'circle' && t.contexts.includes('front'))
+      .sort((a, b) => a.widthIn - b.widthIn)[0];
     // A realistic back label: the largest-area template that supports a back context.
     const back = templates
       .filter((t) => t.contexts.includes('back'))
@@ -201,26 +210,77 @@ async function main() {
       const active = e.canvas.getActiveObject();
       const hasPath = !!active.path;
       const curveAmt = active.gaiaCurve;
+      // Fabric sizes the cache canvas from the flat text box, so a cached
+      // curved headline loses its ascenders along the arc.
+      const uncached = active.objectCaching === false;
+      e.setTextCurve(0);
+      const recached = e.canvas.getActiveObject().objectCaching === true;
+      e.setTextCurve(50);
       const png = e.exportLabelPng();
-      return { hasPath, curveAmt, pngOk: typeof png === 'string' && png.startsWith('data:image/png') && png.length > 1000 };
+      return { hasPath, curveAmt, uncached, recached, pngOk: typeof png === 'string' && png.startsWith('data:image/png') && png.length > 1000 };
     });
     check('curved text applies a path', curved.hasPath, `gaiaCurve=${curved.curveAmt}`);
     check('curved text amount stored', curved.curveAmt === 50);
+    check('curved text renders uncached so the arc is not clipped', curved.uncached);
+    check('straightening text restores caching', curved.recached);
     check('curved design exports to PNG', curved.pngOk);
 
-    // --- D. Front auto-layout from a recipe (curved name on round) ---------
-    if (round) {
-      await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), round.id);
-      await waitReady(round.id);
-      const front = await page.evaluate(async () => {
+    // --- D. Front auto-layout from a recipe --------------------------------
+    // Curved text has an unreliable bounding box (Fabric lays glyphs out along
+    // the path, outside the box), so print safety is measured from the rendered
+    // pixels instead: no ink may reach the die-cut edge.
+    const inspectFront = async (templateId) => {
+      await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), templateId);
+      await waitReady(templateId);
+      return page.evaluate(async () => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('front', 5);
         const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
-        const curvedName = objs.some((o) => typeof o.gaiaCurve === 'number' && o.gaiaCurve !== 0);
-        return { n: objs.length, curvedName };
+        const productName = 'Lavender Dream Soap';
+        const png = e.exportLabelPng();
+        const edgeInk = await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const c = document.createElement('canvas');
+            c.width = img.width;
+            c.height = img.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const { data } = ctx.getImageData(0, 0, c.width, c.height);
+            const band = Math.round(c.width * 0.02);
+            let hits = 0;
+            for (let y = 0; y < c.height; y++) {
+              for (let x = 0; x < c.width; x++) {
+                if (x >= band && y >= band && x < c.width - band && y < c.height - band) continue;
+                const i = (y * c.width + x) * 4;
+                if (data[i] < 110 && data[i + 1] < 110 && data[i + 2] < 110) hits++;
+              }
+            }
+            resolve(hits);
+          };
+          img.src = png;
+        });
+        return {
+          n: objs.length,
+          curvedName: objs.some((o) => typeof o.gaiaCurve === 'number' && o.gaiaCurve !== 0),
+          showsName: objs.some((o) => typeof o.text === 'string' && o.text.includes(productName)),
+          edgeInk,
+        };
       });
+    };
+
+    if (bigRound) {
+      const front = await inspectFront(bigRound.id);
       check('front auto-layout creates objects', front.n >= 2, `objects=${front.n}`);
+      check(`front shows the product name (${bigRound.widthIn}" round)`, front.showsName);
       check('front product name is curved on round label', front.curvedName);
+      check('front layout keeps ink away from the die-cut edge', front.edgeInk === 0, `edge pixels=${front.edgeInk}`);
+    }
+
+    if (tinyRound && tinyRound.id !== bigRound?.id) {
+      const tiny = await inspectFront(tinyRound.id);
+      check(`tiny ${tinyRound.widthIn}" round still shows the product name`, tiny.showsName);
+      check(`tiny ${tinyRound.widthIn}" round keeps ink off the die-cut edge`, tiny.edgeInk === 0, `edge pixels=${tiny.edgeInk}`);
     }
 
     // --- E. 25-ingredient back label fits the safe zone --------------------
