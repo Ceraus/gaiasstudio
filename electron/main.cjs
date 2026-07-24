@@ -44,6 +44,42 @@ function fileToDataUrl(filePath) {
   return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
+/**
+ * Saves a downloaded image to a temp file, streams it back to the renderer as a
+ * data URL, then deletes the temp file. Shared by every session's
+ * `will-download` handler so the logic lives in exactly one place (no duplicate
+ * closures held per-session — smaller memory footprint, single source of truth).
+ * Returns true when the item was claimed as an image download.
+ */
+function handleImageDownload(item) {
+  const filename = item.getFilename();
+  const ext = path.extname(filename).toLowerCase();
+  if (!IMAGE_EXTS.has(ext)) return false;
+
+  const downloadsDir = path.join(saveSystemDir, 'downloads');
+  fs.mkdirSync(downloadsDir, { recursive: true });
+  const tmpPath = path.join(downloadsDir, `gaia-ai-${Date.now()}${ext}`);
+  item.setSavePath(tmpPath);
+
+  item.once('done', (_e, state) => {
+    if (state !== 'completed') {
+      // Failed/cancelled downloads still leave a zero-byte temp file behind.
+      fs.unlink(tmpPath, () => {});
+      return;
+    }
+    try {
+      const dataUrl = fileToDataUrl(tmpPath);
+      mainWindow?.webContents.send('gaia:image-downloaded', { dataUrl, filename });
+    } catch (err) {
+      console.error('[Gaia] Failed to read downloaded image:', err);
+    } finally {
+      // Clean up temp file asynchronously; ignore errors.
+      fs.unlink(tmpPath, () => {});
+    }
+  });
+  return true;
+}
+
 /** Attach the will-download listener to the default session. */
 function attachDownloadInterceptor() {
   session.defaultSession.on('will-download', (_event, item) => {
@@ -63,26 +99,8 @@ function attachDownloadInterceptor() {
       return;
     }
 
-    if (!IMAGE_EXTS.has(ext)) return; // ignore other non-image downloads
-
-    // Save into the portable save-system downloads folder.
-    const downloadsDir = path.join(saveSystemDir, 'downloads');
-    fs.mkdirSync(downloadsDir, { recursive: true });
-    const tmpPath = path.join(downloadsDir, `gaia-ai-${Date.now()}${ext}`);
-    item.setSavePath(tmpPath);
-
-    item.once('done', (_e, state) => {
-      if (state !== 'completed') return;
-      try {
-        const dataUrl = fileToDataUrl(tmpPath);
-        mainWindow?.webContents.send('gaia:image-downloaded', { dataUrl, filename });
-      } catch (err) {
-        console.error('[Gaia] Failed to read downloaded image:', err);
-      } finally {
-        // Clean up temp file asynchronously; ignore errors.
-        fs.unlink(tmpPath, () => {});
-      }
-    });
+    // Everything else that is an image is auto-imported into the library.
+    handleImageDownload(item);
   });
 }
 
@@ -134,28 +152,29 @@ app.whenReady().then(() => {
   );
 
   // Route image downloads from the AI Studio session through the same
-  // auto-import interceptor as the main session.
-  aiSession.on('will-download', (_event, item) => {
-    const filename = item.getFilename();
-    const ext = path.extname(filename).toLowerCase();
-    if (!IMAGE_EXTS.has(ext)) return; // only images from the AI session
+  // shared auto-import interceptor as the main session.
+  aiSession.on('will-download', (_event, item) => handleImageDownload(item));
 
-    const downloadsDir = path.join(saveSystemDir, 'downloads');
-    fs.mkdirSync(downloadsDir, { recursive: true });
-    const tmpPath = path.join(downloadsDir, `gaia-ai-${Date.now()}${ext}`);
-    item.setSavePath(tmpPath);
-
-    item.once('done', (_e, state) => {
-      if (state !== 'completed') return;
-      try {
-        const dataUrl = fileToDataUrl(tmpPath);
-        mainWindow?.webContents.send('gaia:image-downloaded', { dataUrl, filename });
-      } catch (err) {
-        console.error('[Gaia] Failed to read downloaded image:', err);
-      } finally {
-        fs.unlink(tmpPath, () => {});
-      }
+  // ── Webview / child-window hardening ──────────────────────────────────────
+  // The embedded AI Studio <webview> is untrusted third-party content. Strip any
+  // preload and force nodeIntegration off at attach time (defence-in-depth even
+  // though the tag is created without a preload), and route any window.open /
+  // target=_blank navigations to the system browser instead of spawning
+  // uncontrolled in-app Electron windows.
+  app.on('web-contents-created', (_e, contents) => {
+    contents.on('will-attach-webview', (_evt, webPreferences) => {
+      delete webPreferences.preload;
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
     });
+    if (contents.getType() === 'webview') {
+      contents.setWindowOpenHandler(({ url }) => {
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+          void shell.openExternal(url);
+        }
+        return { action: 'deny' };
+      });
+    }
   });
 
   // IPC helpers exposed to the renderer via preload.
