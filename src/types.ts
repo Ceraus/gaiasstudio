@@ -210,6 +210,24 @@ export interface Draft {
   thumb?: string;
   /** Optional notes */
   notes?: string;
+  /** Product line this design belongs to — drives the card colour. */
+  collectionId?: string;
+  /** Recipe the design was built from, so the workspace can search by it. */
+  recipeId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Collections — colour-coded product lines used to organise saved designs.
+// ---------------------------------------------------------------------------
+
+export interface Collection {
+  id: string;
+  /** e.g. "Oily Skin", "Holiday 2026", "Wedding Favours". */
+  name: string;
+  /** Hex colour (`#rrggbb`) painted onto every card in the collection. */
+  color: string;
   createdAt: number;
   updatedAt: number;
 }

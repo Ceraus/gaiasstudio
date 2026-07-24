@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie';
 import type {
   AppSettings,
   AssetRecord,
+  Collection,
   DesignVersion,
   Draft,
   Ingredient,
@@ -31,6 +32,7 @@ export class GaiaDatabase extends Dexie {
   labelSets!: Table<LabelSet, string>;
   drafts!: Table<Draft, string>;
   setPurchases!: Table<SetPurchase, string>;
+  collections!: Table<Collection, string>;
 
   constructor() {
     super('gaia-label-studio');
@@ -98,6 +100,14 @@ export class GaiaDatabase extends Dexie {
     // (e.g., YumCraft 20-color dye set, Smalltongue 36-color mica set).
     this.version(8).stores({
       setPurchases: 'id, name, createdAt',
+    });
+
+    // Version 9 — adds colour-coded Collections and indexes the two new draft
+    // foreign keys so the Workspace can filter by collection and search by
+    // recipe. Both draft fields are optional; existing rows need no migration.
+    this.version(9).stores({
+      collections: 'id, name, createdAt',
+      drafts: 'id, name, templateId, collectionId, recipeId, createdAt, updatedAt',
     });
   }
 }

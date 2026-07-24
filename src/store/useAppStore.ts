@@ -16,7 +16,8 @@ export type Screen =
   | 'settings'
   | 'promptBuilder'
   | 'sets'
-  | 'drafts';
+  | 'drafts'
+  | 'batch';
 
 const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -48,9 +49,13 @@ interface AppState {
   /** Background image URL chosen in the Background step (data URL or remote URL). */
   backgroundImageUrl: string | null;
 
+  /** Designs queued from the Workspace for a mixed (ink-saving) print sheet. */
+  batchDraftIds: string[];
+
   goto: (screen: Screen) => void;
   setActiveRecipeId: (id: string | null) => void;
   setActiveDraftId: (id: string | null) => void;
+  setBatchDraftIds: (ids: string[]) => void;
   setPromptBuilderOutput: (prompt: string | null) => void;
   setBackgroundImageUrl: (url: string | null) => void;
   /** Persist a chosen template + context to the store without navigating to the editor.
@@ -78,10 +83,12 @@ export const useAppStore = create<AppState>((set) => ({
   activeRecipeId: null,
   promptBuilderOutput: null,
   backgroundImageUrl: null,
+  batchDraftIds: [],
 
   goto: (screen) => set((s) => ({ previousScreen: s.screen, screen })),
   setActiveRecipeId: (id) => set({ activeRecipeId: id }),
   setActiveDraftId: (id) => set({ activeDraftId: id }),
+  setBatchDraftIds: (ids) => set({ batchDraftIds: ids }),
   setPromptBuilderOutput: (prompt) => set({ promptBuilderOutput: prompt }),
   setBackgroundImageUrl: (url) => set({ backgroundImageUrl: url }),
   setTemplate: (template, context) => set({ template, context }),

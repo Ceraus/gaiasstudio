@@ -2,6 +2,7 @@ import { db, DEFAULT_SETTINGS } from './db';
 import type {
   AppSettings,
   AssetRecord,
+  Collection,
   DesignVersion,
   Draft,
   Ingredient,
@@ -188,7 +189,12 @@ export const draftsRepo = {
     if (patch.id) {
       const existing = await db.drafts.get(patch.id);
       if (existing) {
-        const updated: Draft = { ...existing, ...patch, updatedAt: now };
+        // Autosave sends optional fields as undefined when they aren't known
+        // right now; those must not wipe values the user already set.
+        const defined = Object.fromEntries(
+          Object.entries(patch).filter(([, v]) => v !== undefined),
+        ) as Partial<Draft>;
+        const updated: Draft = { ...existing, ...defined, updatedAt: now };
         await db.drafts.put(updated);
         return updated;
       }
@@ -201,6 +207,8 @@ export const draftsRepo = {
       context: patch.context ?? 'front',
       thumb: patch.thumb,
       notes: patch.notes,
+      collectionId: patch.collectionId,
+      recipeId: patch.recipeId,
       createdAt: now,
       updatedAt: now,
     };
@@ -210,7 +218,56 @@ export const draftsRepo = {
   async rename(id: string, name: string) {
     await db.drafts.update(id, { name, updatedAt: Date.now() });
   },
+  /** Moves a design into a collection, or out of every collection when null. */
+  async setCollection(id: string, collectionId: string | null) {
+    await db.drafts.update(id, { collectionId: collectionId ?? undefined, updatedAt: Date.now() });
+  },
+  /**
+   * Copies a design, keeping the artwork, template and collection but giving it
+   * a fresh identity. Used by "Duplicate" so a scent variant can start from a
+   * finished label instead of a blank canvas.
+   */
+  async duplicate(id: string): Promise<Draft | undefined> {
+    const source = await db.drafts.get(id);
+    if (!source) return undefined;
+    const now = Date.now();
+    const copy: Draft = { ...source, id: uid(), name: copyName(source.name), createdAt: now, updatedAt: now };
+    await db.drafts.add(copy);
+    return copy;
+  },
   remove: (id: string) => db.drafts.delete(id),
+};
+
+/** "Rose Bar" → "Rose Bar copy" → "Rose Bar copy 2" … */
+function copyName(name: string): string {
+  const match = /^(.*?) copy(?: (\d+))?$/.exec(name);
+  if (!match) return `${name} copy`;
+  return `${match[1]} copy ${Number(match[2] ?? 1) + 1}`;
+}
+
+// --- Collections -----------------------------------------------------------
+
+export const collectionsRepo = {
+  all: () => db.collections.orderBy('name').toArray(),
+  get: (id: string) => db.collections.get(id),
+  async create(name: string, color: string): Promise<Collection> {
+    const now = Date.now();
+    const rec: Collection = { id: uid(), name, color, createdAt: now, updatedAt: now };
+    await db.collections.add(rec);
+    return rec;
+  },
+  async update(id: string, patch: Partial<Pick<Collection, 'name' | 'color'>>) {
+    await db.collections.update(id, { ...patch, updatedAt: Date.now() });
+  },
+  /** Deleting a collection un-files its designs rather than deleting them. */
+  async remove(id: string) {
+    await db.transaction('rw', db.collections, db.drafts, async () => {
+      await db.drafts.where('collectionId').equals(id).modify((d) => {
+        d.collectionId = undefined;
+      });
+      await db.collections.delete(id);
+    });
+  },
 };
 
 // --- Set Purchases ---------------------------------------------------------

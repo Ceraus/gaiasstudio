@@ -416,6 +416,8 @@ class EditorController {
         templateId: this.template.id,
         context: this.context,
         thumb,
+        // Recorded so the Workspace can search designs by recipe or ingredient.
+        recipeId: appState.activeRecipeId ?? undefined,
       });
       if (!appState.activeDraftId) {
         appState.setActiveDraftId(draft.id);
@@ -1354,17 +1356,20 @@ class EditorController {
   }
 
   /**
-   * Creates a temporary off-screen Fabric canvas from serialized JSON,
-   * swaps one text object's content, exports PNG, then tears down.
-   * Used by Quick Variant on the Export screen where the live canvas is disposed.
+   * Rasterizes serialized canvas JSON on a temporary off-screen Fabric canvas
+   * and returns a print-resolution PNG of the trim area.
+   *
+   * Works without a live editor, so the Export and Batch screens can render
+   * saved designs after the main canvas has been disposed.
+   *
+   * @param mutate optional hook to tweak the revived objects before painting.
    */
-  async exportVariantPng(
+  async renderDesignPng(
     canvasJson: string,
-    targetId: string,
-    replacement: string,
     template: AveryTemplate,
     settings: AppSettings,
     ppi = EXPORT_PPI,
+    mutate?: (canvas: fabric.Canvas) => void,
   ): Promise<string> {
     const bleedPx = (settings.bleedIn ?? 0.0625) * EDITOR_PPI;
     const labelW  = template.labelWidthIn  * EDITOR_PPI;
@@ -1391,15 +1396,9 @@ class EditorController {
       await fc.loadFromJSON(parsed);
       // Restore white background in case the serialised JSON omitted it.
       if (!fc.backgroundColor) fc.backgroundColor = '#ffffff';
-      // Swap the target text object
-      const target = fc.getObjects().find((o) => (o as Gaia).id === targetId) as
-        | (fabric.FabricObject & { text?: string })
-        | undefined;
-      if (target && 'text' in target) {
-        target.set({ text: replacement } as Partial<fabric.FabricObject>);
-      }
+      mutate?.(fc);
       fc.discardActiveObject();
-      // renderAll() is synchronous — ensures the text swap is painted before
+      // renderAll() is synchronous — ensures every mutation is painted before
       // toDataURL() reads pixel data (requestRenderAll uses rAF, which is async).
       fc.renderAll();
       return fc.toDataURL({
@@ -1414,6 +1413,28 @@ class EditorController {
       fc.dispose();
       el.remove();
     }
+  }
+
+  /**
+   * Same as renderDesignPng but swaps one text object's content first.
+   * Used by Quick Variant on the Export screen.
+   */
+  exportVariantPng(
+    canvasJson: string,
+    targetId: string,
+    replacement: string,
+    template: AveryTemplate,
+    settings: AppSettings,
+    ppi = EXPORT_PPI,
+  ): Promise<string> {
+    return this.renderDesignPng(canvasJson, template, settings, ppi, (fc) => {
+      const target = fc.getObjects().find((o) => (o as Gaia).id === targetId) as
+        | (fabric.FabricObject & { text?: string })
+        | undefined;
+      if (target && 'text' in target) {
+        target.set({ text: replacement } as Partial<fabric.FabricObject>);
+      }
+    });
   }
 
 
