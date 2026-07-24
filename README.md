@@ -40,11 +40,16 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
   ovals, squares, rectangles and rounded stickers — including real Avery products
   (22807 2″ round, 6871 back label, and many more). No pixels, no coordinates.
 - **A real editor.** Move / resize / rotate / crop / group, a full **layers panel**
-  (reorder, hide, lock, rename, delete), **smart snapping guides** (magenta lines
-  when things line up or center — on move *and* resize, plus equal-spacing guides),
-  **visual bleed masks** (a dimmed ring + cut line + safe zone), rich **typography**
-  with elegant Google Fonts, **curved text** on round/oval labels, opacity & blend
-  modes, undo/redo, and a **movable properties window**.
+  (drag-to-reorder, hide, lock, rename, delete), **smart snapping guides** (magenta
+  lines when things line up or center — on move *and* resize, plus equal-spacing
+  guides), **visual bleed masks** (a dimmed ring + cut line + safe zone), rich
+  **typography** with elegant Google Fonts, **curved text** on round/oval labels,
+  non-destructive **photo adjustments** (brightness / contrast / saturation),
+  opacity & blend modes, undo/redo, a real **object clipboard**
+  (`Ctrl/Cmd+C/X/V`), and a properties panel that **docks or floats**.
+- **A physical ruler.** Toggle inch rulers along the top and left canvas edges.
+  Zero sits on the trim line, so what the ruler reads is what will measure on
+  the printed sticker.
 - **Precise, zero-math properties.** Size & position are shown in **inches** with a
   **lock-proportions** toggle and a **center-on-label** button. Arrow keys nudge
   (Shift = larger), plus `Ctrl/Cmd+Z/Y/D/G`, `[`/`]` stacking, and `Del`/`Esc` —
@@ -55,6 +60,16 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
   centered logo), Back (a guaranteed-fit, measure-and-shrink text block that flows
   long ingredient lists into **two columns** and never clips), and Side (ribbon)
   layouts are generated from your saved recipes and constrained to the safe area.
+- **A searchable, colour-coded Workspace.** Saved designs live on gallery cards
+  you can rename inline, duplicate, delete, and file into **Collections** —
+  colour-coded product lines (e.g. Pastel Mint for *Oily Skin*) whose hex paints
+  each card's border and header. One search box matches a design's own name and
+  notes plus the names of everything it is filed under: template, collection,
+  recipe, and every ingredient in that recipe, so searching "lavender" finds the
+  label whose recipe merely contains lavender oil.
+- **Mixed batch printing (ink saver).** Tick several different saved designs and
+  queue them onto a single Avery sheet, with per-design quantities and a "fill
+  evenly" action so a part-used sheet of sticker paper is never thrown away.
 - **Recipe & ingredient manager** with a live checklist (has a name / has
   ingredients / includes a soap base / has a benefit).
 - **Assets drawer** with 4 tabs: My Photos, Library, Free Stock (Unsplash/Pixabay),
@@ -63,6 +78,8 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
   Avery grid at real inch dimensions — never the browser print dialog. WYSIWYG
   sheet preview, quantity + fill-sheet, and `PREFIX___01.pdf` file naming.
 - **English & Spanish** (`react-i18next`).
+- **Sized for comfort.** The whole interface renders 25% larger than default;
+  Settings offers 100 / 110 / 125 / 140% if that isn't the right fit.
 - **Non-destructive history.** A 2000 ms debounced autosave writes snapshots you
   can restore from the History tab.
 
@@ -73,7 +90,7 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
 | App | React + Vite + TypeScript + Tailwind |
 | Canvas editor | **Fabric.js v6** |
 | State | **Zustand** (+ an imperative editor controller) |
-| Local database | **Dexie / IndexedDB** |
+| Local database | **Dexie / IndexedDB** (ingredients, recipes, assets, versions, drafts, collections, label sets, settings) |
 | PDF export | **pdf-lib** |
 | i18n | **react-i18next** |
 | Fonts | **@fontsource** (offline) + Google Fonts (on demand) |
@@ -104,27 +121,53 @@ npm run avery:scrape     # pull Avery's full live catalog and merge (see note)
   drawn in the canvas `after:render` pass (identity space).
 - `src/lib/fabric/snapping.ts` — smart alignment guides + snap-to-center.
 - `src/lib/layoutEngine.ts` — context-specific Front/Back/Side auto-layouts.
-- `src/lib/pdfExport.ts` — exact Avery-grid PDF stamping (handles rotated ribbons).
+- `src/lib/pdfExport.ts` — exact Avery-grid PDF stamping (handles rotated
+  ribbons), for a single repeated design *and* for mixed batch sheets.
+- `src/components/screens/BatchPrintScreen.tsx` — the ink-saving multi-design
+  sheet, rasterizing each saved design off-screen via `editor.renderDesignPng`.
 - `src/components/Shell.tsx` — lazy-loads the Editor (Fabric) and Export (pdf-lib)
   screens so those heavy libraries stay out of the initial bundle.
 - `scripts/smoke.mjs` — a headless-Chrome smoke test driving the real app via
-  `window.gaiaEditor` / `window.gaiaTest` (add/undo/redo/align/flip/crop, curved
-  text, recipe auto-layouts, a 25-ingredient back label fitting the safe zone,
-  transparent logo → PDF, and correct page counts at 612×792pt).
+  `window.gaiaEditor` / `window.gaiaTest`. 53 checks covering add/undo/redo/
+  align/flip/crop, curved text, photo adjustments, layer reordering, the object
+  clipboard, recipe auto-layouts, a 25-ingredient back label fitting the safe
+  zone, transparent logo → PDF, correct page counts at 612×792pt for both single
+  and mixed batch sheets, the Workspace search index, and a pixel-level check
+  that no ink reaches the die-cut edge.
+
+### Desktop shell
+
+`electron/main.cjs` wraps the production build. Two things there are worth
+knowing about:
+
+- **Auto-import.** One `will-download` interceptor is shared by the default
+  session and the isolated `persist:aistudio` session used by the AI
+  `<webview>`. PDFs land in the portable save system's `exports/` folder (the
+  PDF Vault reads it); images are staged, converted to a data URL for the
+  renderer and deleted. Conversion is async and capped at 24 MB so a large AI
+  render can't stall the main process.
+- **Guest isolation.** `will-attach-webview` strips the preload and forces
+  `contextIsolation` on the embedded browser regardless of what the tag asks
+  for; guest popups are re-hosted in the allowlisted AI window (same cookie jar,
+  so Google sign-in still completes) rather than spawning an unaudited one. The
+  `open-file` / `open-folder` IPC channels are scoped to the save system, and
+  every permission request is denied.
 
 ### This is the requested Electron/SQLite app, delivered web-first
 
 The original brief asked for Electron + better-sqlite3 + `<webview>` + electron-store.
-This implementation uses the **browser-native equivalents** so it is truly
+The `<webview>` and `will-download` interceptor are now in the desktop shell;
+persistence still uses the **browser-native equivalents** so the app stays truly
 plug-and-play (open it and go, host the `dist/` folder anywhere) and fully
-testable, while mapping 1:1 onto the desktop stack if you later wrap it:
+testable, while mapping 1:1 onto the desktop stack:
 
-| Requested (Electron) | Here (web-first) | Wrapping later |
+| Requested (Electron) | Here | Wrapping later |
 | --- | --- | --- |
 | `better-sqlite3` tables | Dexie/IndexedDB tables (identical shapes) | Swap the repo layer in `src/db` for a SQLite adapter |
 | `electron-store` (API keys) | Settings row in the DB (local only) | Move to `electron-store` in the repo layer |
-| Node `fs` file picker | File input + drag-and-drop + data URLs | Add `fs` in the main process |
-| `<webview>` + `will-download` | AI tab opens a generator; import the result | Add a `<webview>` + `session.on('will-download')` |
+| Node `fs` file picker | Native picker over IPC on desktop; file input + drag-and-drop in the browser | — |
+| `<webview>` + `will-download` | Both implemented in `electron/main.cjs` | — |
 
 The table shapes in `src/db/db.ts` (ingredients, recipes, assets, versions,
-settings) already match a SQLite schema, so only the persistence adapter changes.
+drafts, collections, settings) already match a SQLite schema, so only the
+persistence adapter changes.

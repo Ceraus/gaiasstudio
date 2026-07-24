@@ -25,7 +25,8 @@
     "selectAll": "Select all",
     "clearAll": "Clear all",
     "greeting": "Hi Rosa",
-    "step": "Step"
+    "step": "Step",
+    "clear": "Clear"
   },
   "workflow": {
     "shape": "Choose Shape & Size",
@@ -226,7 +227,11 @@
       "dockToolbar": "Dock toolbar",
       "simpleMode": "Switch to simple mode",
       "fullMode": "Switch to full mode"
-    }
+    },
+    "copy": "Copy",
+    "paste": "Paste",
+    "centerShort": "Center",
+    "toggleRulers": "Show inch rulers"
   },
   "panels": {
     "layers": "Layers",
@@ -253,7 +258,15 @@
     "color": "Color",
     "blur": "Blur",
     "offsetX": "Offset X",
-    "offsetY": "Offset Y"
+    "offsetY": "Offset Y",
+    "imageAdjust": "Photo Adjustments",
+    "brightness": "Brightness",
+    "contrast": "Contrast",
+    "saturation": "Saturation",
+    "resetAdjust": "Reset adjustments",
+    "floatPanel": "Undock into a movable window",
+    "dockPanel": "Dock to the right edge",
+    "resizePanel": "Drag to resize panel"
   },
   "layers": {
     "show": "Show",
@@ -263,7 +276,8 @@
     "rename": "Rename",
     "moveUp": "Move up",
     "moveDown": "Move down",
-    "empty": "No layers yet. Add something to the canvas."
+    "empty": "No layers yet. Add something to the canvas.",
+    "renameHint": "Double-click to rename · drag to reorder"
   },
   "text": {
     "font": "Font",
@@ -487,7 +501,10 @@
     "debugMode": "Debug Mode",
     "debugModeHint": "Shows the floating debug panel (🐛) in production builds.",
     "showLabelSets": "Show Label Sets",
-    "showLabelSetsHint": "Show the Label Sets tab in the navigation bar."
+    "showLabelSetsHint": "Show the Label Sets tab in the navigation bar.",
+    "uiScale": "Interface size",
+    "uiScaleHint": "Makes every button and label bigger or smaller. The canvas has its own zoom.",
+    "uiScaleDefault": "default"
   },
   "sets": {
     "title": "Label Sets",
@@ -607,7 +624,14 @@
     "pdfVaultDesktopOnly": "PDF Vault is only available in the desktop app.",
     "noPdfs": "No exported PDFs yet. Export a label to see it here.",
     "openFile": "Open",
-    "openFolder": "Show in Folder"
+    "openFolder": "Show in Folder",
+    "searchPlaceholder": "Search by design, recipe, ingredient or collection…",
+    "searchLabel": "Search designs",
+    "noMatches": "No designs match that search.",
+    "clearFilters": "Clear search & filters",
+    "duplicate": "Duplicate",
+    "clickToRename": "Click to rename",
+    "currentlyEditing": "Currently editing"
   },
   "benefitPicker": {
     "placeholder": "Search or browse benefits…",
@@ -1132,5 +1156,39 @@
     "aiPrompt": "AI Prompt Builder",
     "aiPromptTip": "Generate a custom background with AI, then import it here.",
     "openPromptBuilder": "Open AI Prompt Builder →"
+  },
+  "collections": {
+    "manage": "Manage collections",
+    "manageTitle": "Collections",
+    "manageHint": "Group your labels into product lines. Each collection colours its cards so you can spot them instantly.",
+    "namePlaceholder": "e.g. Oily Skin, Holiday Gifts",
+    "newCollection": "New collection",
+    "add": "Add",
+    "empty": "No collections yet. Add one above.",
+    "renameCollection": "Collection name",
+    "deleteHint": "Delete collection (designs are kept)",
+    "all": "All designs",
+    "unfiled": "Unfiled",
+    "assign": "Collection"
+  },
+  "batch": {
+    "title": "Mixed Batch Print",
+    "subtitle": "Fill one sheet with several designs so no sticker paper goes to waste.",
+    "selectedCount": "{{count}} design(s) selected",
+    "printTogether": "Print together",
+    "selectForPrinting": "Select for a mixed print sheet",
+    "emptyHint": "Tick two or more saved designs in the Workspace, then choose \"Print together\" to fill one sheet.",
+    "sheet": "Sheet",
+    "summary": "{{total}} labels · {{sheets}} sheet(s) · {{perSheet}} per sheet",
+    "emptySlots": "{{count}} empty slot(s) left on the last sheet.",
+    "fillEvenly": "Fill evenly",
+    "mismatch": "These designs use a different label size and were left out: {{names}}. One sheet can only hold one size.",
+    "differentSize": "Different label size",
+    "decrease": "One fewer",
+    "increase": "One more",
+    "quantityFor": "Copies of {{name}}",
+    "remove": "Remove from sheet",
+    "exportPdf": "Export Batch PDF",
+    "previewHint": "This is exactly how the sheet will print."
   }
 }

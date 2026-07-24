@@ -25,7 +25,8 @@
     "selectAll": "Seleccionar todo",
     "clearAll": "Limpiar todo",
     "greeting": "Hola Rosa",
-    "step": "Paso"
+    "step": "Paso",
+    "clear": "Limpiar"
   },
   "workflow": {
     "shape": "Elegir Forma y Tamaño",
@@ -226,7 +227,11 @@
       "dockToolbar": "Anclar barra",
       "simpleMode": "Modo simple",
       "fullMode": "Modo completo"
-    }
+    },
+    "copy": "Copiar",
+    "paste": "Pegar",
+    "centerShort": "Centrar",
+    "toggleRulers": "Mostrar reglas en pulgadas"
   },
   "panels": {
     "layers": "Capas",
@@ -253,7 +258,15 @@
     "color": "Color",
     "blur": "Desenfoque",
     "offsetX": "Desplazamiento X",
-    "offsetY": "Desplazamiento Y"
+    "offsetY": "Desplazamiento Y",
+    "imageAdjust": "Ajustes de foto",
+    "brightness": "Brillo",
+    "contrast": "Contraste",
+    "saturation": "Saturación",
+    "resetAdjust": "Restablecer ajustes",
+    "floatPanel": "Convertir en ventana movible",
+    "dockPanel": "Anclar al borde derecho",
+    "resizePanel": "Arrastra para cambiar el ancho"
   },
   "layers": {
     "show": "Mostrar",
@@ -263,7 +276,8 @@
     "rename": "Renombrar",
     "moveUp": "Subir",
     "moveDown": "Bajar",
-    "empty": "Aún no hay capas. Agrega algo al lienzo."
+    "empty": "Aún no hay capas. Agrega algo al lienzo.",
+    "renameHint": "Doble clic para renombrar · arrastra para reordenar"
   },
   "text": {
     "font": "Fuente",
@@ -487,7 +501,10 @@
     "debugMode": "Modo de depuración",
     "debugModeHint": "Muestra el panel de depuración flotante (🐛) en compilaciones de producción.",
     "showLabelSets": "Mostrar Conjuntos de Etiquetas",
-    "showLabelSetsHint": "Muestra la pestaña de Conjuntos de Etiquetas en la barra de navegación."
+    "showLabelSetsHint": "Muestra la pestaña de Conjuntos de Etiquetas en la barra de navegación.",
+    "uiScale": "Tamaño de la interfaz",
+    "uiScaleHint": "Agranda o reduce cada botón y etiqueta. El lienzo tiene su propio zoom.",
+    "uiScaleDefault": "predeterminado"
   },
   "sets": {
     "title": "Conjuntos de etiquetas",
@@ -607,7 +624,14 @@
     "pdfVaultDesktopOnly": "La Bóveda de PDFs solo está disponible en la aplicación de escritorio.",
     "noPdfs": "Aún no hay PDFs exportados. Exporta una etiqueta para verla aquí.",
     "openFile": "Abrir",
-    "openFolder": "Mostrar en Carpeta"
+    "openFolder": "Mostrar en Carpeta",
+    "searchPlaceholder": "Busca por diseño, receta, ingrediente o colección…",
+    "searchLabel": "Buscar diseños",
+    "noMatches": "Ningún diseño coincide con esa búsqueda.",
+    "clearFilters": "Limpiar búsqueda y filtros",
+    "duplicate": "Duplicar",
+    "clickToRename": "Haz clic para renombrar",
+    "currentlyEditing": "Editando ahora"
   },
   "benefitPicker": {
     "placeholder": "Buscar o explorar beneficios…",
@@ -1132,5 +1156,39 @@
     "aiPrompt": "Constructor de Prompts IA",
     "aiPromptTip": "Genera un fondo personalizado con IA e impórtalo aquí.",
     "openPromptBuilder": "Abrir Constructor de Prompts IA →"
+  },
+  "collections": {
+    "manage": "Gestionar colecciones",
+    "manageTitle": "Colecciones",
+    "manageHint": "Agrupa tus etiquetas en líneas de producto. Cada colección colorea sus tarjetas para que las reconozcas al instante.",
+    "namePlaceholder": "p. ej. Piel Grasa, Regalos Navideños",
+    "newCollection": "Nueva colección",
+    "add": "Agregar",
+    "empty": "Aún no hay colecciones. Agrega una arriba.",
+    "renameCollection": "Nombre de la colección",
+    "deleteHint": "Eliminar colección (los diseños se conservan)",
+    "all": "Todos los diseños",
+    "unfiled": "Sin colección",
+    "assign": "Colección"
+  },
+  "batch": {
+    "title": "Impresión por lote mixto",
+    "subtitle": "Llena una hoja con varios diseños para no desperdiciar papel adhesivo.",
+    "selectedCount": "{{count}} diseño(s) seleccionado(s)",
+    "printTogether": "Imprimir juntos",
+    "selectForPrinting": "Seleccionar para una hoja mixta",
+    "emptyHint": "Marca dos o más diseños guardados en el Área de trabajo y elige «Imprimir juntos» para llenar una hoja.",
+    "sheet": "Hoja",
+    "summary": "{{total}} etiquetas · {{sheets}} hoja(s) · {{perSheet}} por hoja",
+    "emptySlots": "Quedan {{count}} espacio(s) vacío(s) en la última hoja.",
+    "fillEvenly": "Llenar en partes iguales",
+    "mismatch": "Estos diseños usan otro tamaño de etiqueta y quedaron fuera: {{names}}. Una hoja solo admite un tamaño.",
+    "differentSize": "Tamaño de etiqueta distinto",
+    "decrease": "Uno menos",
+    "increase": "Uno más",
+    "quantityFor": "Copias de {{name}}",
+    "remove": "Quitar de la hoja",
+    "exportPdf": "Exportar PDF del lote",
+    "previewHint": "Así se imprimirá exactamente la hoja."
   }
 }
