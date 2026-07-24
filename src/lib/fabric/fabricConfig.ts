@@ -15,6 +15,10 @@ export const CUSTOM_PROPS = [
   // We store the pre-transform text so the user can revert to 'none'.
   'gaiaTextCase',
   'gaiaOriginalText',
+  // Image adjustment amounts (-1…1). Fabric serializes the derived `filters`
+  // array too, but keeping the raw amounts means the sliders can be restored
+  // exactly rather than reverse-engineered from filter instances.
+  'gaiaAdjust',
   'selectable',
   'evented',
   'editable',

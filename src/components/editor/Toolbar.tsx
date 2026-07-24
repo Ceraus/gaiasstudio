@@ -12,7 +12,10 @@
  * Nothing        → hint text
  *
  * Right cluster (when anything selected):
- *   Opacity% | LayerOrder | Duplicate | Trash | Align strip | Group/Ungroup
+ *   Opacity% | LayerOrder | Center | Align strip | Group/Ungroup | Style painter
+ *   | Duplicate | Trash
+ *
+ * Far-right globals: Undo/Redo | Copy/Paste | Snapping | Bleed mask | Legibility
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -31,6 +34,7 @@ import {
   ChevronDown,
   ClipboardPaste,
   Copy,
+  CopyPlus,
   Crop,
   Eye,
   FlipHorizontal2,
@@ -46,6 +50,7 @@ import {
   Redo2,
   SquareDashed,
   Strikethrough,
+  Target,
   Trash2,
   Underline,
   Undo2,
@@ -401,6 +406,7 @@ export default function Toolbar() {
   const guidesEnabled           = useEditorStore((s) => s.guidesEnabled);
   const legibilityOverlayVisible = useEditorStore((s) => s.legibilityOverlayVisible);
   const hasStyleCopied          = useEditorStore((s) => s.hasStyleCopied);
+  const hasClipboard            = useEditorStore((s) => s.hasClipboard);
   const brandColors    = useAppStore((s) => s.settings.brandColors);
 
   const has     = !!sel;
@@ -526,6 +532,16 @@ export default function Toolbar() {
           <Btn icon={MoveUp}   title={t('editor.bringForward')} onClick={() => editor.stack('forward')} />
           <Btn icon={MoveDown} title={t('editor.sendBackward')} onClick={() => editor.stack('backward')} />
           <Sep />
+          {/* Dead-centre the selection on the label — the fix for logos that
+              print slightly off-centre because they were eyeballed. */}
+          <button
+            onClick={() => editor.centerSelected()}
+            title={t('editor.centerOnLabel')}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 transition hover:border-gaia-400 hover:bg-gaia-50"
+          >
+            <Target className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">{t('editor.centerShort', 'Center')}</span>
+          </button>
           {/* Align */}
           <AlignPopover disabled={!has} />
           {/* Group */}
@@ -537,8 +553,8 @@ export default function Toolbar() {
           <Btn icon={ClipboardPaste} title={t('editor.pasteStyle', 'Paste style')} disabled={!hasStyleCopied} onClick={() => editor.pasteStyle()} />
           <Sep />
           {/* Duplicate + Delete */}
-          <Btn icon={Copy}   title={t('editor.duplicate')} onClick={() => void editor.duplicateSelected()} />
-          <Btn icon={Trash2} title={t('editor.delete')}    onClick={() => editor.deleteSelected()} danger />
+          <Btn icon={CopyPlus} title={t('editor.duplicate')} onClick={() => void editor.duplicateSelected()} />
+          <Btn icon={Trash2}   title={t('editor.delete')}    onClick={() => editor.deleteSelected()} danger />
           <Sep />
         </>
       )}
@@ -546,6 +562,9 @@ export default function Toolbar() {
       {/* ── GLOBAL — always visible ─────────────────────────────────────── */}
       <Btn icon={Undo2} title={t('editor.undo')} disabled={!canUndo} onClick={() => void editor.undo()} />
       <Btn icon={Redo2} title={t('editor.redo')} disabled={!canRedo} onClick={() => void editor.redo()} />
+      <Sep />
+      <Btn icon={Copy}            title={t('editor.copy', 'Copy')}  disabled={!has}         onClick={() => editor.copySelected()} />
+      <Btn icon={ClipboardPaste}  title={t('editor.paste', 'Paste')} disabled={!hasClipboard} onClick={() => void editor.pasteClipboard()} />
       <Sep />
       <Btn icon={Magnet}       title={t('editor.toggleGuides')}            active={guidesEnabled}            onClick={() => editor.setGuidesEnabled(!guidesEnabled)} />
       <Btn icon={SquareDashed} title={overlayVis ? t('editor.guidesOn', 'Guides On') : t('editor.guidesOff', 'Guides Off')} active={overlayVis} onClick={() => editor.setOverlayVisible(!overlayVis)} />

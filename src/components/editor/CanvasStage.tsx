@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Maximize, Minus, MousePointerSquareDashed, Plus } from 'lucide-react';
+import { Maximize, Minus, MousePointerSquareDashed, Plus, Ruler } from 'lucide-react';
 import * as fabric from 'fabric';
 import { editor } from '@/lib/fabric/editorController';
 import { EDITOR_PPI } from '@/lib/units';
@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { useEditorStore } from '@/store/useEditorStore';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { fileToDataUrl, isImageFile, normalizeImage } from '@/lib/files';
+import CanvasRulers, { RULER_SIZE } from './CanvasRulers';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -21,6 +22,8 @@ export default function CanvasStage() {
   const zoom = useEditorStore((s) => s.zoom);
   const layers = useEditorStore((s) => s.layers);
   const cropMode = useEditorStore((s) => s.cropMode);
+  const rulersVisible = useEditorStore((s) => s.rulersVisible);
+  const fitRequest = useEditorStore((s) => s.fitRequest);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -33,10 +36,17 @@ export default function CanvasStage() {
   const fit = useCallback(() => {
     const c = containerRef.current;
     if (!c || !template) return;
-    const pad = 72;
+    const pad = rulersVisible ? 72 + RULER_SIZE * 2 : 72;
     const s = Math.min((c.clientWidth - pad) / baseW, (c.clientHeight - pad) / baseH);
     useEditorStore.getState().set({ zoom: clamp(s, 0.05, 3) });
-  }, [baseW, baseH, template]);
+  }, [baseW, baseH, template, rulersVisible]);
+
+  // Any control anywhere in the editor can ask for a re-fit by bumping the
+  // counter; the measurement itself only makes sense here.
+  useEffect(() => {
+    if (fitRequest > 0) fit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitRequest]);
 
   // Initialize the Fabric editor for this template/context.
   useEffect(() => {
@@ -124,6 +134,21 @@ export default function CanvasStage() {
       } else if (meta && e.shiftKey && key === 'v') {
         e.preventDefault();
         editor.pasteStyle();
+      } else if (meta && key === 'c') {
+        if (hasSelection) {
+          e.preventDefault();
+          editor.copySelected();
+        }
+      } else if (meta && key === 'x') {
+        if (hasSelection) {
+          e.preventDefault();
+          editor.cutSelected();
+        }
+      } else if (meta && key === 'v') {
+        if (editor.hasClipboard) {
+          e.preventDefault();
+          void editor.pasteClipboard();
+        }
       } else if (meta && key === 'a') {
         e.preventDefault();
         const canvas = editor.canvas;
@@ -192,8 +217,19 @@ export default function CanvasStage() {
       onDrop={handleDrop}
       onWheel={handleWheel}
     >
-      <div className="flex min-h-full min-w-full items-center justify-center p-10">
+      <div
+        className="flex min-h-full min-w-full items-center justify-center p-10"
+        style={rulersVisible ? { paddingLeft: 40 + RULER_SIZE, paddingTop: 40 + RULER_SIZE } : undefined}
+      >
         <div style={{ width: baseW * zoom, height: baseH * zoom }} className="relative">
+          {rulersVisible && (
+            <CanvasRulers
+              widthPx={baseW * zoom}
+              heightPx={baseH * zoom}
+              zoom={zoom}
+              bleedPx={bleed * EDITOR_PPI}
+            />
+          )}
           <div
             className="shadow-2xl overflow-hidden"
             style={{
@@ -245,6 +281,16 @@ export default function CanvasStage() {
         </button>
         <button className="icon-btn" title={t('editor.fit')} onClick={fit}>
           <Maximize className="h-4 w-4" />
+        </button>
+        <span className="mx-0.5 h-5 w-px bg-slate-200" />
+        <button
+          className={`icon-btn ${rulersVisible ? 'icon-btn-active' : ''}`}
+          title={t('editor.toggleRulers', 'Show inch rulers')}
+          aria-label={t('editor.toggleRulers', 'Show inch rulers')}
+          aria-pressed={rulersVisible}
+          onClick={() => useEditorStore.getState().set({ rulersVisible: !rulersVisible })}
+        >
+          <Ruler className="h-4 w-4" />
         </button>
       </div>
 

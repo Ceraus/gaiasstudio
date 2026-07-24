@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link2, Target, Unlink2 } from 'lucide-react';
+import { Crop, Link2, RotateCcw, Target, Unlink2 } from 'lucide-react';
 import * as fabric from 'fabric';
 import { editor } from '@/lib/fabric/editorController';
 import { useEditorStore } from '@/store/useEditorStore';
@@ -132,6 +132,8 @@ export default function PropertiesPanel() {
 
       {sel.isText && <TextControls />}
 
+      {sel.isImage && <ImageAdjustSection />}
+
       {/* ── Rotation — always visible for any selected object ────────── */}
       {single && (
         <div>
@@ -245,6 +247,74 @@ export default function PropertiesPanel() {
       {/* ── Drop Shadow ──────────────────────────────────────────────────── */}
       <ShadowSection />
     </div>
+  );
+}
+
+/**
+ * Brightness / contrast / saturation for the selected photo, plus a shortcut
+ * into crop mode — the two things needed to tame an AI-generated background
+ * (washed-out colour, unwanted edge artifacts) without leaving the panel.
+ */
+function ImageAdjustSection() {
+  const { t } = useTranslation();
+  const adjust = useEditorStore((s) => s.selection?.adjust);
+  if (!adjust) return null;
+
+  const touched = adjust.brightness !== 0 || adjust.contrast !== 0 || adjust.saturation !== 0;
+
+  const rows = [
+    { key: 'brightness' as const, label: t('panels.brightness', 'Brightness') },
+    { key: 'contrast' as const, label: t('panels.contrast', 'Contrast') },
+    { key: 'saturation' as const, label: t('panels.saturation', 'Saturation') },
+  ];
+
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="label mb-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {t('panels.imageAdjust', 'Photo Adjustments')}
+        </p>
+        <div className="flex items-center gap-1">
+          <button
+            className="icon-btn h-7 w-7"
+            title={t('editor.crop')}
+            aria-label={t('editor.crop')}
+            onClick={() => editor.startCrop()}
+          >
+            <Crop className="h-3.5 w-3.5" />
+          </button>
+          <button
+            className="icon-btn h-7 w-7"
+            title={t('panels.resetAdjust', 'Reset adjustments')}
+            aria-label={t('panels.resetAdjust', 'Reset adjustments')}
+            disabled={!touched}
+            onClick={() => editor.resetImageAdjust()}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+        {rows.map(({ key, label }) => (
+          <div key={key}>
+            <div className="mb-1 flex justify-between text-[11px] text-slate-500">
+              <span>{label}</span>
+              <span className="font-mono text-slate-700">{Math.round(adjust[key] * 100)}</span>
+            </div>
+            <input
+              type="range"
+              min={-1}
+              max={1}
+              step={0.02}
+              className="w-full accent-gaia-600"
+              aria-label={label}
+              value={adjust[key]}
+              onChange={(e) => editor.setImageAdjust({ [key]: Number(e.target.value) })}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

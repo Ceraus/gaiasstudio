@@ -5,6 +5,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  GripVertical,
   Image as ImageIcon,
   Lock,
   Shapes,
@@ -29,21 +30,70 @@ export default function LayersPanel() {
   const activeIds = useEditorStore((s) => s.activeIds);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   if (layers.length === 0) {
     return <p className="p-4 text-center text-xs text-slate-400">{t('layers.empty')}</p>;
   }
 
+  const endDrag = () => {
+    setDragId(null);
+    setDropIndex(null);
+  };
+
+  /** Drops above the hovered row when the pointer is in its top half. */
+  const hoverIndex = (e: React.DragEvent<HTMLLIElement>, idx: number) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    return e.clientY - box.top < box.height / 2 ? idx : idx + 1;
+  };
+
+  const commitDrop = (target: number | null) => {
+    if (dragId && target !== null) {
+      const from = layers.findIndex((l) => l.id === dragId);
+      // Removing the dragged row first shifts every later slot up by one.
+      editor.reorderLayer(dragId, from < target ? target - 1 : target);
+    }
+    endDrag();
+  };
+
   return (
-    <ul className="divide-y divide-slate-50">
+    <ul className="divide-y divide-slate-50" onDragLeave={() => setDropIndex(null)}>
       {layers.map((layer, idx) => {
         const Icon = kindIcon(layer.kind);
         const active = activeIds.includes(layer.id);
+        const dragging = dragId === layer.id;
         return (
           <li
             key={layer.id}
-            className={`flex items-center gap-1.5 px-2 py-1.5 ${active ? 'bg-gaia-50' : 'hover:bg-slate-50'}`}
+            draggable={editingId !== layer.id}
+            onDragStart={(e) => {
+              setDragId(layer.id);
+              e.dataTransfer.effectAllowed = 'move';
+              // Firefox refuses to start a drag without payload.
+              e.dataTransfer.setData('text/plain', layer.id);
+            }}
+            onDragEnd={endDrag}
+            onDragOver={(e) => {
+              if (!dragId) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setDropIndex(hoverIndex(e, idx));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              commitDrop(hoverIndex(e, idx));
+            }}
+            className={`relative flex items-center gap-1 px-2 py-1.5 transition
+              ${active ? 'bg-gaia-50' : 'hover:bg-slate-50'}
+              ${dragging ? 'opacity-40' : ''}
+              ${dropIndex === idx ? 'shadow-[inset_0_2px_0_0_theme(colors.gaia.500)]' : ''}
+              ${dropIndex === idx + 1 ? 'shadow-[inset_0_-2px_0_0_theme(colors.gaia.500)]' : ''}`}
           >
+            <GripVertical
+              className="h-3.5 w-3.5 shrink-0 cursor-grab text-slate-300 active:cursor-grabbing"
+              aria-hidden="true"
+            />
             <button
               className="flex min-w-0 flex-1 items-center gap-2 text-left"
               onClick={() => editor.selectLayer(layer.id)}
@@ -67,6 +117,7 @@ export default function LayersPanel() {
               ) : (
                 <span
                   className="truncate text-xs text-slate-700"
+                  title={t('layers.renameHint', 'Double-click to rename · drag to reorder')}
                   onDoubleClick={() => {
                     setEditingId(layer.id);
                     setDraft(layer.name);

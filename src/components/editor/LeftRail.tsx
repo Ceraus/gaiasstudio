@@ -55,7 +55,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { editor } from '@/lib/fabric/editorController';
-import { useEditorStore } from '@/store/useEditorStore';
+import { requestCanvasFit, useEditorStore } from '@/store/useEditorStore';
 import AddPanel from './AddPanel';
 import AssetsDrawer, { type AssetTab } from './AssetsDrawer';
 import QrCodeModal from './QrCodeModal';
@@ -335,7 +335,7 @@ function FloatingToolbar({
           <FSep />
           <FBtn icon={ZoomOut}   title={t('editor.zoomOut')} onClick={() => useEditorStore.getState().set({ zoom: clamp(zoom / 1.2, 0.05, 3) })} />
           <FBtn icon={ZoomIn}    title={t('editor.zoomIn')}  onClick={() => useEditorStore.getState().set({ zoom: clamp(zoom * 1.2, 0.05, 3) })} />
-          <FBtn icon={Maximize2} title={t('editor.fit')}     onClick={() => useEditorStore.getState().set({ zoom: 1 })} />
+          <FBtn icon={Maximize2} title={t('editor.fit')}     onClick={() => requestCanvasFit()} />
           <FSep />
 
           {/* Dock back */}
@@ -454,7 +454,7 @@ export default function LeftRail() {
               <ToolBtn
                 icon={Maximize2}
                 title={t('editor.fit')}
-                onClick={() => useEditorStore.getState().set({ zoom: 1 })}
+                onClick={() => requestCanvasFit()}
               />
             </div>
           </div>
@@ -547,7 +547,7 @@ export default function LeftRail() {
                 <ToolBtn icon={Eye}          title={t('editor.toggleLegibilityOverlay')} active={legibilityOverlayVisible} onClick={() => editor.toggleLegibilityOverlay()} />
                 <ToolBtn icon={ZoomOut}   title={t('editor.zoomOut')} onClick={() => useEditorStore.getState().set({ zoom: clamp(zoom / 1.2, 0.05, 3) })} />
                 <ToolBtn icon={ZoomIn}    title={t('editor.zoomIn')}  onClick={() => useEditorStore.getState().set({ zoom: clamp(zoom * 1.2, 0.05, 3) })} />
-                <ToolBtn icon={Maximize2} title={t('editor.fit')}     onClick={() => useEditorStore.getState().set({ zoom: 1 })} />
+                <ToolBtn icon={Maximize2} title={t('editor.fit')}     onClick={() => requestCanvasFit()} />
               </div>
             </div>
           </>

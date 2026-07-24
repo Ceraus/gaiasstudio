@@ -4,7 +4,7 @@ import { EDITOR_PPI, EXPORT_PPI, ptToPx } from '@/lib/units';
 import { DEFAULT_FONT } from '@/data/googleFonts';
 import { loadFont } from '@/lib/fontManager';
 import { versionsRepo, draftsRepo, recipesRepo, ingredientsRepo } from '@/db/repositories';
-import { useEditorStore, type SelectionInfo, type SaveState } from '@/store/useEditorStore';
+import { useEditorStore, type LayerInfo, type SelectionInfo, type SaveState } from '@/store/useEditorStore';
 import { useAppStore } from '@/store/useAppStore';
 import { configureFabricOnce, CUSTOM_PROPS } from './fabricConfig';
 import { drawBleedOverlay, type OverlayConfig } from './overlay';
@@ -29,7 +29,17 @@ type Gaia = fabric.FabricObject & {
   gaiaCurve?: number;
   gaiaLockAspect?: boolean;
   isLegibilityOverlay?: boolean;
+  gaiaAdjust?: ImageAdjust;
 };
+
+/** Non-destructive image adjustments. All amounts are Fabric's -1…1 range. */
+export interface ImageAdjust {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+}
+
+export const NEUTRAL_ADJUST: ImageAdjust = { brightness: 0, contrast: 0, saturation: 0 };
 
 export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
 
@@ -71,6 +81,12 @@ class EditorController {
 
   private cropRect: Gaia | null = null;
   private cropTarget: fabric.FabricImage | null = null;
+
+  private adjustFrame: number | null = null;
+  private pendingAdjust: (fabric.FabricImage & Gaia)[] = [];
+
+  /** Objects copied with Ctrl/Cmd+C, serialized so paste survives deletion. */
+  private clipboard: Record<string, unknown>[] = [];
 
   // -- lifecycle ------------------------------------------------------------
 
@@ -164,8 +180,11 @@ class EditorController {
     this.initToken++;
     if (this.historyTimer) clearTimeout(this.historyTimer);
     if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    if (this.adjustFrame !== null) cancelAnimationFrame(this.adjustFrame);
     this.historyTimer = null;
     this.autosaveTimer = null;
+    this.adjustFrame = null;
+    this.pendingAdjust = [];
     if (this.canvas) {
       this.canvas.dispose();
       this.canvas = null;
@@ -280,8 +299,7 @@ class EditorController {
       }
       const target = opt.target as fabric.FabricObject | undefined;
       if (!target) return;
-      this.activeGuides = computeSnapGuides(canvas, target, this.trim);
-      canvas.requestRenderAll();
+      this.setGuides(computeSnapGuides(canvas, target, this.trim));
     });
     canvas.on('object:scaling', (opt) => {
       if (!this.guidesEnabled || this.cropMode) {
@@ -290,8 +308,7 @@ class EditorController {
       }
       const target = opt.target as fabric.FabricObject | undefined;
       if (!target) return;
-      this.activeGuides = computeResizeGuides(canvas, target, this.trim);
-      canvas.requestRenderAll();
+      this.setGuides(computeResizeGuides(canvas, target, this.trim));
     });
     canvas.on('mouse:up', () => {
       if (this.activeGuides.length) this.clearGuides();
@@ -312,6 +329,17 @@ class EditorController {
       cornerRadiusPx: (this.template!.cornerRadiusIn || 0) * EDITOR_PPI,
       visible: this.overlayVisible,
     };
+  }
+
+  /**
+   * Guides are recomputed on every pointer move. Fabric already repaints the
+   * canvas during a drag, so an extra render is only worth requesting when the
+   * guide set actually changed.
+   */
+  private setGuides(next: Guide[]) {
+    if (guidesEqual(this.activeGuides, next)) return;
+    this.activeGuides = next;
+    this.canvas?.requestRenderAll();
   }
 
   private clearGuides() {
@@ -634,6 +662,47 @@ class EditorController {
 
   get hascopiedStyle() { return !!this.copiedStyle; }
 
+  // ── Object clipboard (Ctrl/Cmd + C / X / V) ──────────────────────────────
+  // Objects are stored as plain serialized data rather than live Fabric
+  // instances so a copied layer can still be pasted after it was deleted.
+
+  copySelected(): boolean {
+    const objs = this.canvas?.getActiveObjects() ?? [];
+    if (!objs.length) return false;
+    this.clipboard = objs.map((o) => o.toObject(CUSTOM_PROPS) as Record<string, unknown>);
+    useEditorStore.getState().set({ hasClipboard: true });
+    return true;
+  }
+
+  cutSelected(): boolean {
+    if (!this.copySelected()) return false;
+    this.deleteSelected();
+    return true;
+  }
+
+  async pasteClipboard() {
+    const canvas = this.canvas;
+    if (!canvas || !this.clipboard.length) return;
+    const revived = await fabric.util.enlivenObjects<fabric.FabricObject>(this.clipboard);
+    if (!this.canvas) return; // disposed while images were decoding
+
+    canvas.discardActiveObject();
+    const pasted: fabric.FabricObject[] = [];
+    for (const obj of revived) {
+      const g = obj as Gaia;
+      g.id = uid();
+      obj.set({ left: (obj.left ?? 0) + 20, top: (obj.top ?? 0) + 20 });
+      canvas.add(obj);
+      pasted.push(obj);
+    }
+    if (pasted.length === 1) canvas.setActiveObject(pasted[0]);
+    else if (pasted.length > 1) canvas.setActiveObject(new fabric.ActiveSelection(pasted, { canvas }));
+    canvas.requestRenderAll();
+    this.syncSelection();
+  }
+
+  get hasClipboard() { return this.clipboard.length > 0; }
+
   deleteSelected() {
     const canvas = this.canvas;
     if (!canvas) return;
@@ -862,6 +931,48 @@ class EditorController {
     this.onChanged();
   }
 
+  // -- image adjustments ----------------------------------------------------
+
+  /**
+   * Applies brightness / contrast / saturation to the selected image(s).
+   *
+   * Fabric rebuilds the whole texture on every `applyFilters()` call, which is
+   * far too slow to run on each slider tick, so the newest amounts are coalesced
+   * into a single animation frame.
+   */
+  setImageAdjust(patch: Partial<ImageAdjust>) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const images = canvas
+      .getActiveObjects()
+      .filter((o): o is fabric.FabricImage & Gaia => o.type === 'image');
+    if (!images.length) return;
+
+    for (const img of images) {
+      img.gaiaAdjust = { ...NEUTRAL_ADJUST, ...img.gaiaAdjust, ...patch };
+    }
+    this.pendingAdjust = images;
+    this.syncSelection();
+
+    if (this.adjustFrame !== null) return;
+    this.adjustFrame = requestAnimationFrame(() => {
+      this.adjustFrame = null;
+      const targets = this.pendingAdjust;
+      this.pendingAdjust = [];
+      for (const img of targets) {
+        if (!this.canvas?.contains(img)) continue;
+        img.filters = buildFilters(img.gaiaAdjust ?? NEUTRAL_ADJUST);
+        img.applyFilters();
+      }
+      this.canvas?.requestRenderAll();
+      this.onChanged();
+    });
+  }
+
+  resetImageAdjust() {
+    this.setImageAdjust(NEUTRAL_ADJUST);
+  }
+
   // -- crop -----------------------------------------------------------------
 
   get cropMode() {
@@ -986,7 +1097,11 @@ class EditorController {
           isLegibilityOverlay: !!g.isLegibilityOverlay,
         };
       });
-    useEditorStore.getState().set({ layers });
+    // Dragging fires object:modified continuously; pushing a fresh array each
+    // time would re-render the whole layers panel for no visible change.
+    const store = useEditorStore.getState();
+    if (layersEqual(store.layers, layers)) return;
+    store.set({ layers });
   }
 
   selectLayer(id: string) {
@@ -1055,6 +1170,31 @@ class EditorController {
     this.onChanged();
   }
 
+  /**
+   * Drag-and-drop reorder from the layers panel.
+   *
+   * The panel lists the topmost layer first, so its indices run opposite to
+   * Fabric's stacking order; both indices are converted here so callers can
+   * think purely in "what the user sees".
+   */
+  reorderLayer(id: string, toPanelIndex: number) {
+    const canvas = this.canvas;
+    const obj = this.findById(id);
+    if (!canvas || !obj || this.cropMode) return;
+    const visible = canvas
+      .getObjects()
+      .filter((o) => !String((o as Gaia).gaiaKind ?? '').startsWith('__'));
+    const clamped = Math.max(0, Math.min(visible.length - 1, toPanelIndex));
+    const targetStackIndex = visible.length - 1 - clamped;
+    if (visible[targetStackIndex] === obj) return;
+
+    const reordered = visible.filter((o) => o !== obj);
+    reordered.splice(targetStackIndex, 0, obj);
+    reordered.forEach((o, i) => canvas.moveObjectTo(o, i));
+    canvas.requestRenderAll();
+    this.onChanged();
+  }
+
   deleteLayer(id: string) {
     const o = this.findById(id);
     if (!o || !this.canvas) return;
@@ -1110,8 +1250,15 @@ class EditorController {
       charSpacing: (a.charSpacing as number) ?? 0,
       curve: (a as Gaia).gaiaCurve ?? 0,
       fontLoading: false,
+      adjust: readAdjust(a),
     };
-    useEditorStore.getState().set({ selection: info, activeIds: objs.map((o) => (o as Gaia).id ?? '') });
+    const activeIds = objs.map((o) => (o as Gaia).id ?? '');
+    const store = useEditorStore.getState();
+    if (
+      shallowEqual(store.selection as Record<string, unknown> | null, info as unknown as Record<string, unknown>) &&
+      arrayEqual(store.activeIds, activeIds)
+    ) return;
+    store.set({ selection: info, activeIds });
   }
 
   // -- view / export --------------------------------------------------------
@@ -1370,6 +1517,63 @@ class EditorController {
 
 export function isTextObject(o: fabric.FabricObject): boolean {
   return o.type === 'textbox' || o.type === 'i-text' || o.type === 'text';
+}
+
+// ── change-detection helpers ────────────────────────────────────────────────
+// The canvas fires modification events on every pointer move. Comparing before
+// writing to the store keeps React from re-rendering the panels 60×/second.
+
+function arrayEqual<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+function shallowEqual(
+  a: Record<string, unknown> | null,
+  b: Record<string, unknown> | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((k) => {
+    const av = a[k];
+    const bv = b[k];
+    if (av && bv && typeof av === 'object' && typeof bv === 'object') {
+      return shallowEqual(av as Record<string, unknown>, bv as Record<string, unknown>);
+    }
+    return av === bv;
+  });
+}
+
+function layersEqual(a: LayerInfo[], b: LayerInfo[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((l, i) => shallowEqual(l as unknown as Record<string, unknown>, b[i] as unknown as Record<string, unknown>))
+  );
+}
+
+function guidesEqual(a: Guide[], b: Guide[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((g, i) => g.vertical === b[i].vertical && g.pos === b[i].pos && g.center === b[i].center)
+  );
+}
+
+// ── image adjustments ───────────────────────────────────────────────────────
+
+/** Reads the stored adjustment amounts off an object (neutral for non-images). */
+function readAdjust(o: fabric.FabricObject): ImageAdjust {
+  if (o.type !== 'image') return NEUTRAL_ADJUST;
+  return { ...NEUTRAL_ADJUST, ...(o as Gaia).gaiaAdjust };
+}
+
+/** Neutral amounts are omitted so untouched images skip filtering entirely. */
+function buildFilters(adjust: ImageAdjust): fabric.filters.BaseFilter<string>[] {
+  const out: fabric.filters.BaseFilter<string>[] = [];
+  if (adjust.brightness) out.push(new fabric.filters.Brightness({ brightness: adjust.brightness }));
+  if (adjust.contrast) out.push(new fabric.filters.Contrast({ contrast: adjust.contrast }));
+  if (adjust.saturation) out.push(new fabric.filters.Saturation({ saturation: adjust.saturation }));
+  return out;
 }
 
 /**
