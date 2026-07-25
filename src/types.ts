@@ -132,6 +132,12 @@ export interface Recipe {
   color?: string;
   /** Per-bar packaging / materials costs added by the user (e.g. bags, boxes, labels). */
   customCosts?: Array<{ id: string; name: string; cost: number; unit?: string }>;
+  /** Planned retail price per bar (USD). */
+  retailPrice?: number;
+  /** Auto-calculated total raw material COGS when the recipe is saved. */
+  cogsTotal?: number;
+  /** Auto-calculated gross profit margin % when retail price is set. */
+  profitMargin?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -196,6 +202,18 @@ export interface AppSettings {
   debugMode?: boolean;
   /** Show/hide the Label Sets tab in navigation (default: false). */
   showLabelSets?: boolean;
+
+  // ── Local AI (optional, 100% offline via Ollama) ─────────────────────────
+  /**
+   * User has opted in to the local AI copywriting assist. Off by default —
+   * this never runs, calls out to the network, or affects the UI unless the
+   * user explicitly turns it on here.
+   */
+  localAiEnabled?: boolean;
+  /** Base URL of the locally-running Ollama server. */
+  localAiBaseUrl?: string;
+  /** Ollama model name/tag to use for text generation (e.g. "llama3.2:3b"). */
+  localAiModel?: string;
 }
 
 // ---------------------------------------------------------------------------

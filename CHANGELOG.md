@@ -16,6 +16,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   generic category icon. Added five new icon shapes (milk bottle, molecule,
   granular cluster, powder mound, lab flask) and 198 new colorful icon
   entries to cover every previously-uncovered ingredient.
+- **Botanical ingredient icons in the AI Prompt Builder** — the "Botanical
+  ingredients to feature" checklist (active recipe, all-botanicals, and full
+  catalog sections) now shows each ingredient's icon alongside its name
+  instead of plain text.
+- **Two new Background Style palettes** — "Toasted Almond" and "Walnut Shell"
+  join the AI Prompt Builder's style presets.
+- **Alternating earth-tone recipe cards** — "Your Recipes" list cards now
+  cycle through six earth tones (sand, clay, terracotta, sage, warm brown,
+  moss) instead of plain white, using a global index so the pattern stays
+  consistent across pagination.
+- **Ingredient catalog sync/backfill** — `syncIngredientCatalog()`
+  automatically backfills any of the 671 seed ingredients missing from an
+  existing, non-empty local database, plus a manual "Sync library from
+  catalog" button on the Ingredients screen, fixing accounts that only ever
+  had a handful of ingredients seeded.
+- **Zero-Math inventory, COGS & revenue system** — new `inventoryMath`
+  helpers (oz/lb→gram and ml→drop conversions, margin math) and an
+  `inventorySeed` of baseline supplier prices back a redesigned Inventory
+  screen (category tabs, a zero-math "what did you pay / what size" modal)
+  and a sticky Revenue & Profit widget in the Recipe Builder (retail price
+  input, live gross profit, color-coded margin %). Recipes gained persisted
+  retail price, COGS and profit-margin fields (Dexie v10).
+- **Quick Set by Category** — bulk-apply one price to every ingredient in a
+  category at once (e.g. "$0.05/g for all micas") from the Inventory screen,
+  respecting weight vs. volume math.
+- **Pinned "In-Use Ingredients" section** in Inventory — shows only
+  ingredients referenced by saved recipes, above the category tabs.
+- **Live stock photo search** — the Free Stock tab in Choose Background now
+  runs real Unsplash + Pixabay searches in parallel and merges the results,
+  with required attribution links, download caching into the offline asset
+  library, and graceful no-key/no-results/error states. API keys are
+  configured in Settings, with new "Get a free key" links.
+- **Local AI copywriting assist (optional, 100% offline)** — a new opt-in
+  "Local AI" section in Settings (Ollama base URL + model, Test Connection)
+  backs a "✨ Suggest" button in the Recipe Builder that drafts a
+  benefit/tagline from selected ingredients via a local Ollama model.
+  Preview-only (Use this / Edit first / Discard); it never touches pricing
+  math or compliance-sensitive label text (INCI/warnings).
 
 ### Changed
 - **Default interface scale is now 100%** (was 125%); the "default" badge
@@ -31,6 +69,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now-unnecessary scroll container so the dot renders uncropped.
 - WorkflowStepper tooltips were appearing underneath the header instead of
   stacking above it; fixed the z-index order.
+- **Misaligned ingredient rows** — `IngredientRow` was rebuilt as a proper
+  CSS grid (icon | name | actions) so long names truncate correctly instead
+  of being clipped from the left, action buttons never get pushed off-row,
+  and row height is uniform whether or not a benefit line is present.
+- **"Includes a soap base" recipe check** now actually inspects the active
+  ingredient list for a base/soap-base ingredient (amber warning if
+  missing) instead of always showing a hardcoded checkmark.
 
 ## [2.0.29] - 2026-07-24
 

@@ -109,6 +109,12 @@ export class GaiaDatabase extends Dexie {
       collections: 'id, name, createdAt',
       drafts: 'id, name, templateId, collectionId, recipeId, createdAt, updatedAt',
     });
+
+    // Version 10 — indexes recipe COGS/revenue fields for reporting queries.
+    // Fields are optional; no data migration required.
+    this.version(10).stores({
+      recipes: 'id, name, createdAt, cogsTotal, retailPrice',
+    });
   }
 }
 
@@ -122,4 +128,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   safeIn: 0.0625,
   onboarded: false,
   uiScale: 1,
+  localAiEnabled: false,
+  localAiBaseUrl: 'http://localhost:11434',
+  localAiModel: 'llama3.2:3b',
 };

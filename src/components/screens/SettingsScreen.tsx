@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Building2, Bug, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Palette, Plus, Ruler, Trash2, X, ZoomIn } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Trash2, WifiOff, X, XCircle, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useLibraryStore } from '@/store/useLibraryStore';
+import { checkLocalAiStatus, type LocalAiStatus } from '@/lib/localAi';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -147,6 +148,16 @@ export default function SettingsScreen() {
                   value={settings.unsplashKey ?? ''}
                   onChange={(e) => void updateSettings({ unsplashKey: e.target.value })}
                 />
+                <p className="mt-1 text-xs text-slate-400">
+                  <a
+                    href="https://unsplash.com/oauth/applications"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-gaia-600 hover:underline"
+                  >
+                    {t('settings.getUnsplashKey', 'Get a free Unsplash Access Key →')}
+                  </a>
+                </p>
               </div>
               <div>
                 <label className="label">{t('settings.pixabayKey')}</label>
@@ -156,9 +167,21 @@ export default function SettingsScreen() {
                   value={settings.pixabayKey ?? ''}
                   onChange={(e) => void updateSettings({ pixabayKey: e.target.value })}
                 />
+                <p className="mt-1 text-xs text-slate-400">
+                  <a
+                    href="https://pixabay.com/api/docs/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-gaia-600 hover:underline"
+                  >
+                    {t('settings.getPixabayKey', 'Get a free Pixabay API key →')}
+                  </a>
+                </p>
               </div>
             </div>
           </section>
+
+          <LocalAiSection />
 
           {/* Business / Maker Info — required for FDA-compliant labels */}
           <section className="card space-y-3">
@@ -380,5 +403,163 @@ export default function SettingsScreen() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Local AI (optional) — 100% offline copywriting assist via Ollama.
+// ---------------------------------------------------------------------------
+function LocalAiSection() {
+  const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+
+  const [baseUrlInput, setBaseUrlInput] = useState(settings.localAiBaseUrl ?? 'http://localhost:11434');
+  const [modelInput, setModelInput] = useState(settings.localAiModel ?? 'llama3.2:3b');
+  const [testing, setTesting] = useState(false);
+  const [status, setStatus] = useState<LocalAiStatus | null>(null);
+
+  // Keep local inputs in sync if settings load/change from elsewhere (e.g. after a backup import).
+  useEffect(() => {
+    setBaseUrlInput(settings.localAiBaseUrl ?? 'http://localhost:11434');
+    setModelInput(settings.localAiModel ?? 'llama3.2:3b');
+  }, [settings.localAiBaseUrl, settings.localAiModel]);
+
+  const commitBaseUrl = () => {
+    const trimmed = baseUrlInput.trim() || 'http://localhost:11434';
+    setBaseUrlInput(trimmed);
+    if (trimmed !== settings.localAiBaseUrl) void updateSettings({ localAiBaseUrl: trimmed });
+  };
+
+  const commitModel = () => {
+    const trimmed = modelInput.trim() || 'llama3.2:3b';
+    setModelInput(trimmed);
+    if (trimmed !== settings.localAiModel) void updateSettings({ localAiModel: trimmed });
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setStatus(null);
+    const result = await checkLocalAiStatus(baseUrlInput.trim() || 'http://localhost:11434', modelInput.trim() || 'llama3.2:3b');
+    setStatus(result);
+    setTesting(false);
+  };
+
+  return (
+    <section className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="label mb-0 flex items-center gap-2">
+          <Bot className="h-4 w-4" /> {t('settings.localAi', 'Local AI (optional)')}
+        </p>
+        <button
+          role="switch"
+          aria-checked={!!settings.localAiEnabled}
+          onClick={() => void updateSettings({ localAiEnabled: !settings.localAiEnabled })}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gaia-500 ${
+            settings.localAiEnabled ? 'bg-gaia-600' : 'bg-slate-300'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+              settings.localAiEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
+      <p className="text-xs text-slate-400">
+        {t(
+          'settings.localAiHint',
+          'Adds an optional "✨ Suggest" button in the Recipe Builder that drafts a benefit statement from your selected ingredients. 100% local and offline — nothing is ever sent to the cloud. Requires installing Ollama separately and pulling a model.',
+        )}
+      </p>
+
+      <p className="text-xs text-slate-400">
+        {t('settings.localAiSetupIntro', 'Setup (one-time, on this computer):')}
+      </p>
+      <ol className="ml-4 list-decimal space-y-0.5 text-xs text-slate-500">
+        <li>
+          <a
+            href="https://ollama.com"
+            target="_blank"
+            rel="noreferrer"
+            className="text-gaia-600 hover:underline"
+          >
+            {t('settings.localAiDownload', 'Download and install Ollama →')}
+          </a>
+        </li>
+        <li>
+          {t('settings.localAiPullStep', 'Open a terminal and run:')}{' '}
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
+            ollama pull {modelInput.trim() || 'llama3.2:3b'}
+          </code>
+        </li>
+        <li>{t('settings.localAiToggleStep', 'Turn on the switch above, then use "Test Connection" below.')}</li>
+      </ol>
+
+      {settings.localAiEnabled && (
+        <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label text-[11px]">{t('settings.localAiBaseUrl', 'Ollama address')}</label>
+              <input
+                className="input text-sm"
+                placeholder="http://localhost:11434"
+                value={baseUrlInput}
+                onChange={(e) => setBaseUrlInput(e.target.value)}
+                onBlur={commitBaseUrl}
+              />
+            </div>
+            <div>
+              <label className="label text-[11px]">{t('settings.localAiModel', 'Model name')}</label>
+              <input
+                className="input text-sm"
+                placeholder="llama3.2:3b"
+                value={modelInput}
+                onChange={(e) => setModelInput(e.target.value)}
+                onBlur={commitModel}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => void testConnection()}
+              disabled={testing}
+            >
+              {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+              {t('settings.localAiTest', 'Test Connection')}
+            </button>
+
+            {status?.state === 'connected' && (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                {t('settings.localAiConnected', 'Connected — "{{model}}" is ready.', { model: modelInput.trim() || 'llama3.2:3b' })}
+              </span>
+            )}
+            {status?.state === 'model-missing' && (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600">
+                <XCircle className="h-4 w-4 shrink-0" />
+                {t('settings.localAiModelMissing', 'Ollama is running, but "{{model}}" isn\'t pulled yet.', { model: modelInput.trim() || 'llama3.2:3b' })}
+              </span>
+            )}
+            {status?.state === 'unreachable' && (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                <WifiOff className="h-4 w-4 shrink-0" />
+                {t('settings.localAiUnreachable', "Couldn't reach Ollama at this address. Is it running?")}
+              </span>
+            )}
+          </div>
+
+          {status?.models && status.models.length > 0 && (
+            <p className="text-[11px] text-slate-400">
+              {t('settings.localAiAvailableModels', 'Models found: {{models}}', { models: status.models.join(', ') })}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

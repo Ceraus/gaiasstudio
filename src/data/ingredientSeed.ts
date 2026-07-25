@@ -1,7 +1,7 @@
 /**
  * ingredientSeed.ts
  * ─────────────────
- * A comprehensive library of 130+ popular soap & beauty-making ingredients,
+ * A comprehensive library of 670+ popular soap & beauty-making ingredients,
  * ready to be bulk-imported into the local database. All ingredients start
  * as INACTIVE so the user's workspace isn't overwhelming — they toggle on
  * only what they actually use.
@@ -14,7 +14,8 @@
  *  • category    — visual grouping for the icon shown in the ingredient list
  */
 
-import type { IngredientCategory } from '@/types';
+import { db } from '@/db/db';
+import type { Ingredient, IngredientCategory } from '@/types';
 
 export interface SeedIngredient {
   name: string;
@@ -787,3 +788,28 @@ export const INGREDIENT_SEED: SeedIngredient[] = [
   { name: 'Gold-Green Mirage Mica',   inci: 'Mica, CI 77891 (Titanium Dioxide), CI 77492 (Iron Oxides)',                                 benefit: 'Smalltongue color-shifting mirage mica – shifts gold to green; iridescent effect',          isSoapBase: false, category: 'colorant', active: true, measurementType: 'weight' },
   { name: 'Black-Purple Mirage Mica', inci: 'Mica, CI 77891 (Titanium Dioxide), CI 77499 (Iron Oxide Black)',                            benefit: 'Smalltongue color-shifting mirage mica – shifts black to purple; iridescent effect',        isSoapBase: false, category: 'colorant', active: true, measurementType: 'weight' },
 ];
+
+export const INGREDIENT_CATALOG_SIZE = INGREDIENT_SEED.length;
+
+const seedUid = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+/** Merge missing catalog entries into IndexedDB by name (case-insensitive). */
+export async function syncIngredientCatalog(): Promise<{ added: number }> {
+  const existing = await db.ingredients.toArray();
+  const existingNames = new Set(existing.map((i) => i.name.toLowerCase().trim()));
+  const now = Date.now();
+  const toAdd: Ingredient[] = INGREDIENT_SEED
+    .filter((s) => !existingNames.has(s.name.toLowerCase().trim()))
+    .map((s) => ({
+      ...s,
+      active: s.active ?? false,
+      id: seedUid(),
+      createdAt: now,
+      updatedAt: now,
+    }));
+  if (toAdd.length > 0) await db.ingredients.bulkAdd(toAdd);
+  return { added: toAdd.length };
+}

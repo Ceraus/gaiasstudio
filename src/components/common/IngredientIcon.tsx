@@ -240,7 +240,7 @@ export default function IngredientIcon({ category = 'other', name, className = '
   if (colorfulSvg) {
     return (
       <span
-        className={`flex shrink-0 overflow-hidden ${sizeCls} ${className}`}
+        className={`flex shrink-0 items-center justify-center overflow-hidden ${sizeCls} ${className}`}
         title={titleText}
         aria-hidden="true"
       >

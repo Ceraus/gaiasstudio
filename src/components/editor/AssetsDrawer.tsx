@@ -26,7 +26,7 @@ import { editor } from '@/lib/fabric/editorController';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { useAppStore } from '@/store/useAppStore';
 import { fileToDataUrl, isImageFile } from '@/lib/files';
-import { searchStock, type StockPhoto } from '@/lib/stock';
+import { searchStock, triggerUnsplashDownload, type StockPhoto } from '@/lib/stock';
 import { isElectronWithBridge } from '@/lib/autoImport';
 
 export type AssetTab = 'myPhotos' | 'library' | 'stock' | 'ai';
@@ -543,6 +543,7 @@ function StockTab({ asBackground }: { asBackground: boolean }) {
 
   const usePhoto = async (p: StockPhoto) => {
     const kind = asBackground ? 'background' : 'image';
+    triggerUnsplashDownload(p, settings.unsplashKey);
     try {
       const res = await fetch(p.full);
       const blob = await res.blob();

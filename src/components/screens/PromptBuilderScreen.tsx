@@ -25,7 +25,7 @@ import {
 import { useAppStore } from '@/store/useAppStore';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { db } from '@/db/db';
-import { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
+import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
 import type { AssetRecord, Ingredient, IngredientCategory, Recipe } from '@/types';
 
 // ── Style presets ─────────────────────────────────────────────────────────────
@@ -65,6 +65,8 @@ const STYLE_PRESETS = [
   { id: 'hunter-green',        colorName: 'Hunter Green',         hexCode: '#3D5A4C', textureName: 'aged patina',        icon: '🍃' },
   { id: 'terracotta-peach',    colorName: 'Terracotta Peach',     hexCode: '#D4956A', textureName: 'sun-baked clay',     icon: '🏺' },
   { id: 'sage-mist',           colorName: 'Sage Mist',            hexCode: '#B8C4BB', textureName: 'frosted glass',      icon: '🌫️' },
+  { id: 'toasted-almond',      colorName: 'Toasted Almond',       hexCode: '#C8A878', textureName: 'raw almond shell',   icon: '🌰' },
+  { id: 'walnut-shell',        colorName: 'Walnut Shell',         hexCode: '#5A3E2B', textureName: 'cracked walnut wood', icon: '🟤' },
 ] as const;
 
 type StylePreset = typeof STYLE_PRESETS[number];
@@ -88,6 +90,70 @@ const INGREDIENTS = [
   'sweet almond branches', 'tea leaves', 'tea tree leaves', 'vanilla pods',
   'white clay bowls', 'yellow clay bowls', 'ylang-ylang flowers',
 ].sort();
+
+/** Maps each visual-prompt token to the icon category that best represents it,
+ *  so the checklist shows a meaningful icon instead of a generic placeholder. */
+const INGREDIENT_ICON_CATEGORY: Record<string, IngredientCategory> = {
+  'almond branches': 'oil',
+  'aloe leaves': 'botanical',
+  'argan nuts': 'oil',
+  'avocado halves': 'oil',
+  'babassu palm fruits': 'oil',
+  'beeswax': 'wax',
+  'bentonite clay bowls': 'clay',
+  'bergamot fruits': 'citrus',
+  'blue clay bowls': 'clay',
+  'calendula blossoms': 'floral',
+  'castor bean pods': 'oil',
+  'cedar sprigs': 'spice',
+  'chamomile flowers': 'floral',
+  'charcoal chunks': 'additive',
+  'cinnamon sticks': 'spice',
+  'clary sage blooms': 'floral',
+  'cocoa pods': 'butter',
+  'coffee beans': 'exfoliant',
+  'cracked coconuts': 'oil',
+  'dried calendula leaves': 'botanical',
+  'eucalyptus leaves': 'botanical',
+  'geranium blooms': 'floral',
+  'grape clusters': 'oil',
+  'green clay bowls': 'clay',
+  'green tea leaves': 'botanical',
+  'honeycomb': 'wax',
+  'jasmine blossoms': 'floral',
+  'jojoba branches': 'oil',
+  'lavender sprigs': 'floral',
+  'lemon slices': 'citrus',
+  'lemongrass stalks': 'botanical',
+  'mango halves': 'butter',
+  'myrrh resin tears': 'essential-oil',
+  'neem seeds': 'seed',
+  'oat ears': 'exfoliant',
+  'olive branches': 'oil',
+  'orange blossoms': 'floral',
+  'orange slices': 'citrus',
+  'palmarosa grass': 'essential-oil',
+  'patchouli leaves': 'botanical',
+  'peppermint leaves': 'botanical',
+  'pink clay bowls': 'clay',
+  'poppy pods': 'seed',
+  'red clay bowls': 'clay',
+  'rice stalks': 'exfoliant',
+  'rose blooms': 'floral',
+  'rosehip berries': 'oil',
+  'rosemary sprigs': 'botanical',
+  'shea nuts': 'butter',
+  'silk cocoons': 'additive',
+  'small milk bottles': 'milk',
+  'spirulina swirls': 'colorant',
+  'sweet almond branches': 'oil',
+  'tea leaves': 'botanical',
+  'tea tree leaves': 'essential-oil',
+  'vanilla pods': 'spice',
+  'white clay bowls': 'clay',
+  'yellow clay bowls': 'clay',
+  'ylang-ylang flowers': 'floral',
+};
 
 // ── Ingredient token matching ─────────────────────────────────────────────────
 
@@ -635,6 +701,7 @@ export default function PromptBuilderScreen() {
                             checked={selected.has(ing)}
                             onChange={() => toggle(ing)}
                           />
+                          <IngredientIcon category={INGREDIENT_ICON_CATEGORY[ing] ?? 'other'} name={ing} size="sm" />
                           <span className="leading-snug">{ing}</span>
                           <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
                             Active
@@ -670,6 +737,7 @@ export default function PromptBuilderScreen() {
                           checked={selected.has(ing)}
                           onChange={() => toggle(ing)}
                         />
+                        <IngredientIcon category={INGREDIENT_ICON_CATEGORY[ing] ?? 'other'} name={ing} size="sm" />
                         <span className="leading-snug">{ing}</span>
                       </label>
                     ))}
@@ -736,6 +804,7 @@ export default function PromptBuilderScreen() {
                                   checked={selected.has(ing.name)}
                                   onChange={() => toggle(ing.name)}
                                 />
+                                <IngredientIcon category={ing.category} name={ing.name} size="sm" />
                                 <span className="truncate leading-snug">{ing.name}</span>
                               </label>
                             ))}

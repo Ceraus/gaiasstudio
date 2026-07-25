@@ -18,10 +18,9 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Ingredient, IngredientCategory } from '@/types';
-import { db } from '@/db/db';
 import { ingredientsRepo } from '@/db/repositories';
 import { MODULAR_BENEFITS } from '@/data/benefits';
-import { INGREDIENT_SEED } from '@/data/ingredientSeed';
+import { INGREDIENT_CATALOG_SIZE, INGREDIENT_SEED, syncIngredientCatalog } from '@/data/ingredientSeed';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
 import WorkflowNav from '@/components/WorkflowNav';
 import Modal from '@/components/common/Modal';
@@ -88,7 +87,8 @@ export default function IngredientsScreen() {
   const [inactiveQuery, setInactiveQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
   const [seeding, setSeeding] = useState(false);
-  const [seedDone, setSeedDone] = useState(false);
+  const [syncDone, setSyncDone] = useState(false);
+  const [lastSyncAdded, setLastSyncAdded] = useState(0);
   const [catFilter, setCatFilter] = useState<'all' | IngredientCategory>('all');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -99,40 +99,33 @@ export default function IngredientsScreen() {
 
   useEffect(() => {
     const init = async () => {
-      const existing = await ingredientsRepo.all();
-      if (existing.length === 0) {
-        // Auto-seed on first launch — no button click needed
-        setSeeding(true);
-        const now = Date.now();
-        const uid = () => `id-${now}-${Math.random().toString(36).slice(2)}`;
-        const toAdd: Ingredient[] = INGREDIENT_SEED.map((s) => ({
-          ...s, active: s.active ?? false, id: uid(), createdAt: now, updatedAt: now,
-        }));
-        await db.ingredients.bulkAdd(toAdd);
+      setSeeding(true);
+      try {
+        const existing = await ingredientsRepo.all();
+        if (existing.length < INGREDIENT_CATALOG_SIZE) {
+          await syncIngredientCatalog();
+        }
+        await reload();
+      } catch (err) {
+        console.error('[Ingredients] Failed to sync catalog on mount:', err);
+      } finally {
         setSeeding(false);
       }
-      await reload();
     };
     void init();
   }, []);
 
-  const seedLibrary = async () => {
+  const syncCatalog = async () => {
     setSeeding(true);
-    setSeedDone(false);
+    setSyncDone(false);
     try {
-      const existing = await ingredientsRepo.all();
-      const existingNames = new Set(existing.map((i) => i.name.toLowerCase().trim()));
-      const now = Date.now();
-      const uid = () => `id-${now}-${Math.random().toString(36).slice(2)}`;
-      const toAdd: Ingredient[] = INGREDIENT_SEED
-        .filter((s) => !existingNames.has(s.name.toLowerCase().trim()))
-        .map((s) => ({ ...s, active: s.active ?? false, id: uid(), createdAt: now, updatedAt: now }));
-      if (toAdd.length > 0) await db.ingredients.bulkAdd(toAdd);
+      const { added } = await syncIngredientCatalog();
       await reload();
-      setSeedDone(true);
-      setTimeout(() => setSeedDone(false), 3000);
+      setLastSyncAdded(added);
+      setSyncDone(true);
+      setTimeout(() => setSyncDone(false), 3000);
     } catch (err) {
-      console.error('[Ingredients] Failed to seed library:', err);
+      console.error('[Ingredients] Failed to sync catalog:', err);
     } finally {
       setSeeding(false);
     }
@@ -140,6 +133,11 @@ export default function IngredientsScreen() {
 
   const active   = useMemo(() => all.filter((i) => i.active === true), [all]);
   const inactive = useMemo(() => all.filter((i) => i.active !== true), [all]);
+
+  const catalogMissing = useMemo(() => {
+    const existingNames = new Set(all.map((i) => i.name.toLowerCase().trim()));
+    return INGREDIENT_SEED.filter((s) => !existingNames.has(s.name.toLowerCase().trim())).length;
+  }, [all]);
 
   const filteredInactive = useMemo(() => {
     const q   = inactiveQuery.toLowerCase().trim();
@@ -251,18 +249,30 @@ export default function IngredientsScreen() {
             <p className="mt-1 max-w-2xl text-sm text-slate-600">{t('ingredients.subtitle')}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {/* Only show manual seed button if library is somehow empty */}
-            {all.length === 0 && (
-              <button
-                className="btn-secondary"
-                disabled={seeding}
-                title={t('ingredients.seedHint', 'Adds popular soap & beauty ingredients to your library.')}
-                onClick={() => void seedLibrary()}
-              >
-                {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
-                {seedDone ? t('ingredients.seedDone', 'Library added!') : t('ingredients.seed', 'Populate Library')}
-              </button>
-            )}
+            <button
+              className="btn-secondary"
+              disabled={seeding}
+              title={
+                all.length === 0
+                  ? t('ingredients.seedHint', 'Adds 670+ popular soap & beauty ingredients as inactive so you can toggle on what you use.')
+                  : t('ingredients.syncHint', 'Adds any missing catalog ingredients without duplicating existing entries.')
+              }
+              onClick={() => void syncCatalog()}
+            >
+              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+              {syncDone
+                ? (lastSyncAdded > 0
+                  ? t('ingredients.syncDoneAdded', '{{count}} added from catalog', { count: lastSyncAdded })
+                  : t('ingredients.syncDone', 'Catalog up to date'))
+                : (all.length === 0
+                  ? t('ingredients.seed', 'Populate Library')
+                  : t('ingredients.syncCatalog', 'Sync library from catalog'))}
+              {!seeding && !syncDone && catalogMissing > 0 && (
+                <span className="ml-1 rounded-full bg-gaia-100 px-1.5 py-0.5 text-[10px] font-semibold text-gaia-700">
+                  {catalogMissing}
+                </span>
+              )}
+            </button>
             <button
               className="btn-primary"
               onClick={() => { setEditingId(null); setForm(emptyForm); setFormOpen(true); }}
@@ -393,6 +403,8 @@ export default function IngredientsScreen() {
               </h2>
               <span className="chip bg-gaia-100 text-gaia-700">{filteredActive.length}</span>
             </div>
+            {/* Spacer aligns list with inactive pane category-filter row */}
+            <div className="min-h-[1.75rem] shrink-0" aria-hidden="true" />
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -564,17 +576,23 @@ function IngredientRow({
 }) {
   const ingKey = ing.name.toLowerCase().replace(/ /g, '_');
   const displayName = t(`ingredientNames.${ingKey}`, ing.name);
+  const actionBtn =
+    'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition';
   return (
-    <div className={`flex items-center gap-2 rounded-xl px-3 py-2 ring-1 transition ${
+    <div className={`grid min-h-[3.25rem] grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-2 rounded-xl px-3 py-2 ring-1 transition ${
       isActive ? 'bg-gaia-50 ring-gaia-200' : 'bg-white ring-slate-100 hover:ring-slate-200'
     }`}>
       <IngredientIcon category={ing.category} name={ing.name} className="shrink-0" />
 
-      <button className="flex-1 text-left" onClick={onToggle}
-        title={isActive ? t('ingredients.deactivate', 'Deactivate') : t('ingredients.activate', 'Activate')}>
-        <span className="flex min-w-0 flex-col">
-          <span className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-800">
-            {displayName}
+      <button
+        type="button"
+        className="min-w-0 text-left"
+        onClick={onToggle}
+        title={isActive ? t('ingredients.deactivate', 'Deactivate') : t('ingredients.activate', 'Activate')}
+      >
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-medium text-slate-800">{displayName}</span>
             {ing.isSoapBase && (
               <span className="inline-flex shrink-0 items-center rounded-full bg-gaia-100 px-1.5 py-0.5 text-[10px] font-medium text-gaia-700">
                 {t('ingredients.soapBaseTag', 'Base')}
@@ -582,27 +600,40 @@ function IngredientRow({
             )}
           </span>
           {ing.benefit && (
-            <span className="block truncate text-xs text-slate-400">{ing.benefit}</span>
+            <span className="truncate text-xs text-slate-400">{ing.benefit}</span>
           )}
         </span>
       </button>
 
-      <button
-        onClick={onToggle}
-        title={isActive ? t('ingredients.deactivate', 'Deactivate') : t('ingredients.activate', 'Activate')}
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition ${
-          isActive ? 'bg-gaia-600 text-white hover:bg-gaia-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-        }`}
-      >
-        {isActive ? <ChevronLeft className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-      </button>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={onToggle}
+          title={isActive ? t('ingredients.deactivate', 'Deactivate') : t('ingredients.activate', 'Activate')}
+          className={`${actionBtn} ${
+            isActive ? 'bg-gaia-600 text-white hover:bg-gaia-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+          }`}
+        >
+          {isActive ? <ChevronLeft className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </button>
 
-      <button className="icon-btn h-7 w-7 shrink-0" title={t('common.edit', 'Edit')} onClick={onEdit}>
-        <Pencil className="h-3.5 w-3.5" />
-      </button>
-      <button className="icon-btn h-7 w-7 shrink-0 text-rose-400 hover:bg-rose-50" title={t('common.delete', 'Delete')} onClick={onDelete}>
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
+        <button
+          type="button"
+          className={`${actionBtn} text-slate-600 hover:bg-slate-100`}
+          title={t('common.edit', 'Edit')}
+          onClick={onEdit}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={`${actionBtn} text-rose-400 hover:bg-rose-50`}
+          title={t('common.delete', 'Delete')}
+          onClick={onDelete}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </div>
   );
 }

@@ -26,12 +26,14 @@ import {
   Square,
   Trash2,
   Upload,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useLibraryStore } from '@/store/useLibraryStore';
 import { assetsRepo } from '@/db/repositories';
 import type { AssetRecord } from '@/types';
 import WorkflowNav from '@/components/WorkflowNav';
-import { searchStock, type StockPhoto } from '@/lib/stock';
+import { searchStock, fetchStockPhotoAsDataUrl, triggerUnsplashDownload, type StockPhoto } from '@/lib/stock';
 import { isElectronWithBridge } from '@/lib/autoImport';
 import { fileToDataUrl, isImageFile } from '@/lib/files';
 
@@ -550,32 +552,55 @@ function StockTab({
   const { t } = useTranslation();
   const hasKey = !!(settings.unsplashKey || settings.pixabayKey);
   const goto   = useAppStore((s) => s.goto);
+  const addFromDataUrl = useLibraryStore((s) => s.addFromDataUrl);
 
-  const [query, setQuery]     = useState('');
-  const [results, setResults] = useState<StockPhoto[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
+  const [query, setQuery]       = useState('');
+  const [results, setResults]   = useState<StockPhoto[]>([]);
+  const [loading, setLoading]   = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const doSearch = useCallback(async () => {
     if (!query.trim() || !hasKey) return;
     setLoading(true);
     setError(null);
+    setSaveError(null);
     try {
       const photos = await searchStock(query.trim(), settings);
       setResults(photos);
+      setSearched(true);
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err.message : String(err));
+      setResults([]);
+      setSearched(true);
     } finally {
       setLoading(false);
     }
   }, [query, hasKey, settings]);
+
+  const handleUse = useCallback(async (photo: StockPhoto) => {
+    setSaveError(null);
+    setSavingId(photo.id);
+    try {
+      triggerUnsplashDownload(photo, settings.unsplashKey);
+      const dataUrl = await fetchStockPhotoAsDataUrl(photo);
+      const asset = await addFromDataUrl(dataUrl, 'stock', `${photo.photographerName} — ${query.trim()}`.slice(0, 80));
+      onSelect(asset.dataUrl);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingId(null);
+    }
+  }, [addFromDataUrl, onSelect, query, settings.unsplashKey]);
 
   if (!hasKey) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
         <ImageIcon className="h-12 w-12 text-slate-300" />
         <p className="max-w-sm text-sm text-slate-600">
-          {t('background.stockNoKey', 'Add an Unsplash API key in Settings to search free stock photos.')}
+          {t('background.stockNoKey', 'Add a free Unsplash and/or Pixabay API key in Settings to search free stock photos.')}
         </p>
         <button className="btn-primary" onClick={() => goto('settings')}>
           {t('nav.settings', 'Settings')}
@@ -590,42 +615,95 @@ function StockTab({
         <input
           type="text"
           className="input flex-1"
-          placeholder={t('common.search')}
+          placeholder={t('background.stockSearchPlaceholder', 'Search free stock photos…')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && void doSearch()}
         />
-        <button className="btn-primary px-4" onClick={() => void doSearch()} disabled={loading}>
+        <button className="btn-primary px-4" onClick={() => void doSearch()} disabled={loading || !query.trim()}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto bg-gaia-50 p-5">
         {error && (
-          <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+          <p className="mb-3 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {t('background.stockSearchError', 'Search failed: {{error}}', { error })}
+          </p>
         )}
-        {results.length === 0 && !loading ? (
+        {saveError && (
+          <p className="mb-3 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {t('background.stockUseError', "Couldn't use that photo: {{error}}", { error: saveError })}
+          </p>
+        )}
+        {!searched && !loading ? (
           <EmptyState message={t('background.stockHint', 'Type a search term above and press Enter or Search.')} />
+        ) : results.length === 0 && !loading ? (
+          !error && <EmptyState message={t('background.stockNoResults', 'No photos found. Try a different search term.')} />
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {results.map((photo) => (
-              <button
-                key={photo.id}
-                className="group relative overflow-hidden rounded-xl ring-1 ring-slate-200 transition hover:ring-2 hover:ring-gaia-400"
-                onClick={() => onSelect(photo.full)}
-                title={photo.credit}
-              >
-                <img
-                  src={photo.thumb}
-                  alt={photo.credit}
-                  className="aspect-square w-full object-cover"
-                  loading="lazy"
-                />
-                <div className="absolute inset-x-0 bottom-0 bg-black/50 px-2 py-1 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
-                  {photo.credit}
+            {results.map((photo) => {
+              const isSaving = savingId === photo.id;
+              return (
+                <div
+                  key={`${photo.source}-${photo.id}`}
+                  className="group relative overflow-hidden rounded-xl ring-1 ring-slate-200 transition hover:ring-2 hover:ring-gaia-400"
+                >
+                  <img
+                    src={photo.thumb}
+                    alt={t('background.stockPhotoByOn', 'Photo by {{name}} on {{source}}', {
+                      name: photo.photographerName,
+                      source: photo.source === 'unsplash' ? 'Unsplash' : 'Pixabay',
+                    })}
+                    className="aspect-square w-full object-cover"
+                    loading="lazy"
+                  />
+
+                  {/* Hover overlay with "use" action */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/55 opacity-0 transition group-hover:opacity-100">
+                    <button
+                      className="flex items-center gap-1.5 rounded-lg bg-gaia-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gaia-600 disabled:opacity-60"
+                      onClick={() => void handleUse(photo)}
+                      disabled={isSaving}
+                    >
+                      {isSaving
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Check className="h-3.5 w-3.5" />
+                      }
+                      {isSaving ? t('background.stockUsing', 'Adding…') : t('assets.use')}
+                    </button>
+                  </div>
+
+                  {/* Attribution strip — required by Unsplash API guidelines, shown always */}
+                  <div className="flex items-center justify-between gap-1 border-t border-slate-100 bg-white px-2 py-1 text-[10px] text-slate-500">
+                    <span className="truncate">
+                      <a
+                        href={photo.photographerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:text-gaia-600 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                        title={photo.photographerName}
+                      >
+                        {photo.photographerName}
+                      </a>
+                      {' · '}
+                      <a
+                        href={photo.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:text-gaia-600 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {photo.source === 'unsplash' ? 'Unsplash' : 'Pixabay'}
+                      </a>
+                    </span>
+                  </div>
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

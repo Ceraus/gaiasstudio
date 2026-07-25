@@ -16,33 +16,21 @@ const uid = () =>
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-// ---------------------------------------------------------------------------
-// COGS utility
-// ---------------------------------------------------------------------------
+import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs } from '@/lib/inventoryMath';
 
-/**
- * Calculates the fractional cost of an ingredient per its base unit:
- *   - Weight mode (default): cost per gram
- *   - Volume mode: cost per drop (1 ml = 20 drops)
- *
- * Returns `undefined` when the required fields are missing or invalid.
- */
-export function calculateFractionalCost(ing: Partial<Ingredient>): number | undefined {
-  const { measurementType, purchaseSize, purchaseUnit, purchasePrice } = ing;
-  if (!purchaseSize || !purchasePrice || purchaseSize <= 0) return undefined;
+export {
+  calculateFractionalCost,
+  calculateProfitMargin,
+  calculateRecipeMaterialCogs,
+} from '@/lib/inventoryMath';
 
-  if (measurementType === 'volume') {
-    // 1 ml = 20 drops (only ml is supported for volume)
-    const drops = purchaseSize * 20;
-    return purchasePrice / drops;
-  } else {
-    // Weight mode — convert to grams
-    let grams = purchaseSize;
-    if (purchaseUnit === 'oz') grams = purchaseSize * 28.3495;
-    else if (purchaseUnit === 'lbs') grams = purchaseSize * 453.592;
-    // 'g' or undefined → grams as-is
-    return purchasePrice / grams;
-  }
+function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
+  const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
+  const profitMargin =
+    recipe.retailPrice !== undefined
+      ? calculateProfitMargin(recipe.retailPrice, cogsTotal)
+      : undefined;
+  return { cogsTotal, profitMargin };
 }
 
 // --- Ingredients -----------------------------------------------------------
@@ -96,11 +84,27 @@ export const recipesRepo = {
     input: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
   ): Promise<Recipe> {
     const now = Date.now();
-    const rec: Recipe = { ...input, id: uid(), createdAt: now, updatedAt: now };
+    const ingredients = await db.ingredients.toArray();
+    const draft: Recipe = { ...input, id: uid(), createdAt: now, updatedAt: now };
+    const { cogsTotal, profitMargin } = recipeFinancials(draft, ingredients);
+    const rec: Recipe = { ...draft, cogsTotal, profitMargin };
     await db.recipes.add(rec);
     return rec;
   },
   async update(id: string, patch: Partial<Recipe>) {
+    const existing = await db.recipes.get(id);
+    if (existing) {
+      const merged = { ...existing, ...patch };
+      const ingredients = await db.ingredients.toArray();
+      const { cogsTotal, profitMargin } = recipeFinancials(merged, ingredients);
+      await db.recipes.update(id, {
+        ...patch,
+        cogsTotal,
+        profitMargin,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
     await db.recipes.update(id, { ...patch, updatedAt: Date.now() });
   },
   remove: (id: string) => db.recipes.delete(id),

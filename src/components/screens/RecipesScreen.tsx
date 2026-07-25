@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, DollarSign, Eye, FlaskConical, Info, Package, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, DollarSign, Eye, FlaskConical, Info, Loader2, Package, Plus, Sparkles, Trash2 } from 'lucide-react';
 import type { Ingredient, IngredientCategory, Recipe } from '@/types';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
+import {
+  calculateProfitMargin,
+  calculateRecipeMaterialCogs,
+  marginHealth,
+  MARGIN_HEALTH_CLASSES,
+} from '@/lib/inventoryMath';
+import { suggestBenefitStatement } from '@/lib/localAi';
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import BenefitPicker from '@/components/screens/BenefitPicker';
@@ -94,11 +101,23 @@ interface RecipeForm {
   ingredientAmounts: Record<string, string>;
   color?: string;
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
+  retailPrice: string;
 }
 
 /** Max recipe rows shown per page in "Your Recipes" — chosen so the list's
  *  height lines up with the taller stack of cards in the editor column. */
 const RECIPES_PER_PAGE = 19;
+
+/** Alternating earth-tone backgrounds for recipe cards so adjacent rows are
+ *  easy to tell apart. Selected/editing cards override with stronger cues. */
+const EARTH_TONE_ROWS: Array<{ bg: string; border: string }> = [
+  { bg: 'bg-amber-50/70',    border: 'border-amber-100' },    // sand
+  { bg: 'bg-stone-100/80',   border: 'border-stone-200' },     // clay
+  { bg: 'bg-orange-50/70',   border: 'border-orange-100' },   // terracotta
+  { bg: 'bg-lime-50/60',     border: 'border-lime-100' },     // sage
+  { bg: 'bg-amber-100/50',   border: 'border-amber-200' },    // warm brown
+  { bg: 'bg-emerald-50/60',  border: 'border-emerald-100' },  // moss
+];
 
 const emptyForm: RecipeForm = {
   name: '',
@@ -111,6 +130,7 @@ const emptyForm: RecipeForm = {
   ingredientAmounts: {},
   color: undefined,
   customCosts: [],
+  retailPrice: '',
 };
 
 export default function RecipesScreen() {
@@ -119,11 +139,18 @@ export default function RecipesScreen() {
   const setActiveRecipeId = useAppStore((s) => s.setActiveRecipeId);
   const activeRecipeId  = useAppStore((s) => s.activeRecipeId);
   const template        = useAppStore((s) => s.template);
+  const settings        = useAppStore((s) => s.settings);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<RecipeForm>(emptyForm);
   const [savedToast, setSavedToast] = useState(false);
+  const [suggestingBenefit, setSuggestingBenefit] = useState(false);
+  const [benefitSuggestError, setBenefitSuggestError] = useState<string | null>(null);
+  /** Pending AI suggestion awaiting accept/edit/reject — never written to `form.benefit` directly. */
+  const [benefitSuggestion, setBenefitSuggestion] = useState<string | null>(null);
+  const [editingSuggestion, setEditingSuggestion] = useState(false);
+  const [suggestionDraft, setSuggestionDraft] = useState('');
   const savedToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -178,8 +205,12 @@ export default function RecipesScreen() {
       ingredientAmounts: amounts,
       color: r.color,
       customCosts: r.customCosts ?? [],
+      retailPrice: r.retailPrice !== undefined ? String(r.retailPrice) : '',
     });
     setHighlightMissing(false);
+    setBenefitSuggestion(null);
+    setEditingSuggestion(false);
+    setBenefitSuggestError(null);
   };
 
   const newRecipe = () => {
@@ -194,6 +225,9 @@ export default function RecipesScreen() {
       ingredientAmounts: glycerinBase ? { [glycerinBase.id]: '100' } : {},
     });
     setHighlightMissing(false);
+    setBenefitSuggestion(null);
+    setEditingSuggestion(false);
+    setBenefitSuggestError(null);
   };
 
   const save = async () => {
@@ -203,7 +237,22 @@ export default function RecipesScreen() {
       const n = parseFloat(v);
       if (!isNaN(n) && n > 0) ingredientAmounts[k] = n;
     }
-    const payload = { ...form, ingredientAmounts };
+    const payload = {
+      name: form.name,
+      benefit: form.benefit,
+      netWeight: form.netWeight,
+      directions: form.directions,
+      warnings: form.warnings,
+      footer: form.footer,
+      ingredientIds: form.ingredientIds,
+      ingredientAmounts,
+      color: form.color,
+      customCosts: form.customCosts,
+      retailPrice: (() => {
+        const n = parseFloat(form.retailPrice);
+        return !isNaN(n) && n > 0 ? n : undefined;
+      })(),
+    };
     if (editingId) await recipesRepo.update(editingId, payload);
     else {
       const created = await recipesRepo.create(payload);
@@ -246,6 +295,53 @@ export default function RecipesScreen() {
     }));
   };
 
+  const selectedIngredientsForSuggest = useMemo(
+    () => ingredients.filter((i) => form.ingredientIds.includes(i.id)),
+    [ingredients, form.ingredientIds],
+  );
+
+  const handleSuggestBenefit = async () => {
+    setBenefitSuggestError(null);
+    setBenefitSuggestion(null);
+    setEditingSuggestion(false);
+    setSuggestingBenefit(true);
+    try {
+      const result = await suggestBenefitStatement({
+        baseUrl: settings.localAiBaseUrl || 'http://localhost:11434',
+        model: settings.localAiModel || 'llama3.2:3b',
+        recipeName: form.name,
+        ingredients: selectedIngredientsForSuggest.map((i) => ({
+          name: i.name,
+          category: i.category,
+          benefit: i.benefit,
+        })),
+      });
+      if (result.ok && result.suggestion) {
+        setBenefitSuggestion(result.suggestion);
+      } else {
+        setBenefitSuggestError(result.error ?? t('recipes.benefitSuggestGenericError', "Couldn't generate a suggestion."));
+      }
+    } finally {
+      setSuggestingBenefit(false);
+    }
+  };
+
+  const acceptBenefitSuggestion = (text: string) => {
+    setForm((f) => ({ ...f, benefit: text }));
+    setBenefitSuggestion(null);
+    setEditingSuggestion(false);
+  };
+
+  const startEditingSuggestion = () => {
+    setSuggestionDraft(benefitSuggestion ?? '');
+    setEditingSuggestion(true);
+  };
+
+  const discardBenefitSuggestion = () => {
+    setBenefitSuggestion(null);
+    setEditingSuggestion(false);
+  };
+
   const genCostId = () => `cc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   const handleAddCustomCost = async (item: { name: string; cost: number; unit?: string }) => {
@@ -264,6 +360,19 @@ export default function RecipesScreen() {
       return { ...f, customCosts: updated };
     });
   };
+
+  const liveMaterialCogs = useMemo(() => {
+    const draft: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'customCosts'> = {
+      ingredientIds: form.ingredientIds,
+      ingredientAmounts: Object.fromEntries(
+        Object.entries(form.ingredientAmounts)
+          .map(([k, v]) => [k, parseFloat(v)])
+          .filter(([, v]) => !isNaN(v as number) && (v as number) > 0),
+      ),
+      customCosts: form.customCosts,
+    };
+    return calculateRecipeMaterialCogs(draft, ingredients);
+  }, [ingredients, form.ingredientIds, form.ingredientAmounts, form.customCosts]);
 
   const liveIngredientTotal = useMemo(() => {
     let total = 0;
@@ -286,7 +395,7 @@ export default function RecipesScreen() {
     return {
       hasName: !!form.name.trim(),
       hasIngredients: selected.length > 0,
-      hasSoapBase: true, // Rosa always uses glycerin base — treat as always passing
+      hasSoapBase: selected.some((i) => i.category === 'base' || i.isSoapBase === true),
       hasBenefit: !!form.benefit.trim(),
     };
   }, [form, ingredients]);
@@ -356,10 +465,12 @@ export default function RecipesScreen() {
             {recipes.length === 0 ? (
               <div className="card text-center text-sm text-slate-500">{t('recipes.empty')}</div>
             ) : (
-              pagedRecipes.map((r) => {
+              pagedRecipes.map((r, i) => {
                 const isSelected = activeRecipeId === r.id;
                 const isEditing  = editingId === r.id;
                 const theme      = getRecipeColor(r, ingredients);
+                const earthIdx   = recipePage * RECIPES_PER_PAGE + i;
+                const earthTone  = EARTH_TONE_ROWS[earthIdx % EARTH_TONE_ROWS.length];
                 // Get up to 3 non-base ingredients first, then base
                 const recipeIngredients = ingredients.filter((i) => r.ingredientIds.includes(i.id));
                 const nonBase = recipeIngredients.filter((i) => i.category !== 'base' && !i.isSoapBase);
@@ -371,7 +482,9 @@ export default function RecipesScreen() {
                     className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 transition ${
                       isEditing
                         ? `${theme.activeBg} ${theme.activeBorder} border-2 shadow-sm`
-                        : `bg-white border border-slate-100 hover:border-gaia-200`
+                        : isSelected
+                          ? `${earthTone.bg} border-2 border-gaia-400 shadow-sm ring-1 ring-gaia-200`
+                          : `${earthTone.bg} border ${earthTone.border} hover:border-gaia-300`
                     }`}
                   >
                     <button
@@ -483,7 +596,25 @@ export default function RecipesScreen() {
                 </div>
               </div>
               <div>
-                <label className="label">{t('recipes.benefit')}</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="label mb-0">{t('recipes.benefit')}</label>
+                  {settings.localAiEnabled && (
+                    <button
+                      type="button"
+                      className="mb-1 flex items-center gap-1 rounded-full bg-gaia-100 px-2.5 py-1 text-[11px] font-medium text-gaia-700 transition hover:bg-gaia-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => void handleSuggestBenefit()}
+                      disabled={suggestingBenefit || selectedIngredientsForSuggest.length === 0}
+                      title={
+                        selectedIngredientsForSuggest.length === 0
+                          ? t('recipes.benefitSuggestNeedsIngredients', 'Add ingredients first so there is something to suggest from.')
+                          : t('recipes.benefitSuggestTooltip', 'Draft a benefit statement with local AI — you can edit or reject it.')
+                      }
+                    >
+                      {suggestingBenefit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                      {suggestingBenefit ? t('recipes.benefitSuggesting', 'Thinking…') : t('recipes.benefitSuggest', 'Suggest')}
+                    </button>
+                  )}
+                </div>
                 <BenefitPicker
                   value={form.benefit}
                   onChange={(val) => setForm({ ...form, benefit: val })}
@@ -493,6 +624,60 @@ export default function RecipesScreen() {
                       .map((i) => i.category as IngredientCategory)
                   }
                 />
+                {settings.localAiEnabled && benefitSuggestError && (
+                  <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>
+                      {benefitSuggestError}{' '}
+                      <button type="button" className="underline hover:text-amber-800" onClick={() => goto('settings')}>
+                        {t('recipes.benefitSuggestSettingsLink', 'Check Local AI settings →')}
+                      </button>
+                    </span>
+                  </p>
+                )}
+
+                {/* AI suggestion preview — user must explicitly accept/edit before it touches the recipe. */}
+                {settings.localAiEnabled && benefitSuggestion !== null && (
+                  <div className="mt-2 rounded-xl border border-gaia-200 bg-gaia-50 p-3">
+                    <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gaia-600">
+                      <Sparkles className="h-3 w-3" />
+                      {t('recipes.benefitSuggestionLabel', 'AI suggestion')}
+                    </p>
+                    {editingSuggestion ? (
+                      <div className="space-y-2">
+                        <textarea
+                          className="input min-h-16 text-sm"
+                          value={suggestionDraft}
+                          onChange={(e) => setSuggestionDraft(e.target.value)}
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button type="button" className="btn-primary py-1.5 text-xs" onClick={() => acceptBenefitSuggestion(suggestionDraft.trim())} disabled={!suggestionDraft.trim()}>
+                            <Check className="h-3.5 w-3.5" /> {t('recipes.benefitSuggestUseEdited', 'Use edited text')}
+                          </button>
+                          <button type="button" className="btn-secondary py-1.5 text-xs" onClick={() => setEditingSuggestion(false)}>
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-sm italic text-slate-700">&ldquo;{benefitSuggestion}&rdquo;</p>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" className="btn-primary py-1.5 text-xs" onClick={() => acceptBenefitSuggestion(benefitSuggestion)}>
+                            <Check className="h-3.5 w-3.5" /> {t('recipes.benefitSuggestAccept', 'Use this')}
+                          </button>
+                          <button type="button" className="btn-secondary py-1.5 text-xs" onClick={startEditingSuggestion}>
+                            {t('recipes.benefitSuggestEdit', 'Edit first')}
+                          </button>
+                          <button type="button" className="py-1.5 text-xs text-slate-400 hover:text-slate-600" onClick={discardBenefitSuggestion}>
+                            {t('recipes.benefitSuggestReject', 'Discard')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -563,7 +748,12 @@ export default function RecipesScreen() {
                 <ul className="space-y-2 text-sm">
                   <ChecklistRow ok={checklist.hasName} label={t('recipes.hasName')} />
                   <ChecklistRow ok={checklist.hasIngredients} label={t('recipes.hasIngredients')} />
-                  <ChecklistRow ok={true} label={t('recipes.hasSoapBase')} />
+                  <ChecklistRow
+                    ok={checklist.hasSoapBase}
+                    warn={!checklist.hasSoapBase && checklist.hasIngredients}
+                    warnText={t('recipes.soapBaseWarning', 'No soap base ingredient found — add one so this recipe is complete.')}
+                    label={t('recipes.hasSoapBase')}
+                  />
                   <ChecklistRow ok={checklist.hasBenefit} label={t('recipes.hasBenefit')} />
                 </ul>
               </div>
@@ -575,6 +765,13 @@ export default function RecipesScreen() {
               selectedIds={form.ingredientIds}
               amounts={form.ingredientAmounts}
               customCosts={form.customCosts}
+            />
+
+            {/* Sticky Revenue & Profit */}
+            <RevenueTrackerCard
+              materialCost={liveMaterialCogs}
+              retailPrice={form.retailPrice}
+              onRetailPriceChange={(val) => setForm((f) => ({ ...f, retailPrice: val }))}
             />
 
             {/* Custom Materials & Packaging */}
@@ -1061,6 +1258,85 @@ function CustomMaterialsCard({
 }
 
 // ---------------------------------------------------------------------------
+// Sticky Revenue & Profit widget — zero-math margin guidance
+// ---------------------------------------------------------------------------
+function RevenueTrackerCard({
+  materialCost,
+  retailPrice,
+  onRetailPriceChange,
+}: {
+  materialCost: number;
+  retailPrice: string;
+  onRetailPriceChange: (val: string) => void;
+}) {
+  const { t } = useTranslation();
+  const retail = parseFloat(retailPrice);
+  const hasRetail = !isNaN(retail) && retail > 0;
+  const grossProfit = hasRetail ? retail - materialCost : undefined;
+  const margin = hasRetail ? calculateProfitMargin(retail, materialCost) : undefined;
+  const health = marginHealth(margin);
+
+  return (
+    <div className="sticky bottom-4 z-10 rounded-2xl bg-white p-4 shadow-lg ring-2 ring-gaia-200">
+      <div className="mb-3 flex items-center gap-2">
+        <DollarSign className="h-4 w-4 text-gaia-600" />
+        <p className="text-sm font-semibold text-slate-800">{t('recipes.revenueTracker', 'Revenue & Profit')}</p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-emerald-50 px-3 py-2.5 ring-1 ring-emerald-100">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+            {t('recipes.totalMaterialCost', 'Total Material Cost')}
+          </p>
+          <p className="text-xl font-bold text-emerald-800">${materialCost.toFixed(2)}</p>
+        </div>
+
+        <div>
+          <label className="label text-[11px]">{t('recipes.retailPrice', 'Retail price per bar')}</label>
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="input pl-7"
+              placeholder="8.00"
+              value={retailPrice}
+              onChange={(e) => onRetailPriceChange(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {hasRetail && grossProfit !== undefined && margin !== undefined && (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              {t('recipes.grossProfit', 'Gross Profit')}
+            </p>
+            <p className={`text-xl font-bold ${grossProfit >= 0 ? 'text-slate-800' : 'text-rose-600'}`}>
+              ${grossProfit.toFixed(2)}
+            </p>
+          </div>
+          <div className={`rounded-xl px-3 py-2.5 ring-1 ${MARGIN_HEALTH_CLASSES[health]}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">
+              {t('recipes.margin', 'Margin')}
+            </p>
+            <p className="text-xl font-bold">{margin.toFixed(0)}%</p>
+          </div>
+        </div>
+      )}
+
+      {!hasRetail && (
+        <p className="mt-2 text-xs text-slate-400">
+          {t('recipes.retailHint', 'Enter a retail price to see profit and margin.')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Live COGS — material cost calculated from ingredient prices + amounts
 // ---------------------------------------------------------------------------
 function LiveCOGSCard({
@@ -1151,16 +1427,12 @@ function LiveCOGSCard({
                   )}
                   {lines.map((line) => (
                     <div key={line.name} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
-                      <span className="flex items-center gap-1.5 text-slate-700 font-medium">
+                      <span className="flex items-center gap-1.5 font-medium text-slate-700">
                         <IngredientIcon category={line.category} name={line.name} size="sm" />
                         {t(`ingredientNames.${line.name.toLowerCase().replace(/ /g, '_')}`, line.name)}
                       </span>
-                      <span className="text-slate-500">
-                        {line.amount}{line.unit}
-                        {' × '}
-                        <span className="text-slate-600">${line.fractionalCost.toFixed(4)}</span>
-                      </span>
-                      <span className="ml-4 font-semibold text-slate-800">${line.lineCost.toFixed(4)}</span>
+                      <span className="text-slate-500">{line.amount}{line.unit}</span>
+                      <span className="ml-4 font-semibold text-slate-800">${line.lineCost.toFixed(2)}</span>
                     </div>
                   ))}
                   {customCosts.length > 0 && (
