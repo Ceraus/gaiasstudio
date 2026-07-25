@@ -3,6 +3,7 @@
 const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const bundledAi = require('./bundledAi.cjs');
 
 // ── Portable save-system path ────────────────────────────────────────────────
 // For portable builds, electron-builder sets PORTABLE_EXECUTABLE_DIR to the
@@ -320,6 +321,12 @@ app.whenReady().then(() => {
   // Opens a dedicated BrowserWindow for AI tools (AI Studio, Gemini) that
   // supports full Google sign-in via a real browser session.
   ipcMain.handle('gaia:open-ai-browser', (_event, { url }) => openAiWindow(url));
+
+  // Bundled local AI (copywriting assist) — runs entirely in this process via
+  // node-llama-cpp against the model shipped in resources/models. Zero setup,
+  // 100% offline. See electron/bundledAi.cjs.
+  ipcMain.handle('gaia:bundled-ai-status', () => bundledAi.getBundledAiStatus());
+  ipcMain.handle('gaia:bundled-ai-generate', (_event, prompt) => bundledAi.generateBundledAi(String(prompt || '')));
 
   createWindow();
 

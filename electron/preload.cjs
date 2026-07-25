@@ -78,4 +78,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('gaia:pdf-exported', listener);
     return () => ipcRenderer.removeListener('gaia:pdf-exported', listener);
   },
+
+  /**
+   * Checks whether the bundled in-app AI model (copywriting assist) is ready.
+   * @returns {Promise<{ state: 'connected'|'loading'|'unreachable', message?: string }>}
+   */
+  bundledAiStatus() {
+    return ipcRenderer.invoke('gaia:bundled-ai-status');
+  },
+
+  /**
+   * Asks the bundled in-app AI model to complete the given prompt. Runs
+   * entirely offline, in the main process (never the network).
+   * @param {string} prompt
+   * @returns {Promise<{ ok: boolean, text?: string, error?: string }>}
+   */
+  bundledAiGenerate(prompt) {
+    return ipcRenderer.invoke('gaia:bundled-ai-generate', prompt);
+  },
 });

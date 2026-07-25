@@ -3,5 +3,8 @@ dist/
 *.tsbuildinfo
 # Electron builder output — exe files are too large for GitHub (>100 MB)
 release/
+# Bundled local-AI model (~470 MB GGUF) — too large for GitHub (>100 MB).
+# Run `npm run ai:fetch-model` to (re)download it before packaging.
+resources/models/*.gguf
 # Raw output from the live Avery scraper
 scripts/avery-raw.json

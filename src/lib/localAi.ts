@@ -1,15 +1,21 @@
 // ---------------------------------------------------------------------------
-// Local AI client — talks to a locally-running Ollama server ONLY.
+// Local AI client — two backends, both 100% offline/local, never cloud:
 //
-// Scope (deliberately narrow):
+//   - "bundled": a small model shipped inside the app itself, run in-process
+//     by the Electron main process via node-llama-cpp (see electron/main.cjs).
+//     Zero setup — works out of the box. This module talks to it over the
+//     existing IPC bridge (window.electronAPI), never the network.
+//   - "ollama": the original advanced/external path for power users who want
+//     a bigger/better model. Talks to a locally-running Ollama server that
+//     the user installs and pulls a model into themselves (defaults to
+//     http://localhost:11434).
+//
+// Scope (deliberately narrow, for both backends):
 //   - Copywriting assist for the recipe "benefit statement" — a creative
 //     marketing tagline the user can accept/edit/reject. Never authoritative.
 //
-// This module NEVER calls out to the network/cloud. It only ever talks to
-// the base URL the user configured in Settings (defaults to Ollama's local
-// address, http://localhost:11434). If that server isn't running, every
-// function here fails softly and returns a typed result — nothing throws
-// past this module, and nothing here ever blocks the UI.
+// Every exported function here fails softly and returns a typed result —
+// nothing throws past this module, and nothing here ever blocks the UI.
 //
 // Explicitly out of scope for anything built on top of this client:
 //   - COGS/pricing math, INCI ingredient lists, allergen warnings, and
@@ -20,14 +26,30 @@
 const DEFAULT_TIMEOUT_MS = 15_000;
 const STATUS_TIMEOUT_MS = 6_000;
 
-export type LocalAiState = 'connected' | 'model-missing' | 'unreachable';
+export type LocalAiBackend = 'bundled' | 'ollama';
+
+export type LocalAiState = 'connected' | 'model-missing' | 'unreachable' | 'loading';
 
 export interface LocalAiStatus {
   state: LocalAiState;
-  /** Model tags reported by Ollama's /api/tags, when reachable. */
+  /** Model tags reported by Ollama's /api/tags, when reachable. Empty for the bundled backend. */
   models: string[];
   /** Human-readable detail for the "not found"/"unreachable" states. */
   message?: string;
+}
+
+/** Shape of the bundled-AI IPC bridge exposed by electron/preload.cjs, when running in Electron. */
+interface BundledAiApi {
+  bundledAiStatus(): Promise<{ state: LocalAiState; message?: string }>;
+  bundledAiGenerate(prompt: string): Promise<{ ok: boolean; text?: string; error?: string }>;
+}
+
+function getBundledAiApi(): BundledAiApi | null {
+  const api = (globalThis as unknown as { electronAPI?: Partial<BundledAiApi> }).electronAPI;
+  if (api && typeof api.bundledAiStatus === 'function' && typeof api.bundledAiGenerate === 'function') {
+    return api as BundledAiApi;
+  }
+  return null;
 }
 
 /** Strips an Ollama tag's ":suffix" (e.g. "llama3.2:3b" -> "llama3.2") for loose matching. */
@@ -54,11 +76,33 @@ async function fetchWithTimeout(
 }
 
 /**
+ * Checks whether the bundled in-app model is ready to use. Never throws —
+ * always resolves to a status object so callers can render connected/
+ * loading/unreachable states.
+ */
+export async function checkBundledAiStatus(): Promise<LocalAiStatus> {
+  const api = getBundledAiApi();
+  if (!api) {
+    return {
+      state: 'unreachable',
+      models: [],
+      message: 'The built-in model bridge is not available (are you running the desktop app?).',
+    };
+  }
+  try {
+    const result = await api.bundledAiStatus();
+    return { state: result.state, models: [], message: result.message };
+  } catch {
+    return { state: 'unreachable', models: [], message: 'Could not reach the built-in model.' };
+  }
+}
+
+/**
  * Pings the configured Ollama server and checks whether the configured model
  * is pulled. Never throws — always resolves to a status object so callers
  * can render connected/model-missing/unreachable states.
  */
-export async function checkLocalAiStatus(
+export async function checkOllamaStatus(
   baseUrl: string,
   model: string,
 ): Promise<LocalAiStatus> {
@@ -100,8 +144,12 @@ export async function checkLocalAiStatus(
 }
 
 export interface SuggestBenefitInput {
-  baseUrl: string;
-  model: string;
+  /** Which backend to use. Defaults to "bundled" when omitted. */
+  backend?: LocalAiBackend;
+  /** Only used when backend is "ollama". */
+  baseUrl?: string;
+  /** Only used when backend is "ollama". */
+  model?: string;
   recipeName: string;
   /** Selected ingredients, reduced to only the fields relevant to a marketing tagline. */
   ingredients: Array<{ name: string; category?: string; benefit?: string }>;
@@ -163,14 +211,50 @@ function sanitizeSuggestion(raw: string): string {
 }
 
 /**
- * Asks the local Ollama model for a short benefit-statement suggestion.
- * Always resolves (never throws) — failures come back as { ok: false, error }.
+ * Asks the local AI model (bundled or Ollama, per `input.backend`) for a
+ * short benefit-statement suggestion. Always resolves (never throws) —
+ * failures come back as { ok: false, error }.
  */
 export async function suggestBenefitStatement(
   input: SuggestBenefitInput,
 ): Promise<SuggestBenefitResult> {
-  const url = `${normalizeBaseUrl(input.baseUrl)}/api/generate`;
   const prompt = buildBenefitPrompt(input);
+  if ((input.backend ?? 'bundled') === 'bundled') {
+    return suggestBenefitStatementBundled(prompt);
+  }
+  return suggestBenefitStatementOllama(input, prompt);
+}
+
+/** Bundled backend: runs in-process in the Electron main process via IPC. */
+async function suggestBenefitStatementBundled(prompt: string): Promise<SuggestBenefitResult> {
+  const api = getBundledAiApi();
+  if (!api) {
+    return { ok: false, error: 'The built-in model is only available in the desktop app.' };
+  }
+  let result: { ok: boolean; text?: string; error?: string };
+  try {
+    result = await api.bundledAiGenerate(prompt);
+  } catch {
+    return { ok: false, error: 'The built-in model failed to respond.' };
+  }
+  if (!result.ok || !result.text) {
+    return { ok: false, error: result.error ?? 'The built-in model returned an empty response.' };
+  }
+  const suggestion = sanitizeSuggestion(result.text);
+  if (!suggestion) {
+    return { ok: false, error: 'The built-in model returned an empty response.' };
+  }
+  return { ok: true, suggestion };
+}
+
+/** Advanced/external backend: talks to a user-installed Ollama server. */
+async function suggestBenefitStatementOllama(
+  input: SuggestBenefitInput,
+  prompt: string,
+): Promise<SuggestBenefitResult> {
+  const baseUrl = input.baseUrl || 'http://localhost:11434';
+  const model = input.model || 'llama3.2:3b';
+  const url = `${normalizeBaseUrl(baseUrl)}/api/generate`;
 
   let res: Response;
   try {
@@ -180,7 +264,7 @@ export async function suggestBenefitStatement(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: input.model,
+          model,
           prompt,
           stream: false,
           options: { temperature: 0.7 },
@@ -197,7 +281,7 @@ export async function suggestBenefitStatement(
 
   if (!res.ok) {
     if (res.status === 404) {
-      return { ok: false, error: `Model "${input.model}" isn't pulled yet in Ollama.` };
+      return { ok: false, error: `Model "${model}" isn't pulled yet in Ollama.` };
     }
     return { ok: false, error: `Ollama responded with an error (${res.status}).` };
   }

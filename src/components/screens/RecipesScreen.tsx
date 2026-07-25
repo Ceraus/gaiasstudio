@@ -307,6 +307,7 @@ export default function RecipesScreen() {
     setSuggestingBenefit(true);
     try {
       const result = await suggestBenefitStatement({
+        backend: settings.localAiBackend ?? 'bundled',
         baseUrl: settings.localAiBaseUrl || 'http://localhost:11434',
         model: settings.localAiModel || 'llama3.2:3b',
         recipeName: form.name,

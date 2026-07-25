@@ -128,7 +128,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   safeIn: 0.0625,
   onboarded: false,
   uiScale: 1,
-  localAiEnabled: false,
+  localAiEnabled: true,
+  localAiBackend: 'bundled',
   localAiBaseUrl: 'http://localhost:11434',
   localAiModel: 'llama3.2:3b',
 };

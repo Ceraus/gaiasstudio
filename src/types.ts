@@ -203,16 +203,22 @@ export interface AppSettings {
   /** Show/hide the Label Sets tab in navigation (default: false). */
   showLabelSets?: boolean;
 
-  // ── Local AI (optional, 100% offline via Ollama) ─────────────────────────
+  // ── Local AI (optional, 100% offline) ────────────────────────────────────
   /**
-   * User has opted in to the local AI copywriting assist. Off by default —
-   * this never runs, calls out to the network, or affects the UI unless the
-   * user explicitly turns it on here.
+   * Local AI copywriting assist. Enabled by default for new installs (bundled
+   * backend). The user can turn it off here; it never calls out to the cloud.
    */
   localAiEnabled?: boolean;
-  /** Base URL of the locally-running Ollama server. */
+  /**
+   * Which local AI backend to use. "bundled" runs the small model shipped
+   * inside the app (zero setup, in-process via node-llama-cpp). "ollama" is
+   * the advanced/external option for power users who want a bigger/better
+   * model via a separately-installed Ollama server. Defaults to "bundled".
+   */
+  localAiBackend?: 'bundled' | 'ollama';
+  /** Base URL of the locally-running Ollama server (only used when backend is "ollama"). */
   localAiBaseUrl?: string;
-  /** Ollama model name/tag to use for text generation (e.g. "llama3.2:3b"). */
+  /** Ollama model name/tag to use for text generation (e.g. "llama3.2:3b"). Only used when backend is "ollama". */
   localAiModel?: string;
 }
 

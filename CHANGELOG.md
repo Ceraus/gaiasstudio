@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Bundled local AI (Qwen2.5-0.5B)** ships inside the Windows executable —
+  no Ollama install required.
+- **Built-in AI enabled by default**; Ollama remains an optional advanced path
+  for users who want a larger model.
+- **`npm run ai:fetch-model`** script for pre-build model download (~491MB).
 - **Recipe list pagination** — "Your Recipes" on the Choose Recipe screen
   is now capped at 19 per page (matching the height of the editor column
   beside it), with Prev/Next controls and a "Page X of Y" indicator. Saving

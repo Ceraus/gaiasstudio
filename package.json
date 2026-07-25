@@ -15,7 +15,8 @@
     "avery:generate": "node scripts/generate-avery-dataset.mjs",
     "avery:scrape": "node scripts/scrape-avery.mjs",
     "electron:start": "electron .",
-    "predist:win": "npm version patch --no-git-tag-version",
+    "ai:fetch-model": "node scripts/fetch-bundled-model.mjs",
+    "predist:win": "npm run ai:fetch-model && npm version patch --no-git-tag-version",
     "dist:win": "npm run build && electron-builder --win --x64",
     "dist:mac": "npm run build && electron-builder --mac --x64",
     "dist": "npm run build && electron-builder"
@@ -37,6 +38,7 @@
     "fabric": "^6.5.4",
     "i18next": "^23.16.8",
     "lucide-react": "^0.468.0",
+    "node-llama-cpp": "^3.19.1",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
@@ -73,6 +75,16 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/node-llama-cpp/**/*",
+      "node_modules/@node-llama-cpp/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/models",
+        "to": "models"
+      }
+    ],
     "win": {
       "target": [
         {

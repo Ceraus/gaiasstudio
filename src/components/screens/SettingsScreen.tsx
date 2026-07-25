@@ -5,7 +5,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useLibraryStore } from '@/store/useLibraryStore';
-import { checkLocalAiStatus, type LocalAiStatus } from '@/lib/localAi';
+import { checkBundledAiStatus, checkOllamaStatus, type LocalAiStatus } from '@/lib/localAi';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -407,13 +407,16 @@ export default function SettingsScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Local AI (optional) — 100% offline copywriting assist via Ollama.
+// Local AI (optional) — 100% offline copywriting assist.
+// Two backends: "bundled" (built into the app, zero setup) or "ollama"
+// (advanced/external, for power users who want a bigger/better model).
 // ---------------------------------------------------------------------------
 function LocalAiSection() {
   const { t } = useTranslation();
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
+  const backend = settings.localAiBackend ?? 'bundled';
   const [baseUrlInput, setBaseUrlInput] = useState(settings.localAiBaseUrl ?? 'http://localhost:11434');
   const [modelInput, setModelInput] = useState(settings.localAiModel ?? 'llama3.2:3b');
   const [testing, setTesting] = useState(false);
@@ -424,6 +427,12 @@ function LocalAiSection() {
     setBaseUrlInput(settings.localAiBaseUrl ?? 'http://localhost:11434');
     setModelInput(settings.localAiModel ?? 'llama3.2:3b');
   }, [settings.localAiBaseUrl, settings.localAiModel]);
+
+  // Re-test automatically whenever the backend or enabled state changes, so
+  // the status shown always matches what "Suggest" will actually use.
+  useEffect(() => {
+    setStatus(null);
+  }, [backend, settings.localAiEnabled]);
 
   const commitBaseUrl = () => {
     const trimmed = baseUrlInput.trim() || 'http://localhost:11434';
@@ -440,7 +449,10 @@ function LocalAiSection() {
   const testConnection = async () => {
     setTesting(true);
     setStatus(null);
-    const result = await checkLocalAiStatus(baseUrlInput.trim() || 'http://localhost:11434', modelInput.trim() || 'llama3.2:3b');
+    const result =
+      backend === 'bundled'
+        ? await checkBundledAiStatus()
+        : await checkOllamaStatus(baseUrlInput.trim() || 'http://localhost:11434', modelInput.trim() || 'llama3.2:3b');
     setStatus(result);
     setTesting(false);
   };
@@ -470,57 +482,91 @@ function LocalAiSection() {
       <p className="text-xs text-slate-400">
         {t(
           'settings.localAiHint',
-          'Adds an optional "✨ Suggest" button in the Recipe Builder that drafts a benefit statement from your selected ingredients. 100% local and offline — nothing is ever sent to the cloud. Requires installing Ollama separately and pulling a model.',
+          'Adds an optional "✨ Suggest" button in the Recipe Builder that drafts a benefit statement from your selected ingredients. 100% local and offline — nothing is ever sent to the cloud.',
         )}
       </p>
 
-      <p className="text-xs text-slate-400">
-        {t('settings.localAiSetupIntro', 'Setup (one-time, on this computer):')}
-      </p>
-      <ol className="ml-4 list-decimal space-y-0.5 text-xs text-slate-500">
-        <li>
-          <a
-            href="https://ollama.com"
-            target="_blank"
-            rel="noreferrer"
-            className="text-gaia-600 hover:underline"
-          >
-            {t('settings.localAiDownload', 'Download and install Ollama →')}
-          </a>
-        </li>
-        <li>
-          {t('settings.localAiPullStep', 'Open a terminal and run:')}{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
-            ollama pull {modelInput.trim() || 'llama3.2:3b'}
-          </code>
-        </li>
-        <li>{t('settings.localAiToggleStep', 'Turn on the switch above, then use "Test Connection" below.')}</li>
-      </ol>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-colors ${
+            backend === 'bundled' ? 'bg-gaia-600 text-white ring-gaia-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+          }`}
+          onClick={() => void updateSettings({ localAiBackend: 'bundled' })}
+        >
+          {t('settings.localAiBackendBundled', 'Built-in (bundled)')}
+        </button>
+        <button
+          type="button"
+          className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-colors ${
+            backend === 'ollama' ? 'bg-gaia-600 text-white ring-gaia-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+          }`}
+          onClick={() => void updateSettings({ localAiBackend: 'ollama' })}
+        >
+          {t('settings.localAiBackendOllama', 'Ollama (external, advanced)')}
+        </button>
+      </div>
+
+      {backend === 'bundled' ? (
+        <p className="text-xs text-slate-400">
+          {t(
+            'settings.localAiBundledHint',
+            'Uses a small model shipped inside the app itself — nothing to install. Good for short taglines; for longer or more creative copy, try the external Ollama option instead.',
+          )}
+        </p>
+      ) : (
+        <>
+          <p className="text-xs text-slate-400">
+            {t('settings.localAiSetupIntro', 'Setup (one-time, on this computer):')}
+          </p>
+          <ol className="ml-4 list-decimal space-y-0.5 text-xs text-slate-500">
+            <li>
+              <a
+                href="https://ollama.com"
+                target="_blank"
+                rel="noreferrer"
+                className="text-gaia-600 hover:underline"
+              >
+                {t('settings.localAiDownload', 'Download and install Ollama →')}
+              </a>
+            </li>
+            <li>
+              {t('settings.localAiPullStep', 'Open a terminal and run:')}{' '}
+              <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
+                ollama pull {modelInput.trim() || 'llama3.2:3b'}
+              </code>
+            </li>
+            <li>{t('settings.localAiToggleStep', 'Turn on the switch above, then use "Test Connection" below.')}</li>
+          </ol>
+        </>
+      )}
 
       {settings.localAiEnabled && (
         <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="label text-[11px]">{t('settings.localAiBaseUrl', 'Ollama address')}</label>
-              <input
-                className="input text-sm"
-                placeholder="http://localhost:11434"
-                value={baseUrlInput}
-                onChange={(e) => setBaseUrlInput(e.target.value)}
-                onBlur={commitBaseUrl}
-              />
+          {backend === 'ollama' && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="label text-[11px]">{t('settings.localAiBaseUrl', 'Ollama address')}</label>
+                <input
+                  className="input text-sm"
+                  placeholder="http://localhost:11434"
+                  value={baseUrlInput}
+                  onChange={(e) => setBaseUrlInput(e.target.value)}
+                  onBlur={commitBaseUrl}
+                />
+              </div>
+              <div>
+                <label className="label text-[11px]">{t('settings.localAiModel', 'Model name')}</label>
+                <input
+                  className="input text-sm"
+                  placeholder="llama3.2:3b"
+                  value={modelInput}
+                  onChange={(e) => setModelInput(e.target.value)}
+                  onBlur={commitModel}
+                />
+              </div>
             </div>
-            <div>
-              <label className="label text-[11px]">{t('settings.localAiModel', 'Model name')}</label>
-              <input
-                className="input text-sm"
-                placeholder="llama3.2:3b"
-                value={modelInput}
-                onChange={(e) => setModelInput(e.target.value)}
-                onBlur={commitModel}
-              />
-            </div>
-          </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -536,7 +582,9 @@ function LocalAiSection() {
             {status?.state === 'connected' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                {t('settings.localAiConnected', 'Connected — "{{model}}" is ready.', { model: modelInput.trim() || 'llama3.2:3b' })}
+                {backend === 'bundled'
+                  ? t('settings.localAiBundledConnected', 'Built-in model is ready.')
+                  : t('settings.localAiConnected', 'Connected — "{{model}}" is ready.', { model: modelInput.trim() || 'llama3.2:3b' })}
               </span>
             )}
             {status?.state === 'model-missing' && (
@@ -548,7 +596,10 @@ function LocalAiSection() {
             {status?.state === 'unreachable' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-rose-600">
                 <WifiOff className="h-4 w-4 shrink-0" />
-                {t('settings.localAiUnreachable', "Couldn't reach Ollama at this address. Is it running?")}
+                {status.message ??
+                  (backend === 'bundled'
+                    ? t('settings.localAiBundledUnreachable', "Couldn't reach the built-in model.")
+                    : t('settings.localAiUnreachable', "Couldn't reach Ollama at this address. Is it running?"))}
               </span>
             )}
           </div>
