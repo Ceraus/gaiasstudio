@@ -4,6 +4,34 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Recipe list pagination** — "Your Recipes" on the Choose Recipe screen
+  is now capped at 19 per page (matching the height of the editor column
+  beside it), with Prev/Next controls and a "Page X of Y" indicator. Saving
+  a new recipe automatically jumps to whichever page it landed on.
+- **Complete ingredient icon coverage** — every ingredient in the database
+  now has a purpose-built, colorful icon instead of falling back to a
+  generic category icon. Added five new icon shapes (milk bottle, molecule,
+  granular cluster, powder mound, lab flask) and 198 new colorful icon
+  entries to cover every previously-uncovered ingredient.
+
+### Changed
+- **Default interface scale is now 100%** (was 125%); the "default" badge
+  in Settings → Interface size moved to the 100% option accordingly.
+- **Header navigation** no longer fights over an artificial ~1024px width
+  budget — the tab bar, "Hi Rosa" greeting, New Label/AI Prompt/Settings
+  buttons and language switcher all render fully on one line, using the
+  window's actual full width instead of a fixed max-width container.
+
+### Fixed
+- The "active draft in progress" dot on the Workspace tab was being
+  cropped by the nav's horizontally-scrolling wrapper; removed the
+  now-unnecessary scroll container so the dot renders uncropped.
+- WorkflowStepper tooltips were appearing underneath the header instead of
+  stacking above it; fixed the z-index order.
+
 ## [2.0.29] - 2026-07-24
 
 ### Added

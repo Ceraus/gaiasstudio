@@ -110,63 +110,74 @@ export default function Shell() {
     <div className="flex h-full flex-col">
 
       {/* ── Unified header — identical on every screen ────────────────────────── */}
-      {/* The inner div shares the same max-w-5xl mx-auto px-6 container as the
+      {/* The inner div shares the same full-width px-6 container as the
           WorkflowStepper below, so the nav tabs and stepper steps share the
-          same horizontal center reference. */}
-      <header className="z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto grid max-w-5xl grid-cols-[auto_1fr_auto] items-center gap-2 px-6 py-2">
+          same horizontal reference. It intentionally has no max-w cap — that
+          used to force the tabs to fight over a fixed ~1024px budget even on
+          wide windows, which is what made a tab's label get scroll-clipped. */}
+      <header className="relative z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="flex flex-nowrap items-center gap-2 px-6 py-2">
 
         {/* Left: Logo */}
         <LogoButton />
 
-        {/* Center: Library tabs — centered within the 1fr middle column so the
-            tabs' horizontal band matches the WorkflowStepper row below. */}
-        <nav className="flex items-center justify-center gap-0.5">
-          {LIBRARY_TABS.map(({ id, labelKey, defaultLabel, icon: Icon }) => {
-            const isActive    = screen === id;
-            const hasDraftWip = id === 'drafts' && !!activeDraftId;
-            return (
-              <button
-                key={id}
-                onClick={() => goto(id)}
-                className={`relative flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-gaia-50 text-gaia-700'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="hidden md:inline">{t(labelKey, defaultLabel)}</span>
-                {isActive && (
-                  <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-gaia-600" />
-                )}
-                {hasDraftWip && (
-                  <span
-                    className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-orange-500"
-                    aria-label="Active draft in progress"
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        {/* Center: Library tabs — takes the remaining space. No overflow-x-auto
+            here: since the header lost its max-w cap, the tabs now have the
+            whole window to work with, and a scrolling container was clipping
+            the "active draft" dot that intentionally pokes just outside each
+            tab's top-right corner (overflow-x-auto forces overflow-y to
+            compute as auto too, per the CSS spec, cropping that overhang). */}
+        <div className="min-w-0 flex-1">
+          <nav className="flex items-center justify-start gap-0.5">
+            {LIBRARY_TABS.map(({ id, labelKey, defaultLabel, icon: Icon }) => {
+              const isActive    = screen === id;
+              const hasDraftWip = id === 'drafts' && !!activeDraftId;
+              return (
+                <button
+                  key={id}
+                  onClick={() => goto(id)}
+                  className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-gaia-50 text-gaia-700'
+                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="hidden md:inline">{t(labelKey, defaultLabel)}</span>
+                  {isActive && (
+                    <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-gaia-600" />
+                  )}
+                  {hasDraftWip && (
+                    <span
+                      className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-orange-500"
+                      aria-label="Active draft in progress"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
-        {/* Right: Rosa greeting, + New Label CTA, AI Prompt icon, Settings icon, Language */}
-        <div className="flex items-center justify-end gap-2">
-          <span className="hidden lg:inline-flex items-center gap-1 rounded-full bg-gaia-50 px-3 py-1 text-xs font-medium text-gaia-700 ring-1 ring-gaia-100">
+        {/* Right: Rosa greeting, + New Label CTA, AI Prompt icon, Settings icon, Language.
+            shrink-0 + whitespace-nowrap on every item guarantees this cluster
+            always renders fully and on one line — it's the nav band (above)
+            that gives up space first. */}
+        <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
+          <span className="hidden shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-gaia-50 px-3 py-1 text-xs font-medium text-gaia-700 ring-1 ring-gaia-100 lg:inline-flex">
             🌹 {t('common.greeting', 'Hi Rosa')}
           </span>
           <button
             onClick={() => goto('template')}
-            className="btn btn-primary flex items-center gap-1.5 text-sm"
+            className="btn btn-primary flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline">{t('nav.newLabel', 'New Label')}</span>
           </button>
           <button
             onClick={() => goto('promptBuilder')}
             title={t('nav.promptBuilder', 'AI Prompt')}
-            className={`btn flex items-center gap-1.5 px-3 py-2 text-sm font-semibold transition-colors ${
+            className={`btn flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2 text-sm font-semibold transition-colors ${
               screen === 'promptBuilder'
                 ? 'bg-gaia-100 text-gaia-700'
                 : 'bg-gaia-50 text-gaia-600 ring-1 ring-gaia-200 hover:bg-gaia-100 hover:text-gaia-700'
@@ -179,19 +190,22 @@ export default function Shell() {
             onClick={() => goto('settings')}
             title={t('nav.settings', 'Settings')}
             aria-label={t('nav.settings', 'Settings')}
-            className="btn btn-ghost p-2"
+            className="btn btn-ghost shrink-0 p-2"
           >
             <SettingsIcon className="h-4 w-4" />
           </button>
-          <LangSwitcher />
+          <div className="shrink-0">
+            <LangSwitcher />
+          </div>
         </div>
         </div>
       </header>
 
       {/* ── Stepper sub-header (all workflow screens, including editor) ───────── */}
-      {/* relative + z-10 ensures the stepper's absolutely-positioned tooltips
-          stack above the <main> element below (which is also relative). */}
-      {showStepper && <div className="relative z-10"><WorkflowStepper /></div>}
+      {/* relative + z-30 ensures the stepper's absolutely-positioned tooltips
+          (which pop up above the step pills, right at the header boundary)
+          stack above BOTH the header (z-20) and the <main> element below. */}
+      {showStepper && <div className="relative z-30"><WorkflowStepper /></div>}
 
       <main className="relative flex-1 overflow-hidden">
         <Suspense fallback={<ScreenLoader label={t('common.loading')} />}>

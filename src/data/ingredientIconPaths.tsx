@@ -4840,6 +4840,62 @@ const _citrus = (rind: string, flesh: string): JSX.Element => (
   </svg>
 );
 
+/** Milk / cream bottle */
+const _milk = (body: string, shadow: string): JSX.Element => (
+  <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+    <path d="M17 5 L23 5 L23 11 Q28 14 28 19 L28 33 Q28 36 25 36 L15 36 Q12 36 12 33 L12 19 Q12 14 17 11Z" fill={body}/>
+    <path d="M17 5 L23 5" stroke={shadow} strokeWidth="2" strokeLinecap="round"/>
+    <ellipse cx="20" cy="20" rx="6" ry="3.5" fill="white" opacity="0.3"/>
+    <rect x="12" y="27" width="16" height="9" rx="0" fill={shadow} opacity="0.18"/>
+  </svg>
+);
+
+/** Cosmetic active — central molecule with three satellite atoms */
+const _molecule = (main: string, accent: string): JSX.Element => (
+  <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+    <line x1="20" y1="20" x2="10" y2="12" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+    <line x1="20" y1="20" x2="30" y2="12" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+    <line x1="20" y1="20" x2="20" y2="32" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="10" cy="12" r="4.5" fill={accent}/>
+    <circle cx="30" cy="12" r="4.5" fill={accent}/>
+    <circle cx="20" cy="32" r="4.5" fill={accent}/>
+    <circle cx="20" cy="20" r="7" fill={main}/>
+    <circle cx="18" cy="18" r="2" fill="white" opacity="0.35"/>
+  </svg>
+);
+
+/** Granular cluster — sugar, salt, oats, coffee grounds, small berries */
+const _grain = (fill: string, shine = '#fff'): JSX.Element => (
+  <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+    <circle cx="14" cy="26" r="6" fill={fill}/>
+    <circle cx="25" cy="20" r="7" fill={fill} opacity="0.85"/>
+    <circle cx="29" cy="29" r="5" fill={fill} opacity="0.7"/>
+    <circle cx="16" cy="14" r="4.5" fill={fill} opacity="0.6"/>
+    <circle cx="12" cy="23" r="1.5" fill={shine} opacity="0.5"/>
+    <circle cx="23" cy="17" r="1.5" fill={shine} opacity="0.45"/>
+  </svg>
+);
+
+/** Powder mound — roots, powders and dried extracts scooped into a pile */
+const _powder = (fill: string, shine = '#fff'): JSX.Element => (
+  <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+    <path d="M8 30 Q8 20 20 20 Q32 20 32 30 Q32 34 28 34 L12 34 Q8 34 8 30Z" fill={fill}/>
+    <ellipse cx="20" cy="20" rx="10" ry="3" fill={fill} opacity="0.7"/>
+    <ellipse cx="16" cy="27" rx="3" ry="1.5" fill={shine} opacity="0.35"/>
+    <ellipse cx="24" cy="30" rx="2.5" ry="1.2" fill={shine} opacity="0.25"/>
+  </svg>
+);
+
+/** Lab flask — preservatives and clinical-grade chemical additives */
+const _flask = (liquid: string, glass = '#E5E7EB'): JSX.Element => (
+  <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+    <path d="M17 6 L17 16 L9 30 Q7 34 11 34 L29 34 Q33 34 31 30 L23 16 L23 6Z" fill={glass} opacity="0.4"/>
+    <path d="M15 6 L25 6" stroke={glass} strokeWidth="2" strokeLinecap="round"/>
+    <path d="M12.5 27 L27.5 27 L31 30 Q33 34 29 34 L11 34 Q7 34 9 30Z" fill={liquid}/>
+    <ellipse cx="22" cy="30" rx="3.5" ry="2" fill="white" opacity="0.3"/>
+  </svg>
+);
+
 // ── COLORFUL INGREDIENT ICON MAP ──────────────────────────────────────────────
 // Keys are lowercase substrings; longer keys win over shorter ones.
 // Values are JSX elements rendered directly in the IngredientIcon container.
@@ -5941,6 +5997,242 @@ export const COLORFUL_INGREDIENT_ICON_MAP: Record<string, JSX.Element> = {
       <line x1="22" y1="7" x2="20" y2="14" stroke="#388E3C" strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   ),
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // FULL-COVERAGE PASS — every remaining ingredient in the seed database
+  // gets its own colourful icon so nothing falls back to a generic
+  // category glyph. Grouped below by category for readability.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ── OILS ──────────────────────────────────────────────────────────────────────
+  'babassu oil': _oil('#F5EFD9', '#FFFFFF'),
+  'abyssinian oil': _oil('#D8B36A'),
+  'amaranth oil': _oil('#8C3B4A', '#F3B6C4'),
+  'andiroba oil': _oil('#9C5A2E'),
+  'broccoli seed oil': _oil('#4C7A2E', '#B7D98C'),
+  'camelina oil': _oil('#B7A233', '#E9DA8C'),
+  'cape chestnut oil': _oil('#8B5A2B'),
+  'cherry kernel oil': _oil('#B0304F', '#F8BBD0'),
+  'mongongo oil': _oil('#C9A66B'),
+  'grape seed oil': _oil('#7B1FA2', '#CE93D8'),
+  'rose hip oil': _oil('#E91E63', '#F48FB1'),
+
+  // ── BUTTERS ───────────────────────────────────────────────────────────────────
+  'cupuaçu butter': _butter('#EDE0C8', '#D8C6A3'),
+
+  // ── BOTANICALS & HERBS / FOOD-DERIVED ─────────────────────────────────────────
+  'fenugreek': _herb('#7C6A3E', '#C2A45B'),
+  'horsetail': _herb('#4B6B4E', '#6B9B6E'),
+  'juniper berries': _grain('#5B7A9A', '#AFC4D6'),
+  'motherwort': _herb('#5C7A4E', '#8FAE6E'),
+  'oregon grape root': _herb('#6B5B3E', '#D4A017'),
+  'sarsaparilla': _herb('#6B4A2E', '#8B6A3E'),
+  'yellow dock': _herb('#6B7A3E', '#C9A227'),
+  'honey': _drop('#E8A317', '#B8790A'),
+  'rice': _grain('#F5F0E1', '#FFFFFF'),
+  'oatmeal': _grain('#D9C7A0', '#FFF8E7'),
+  'coffee': _grain('#4B3221', '#8B5E3C'),
+  'turmeric': _powder('#E8A317', '#FFD983'),
+  'geranium': _flower('#E85D9E', '#C2255C', 6),
+  'rose petal': (
+    <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+      {[0,72,144,216,288].map((d) => {
+        const r = d*Math.PI/180;
+        return <ellipse key={d} cx={20+8*Math.sin(r)} cy={20-8*Math.cos(r)} rx="5" ry="7" fill="#FCA5A5" transform={`rotate(${d} ${20+8*Math.sin(r)} ${20-8*Math.cos(r)})`}/>;
+      })}
+      <circle cx="20" cy="20" r="5" fill="#F87171"/>
+      <circle cx="20" cy="20" r="3" fill="#EF4444"/>
+    </svg>
+  ),
+  'rose powder': _powder('#F2A6C1', '#FCE4EC'),
+  'shredded coconut': _grain('#FDFBF5', '#FFFFFF'),
+
+  // ── EXFOLIANTS ────────────────────────────────────────────────────────────────
+  'pumice': _grain('#A9A29A', '#D8D2C8'),
+
+  // ── ESSENTIAL OILS ────────────────────────────────────────────────────────────
+  'lemongrass eo': _eo('#A8C24A', '#D9ED92'),
+  'carrot seed eo': _eo('#C2703D', '#E8B27D'),
+  'lavender essential oil': _eo('#7C3AED', '#5B21B6'),
+  'tea tree oil': _eo('#059669', '#047857'),
+  'eucalyptus oil': _eo('#0891B2', '#0E7490'),
+  'peppermint oil': _eo('#10B981', '#059669'),
+  'sweet orange oil': _eo('#F97316', '#EA580C'),
+
+  // ── ACTIVES / ADDITIVES ───────────────────────────────────────────────────────
+  'panthenol (b5)': _molecule('#14B8A6', '#5EEAD4'),
+  'preservative blend (optiphen)': _molecule('#94A3B8', '#CBD5E1'),
+  'rosemary antioxidant (roe)': _molecule('#65A30D', '#A3E635'),
+  'alpha lipoic acid': _molecule('#F59E0B', '#FCD34D'),
+  'aha complex': _molecule('#84CC16', '#D9F99D'),
+  'amino acids (complex)': _molecule('#A78BFA', '#DDD6FE'),
+  'azelaic acid': _molecule('#FB7185', '#FECDD3'),
+  'beta-glucan': _molecule('#5EEAD4', '#CCFBF1'),
+  'betaine': _molecule('#38BDF8', '#BAE6FD'),
+  'bisabolol': _molecule('#FDE68A', '#FEF3C7'),
+  'ceramide complex': _molecule('#FDE9C8', '#FFF3E0'),
+  'cholesterol (cosmetic)': _molecule('#FEF3C7', '#FFFBEB'),
+  'coq10': _molecule('#F97316', '#FED7AA'),
+  'copper peptide': _molecule('#C2703D', '#F3D2B0'),
+  'd-panthenol (b5)': _molecule('#14B8A6', '#5EEAD4'),
+  'dmae': _molecule('#60A5FA', '#BFDBFE'),
+  'egf (cosmetic)': _molecule('#6366F1', '#C7D2FE'),
+  'ferulic acid': _molecule('#F59E0B', '#FDE68A'),
+  'fulvic acid': _molecule('#92400E', '#D9B382'),
+  'gluconolactone': _molecule('#FDE047', '#FEF9C3'),
+  'glutathione': _molecule('#A7F3D0', '#D1FAE5'),
+  'idebenone': _molecule('#EA580C', '#FDBA74'),
+  'l-ascorbic acid': _molecule('#FB923C', '#FED7AA'),
+  'magnesium ascorbyl phosphate': _molecule('#FDBA74', '#FED7AA'),
+  'mandelic acid': _molecule('#D9B382', '#F0E4CC'),
+  'matrixyl 3000': _molecule('#7C3AED', '#DDD6FE'),
+  'msm (cosmetic)': _molecule('#DBEAFE', '#EFF6FF'),
+  'oat beta glucan': _molecule('#A7C4A0', '#DCEFDA'),
+  'peptide complex': _molecule('#8B5CF6', '#DDD6FE'),
+  'phytic acid': _molecule('#FDE68A', '#FEF3C7'),
+  'polyglutamic acid': _molecule('#3B82F6', '#BFDBFE'),
+  'resveratrol': _molecule('#9333EA', '#E9D5FF'),
+  'sea kelp bioferment': _molecule('#0D9488', '#99F6E4'),
+  'sodium pca': _molecule('#22D3EE', '#A5F3FC'),
+  'tranexamic acid': _molecule('#60A5FA', '#DBEAFE'),
+  'tremella mushroom extract': _molecule('#F8FAFC', '#E2E8F0'),
+  'zinc pca': _molecule('#E5E7EB', '#F1F5F9'),
+  'aloe butter': _butter('#DCEFDA', '#BFE3C0'),
+  'vitamin e': _molecule('#FB923C', '#FED7AA'),
+
+  // ── MILK & CREAM POWDERS ──────────────────────────────────────────────────────
+  'camel milk powder': _milk('#F5F0E6', '#E8DFC8'),
+  'donkey milk powder': _milk('#FAFAF9', '#F1F0EA'),
+  'hemp milk': _milk('#E8F0D8', '#C8DBA0'),
+  'kefir powder': _milk('#F0EDE5', '#DCD6C4'),
+  'oat milk (fresh)': _milk('#EDE4D3', '#D9C7A0'),
+  'sheep milk powder': _milk('#F5F0E6', '#E5DDC5'),
+  'soy milk powder': _milk('#F0EAD6', '#E0D5B8'),
+
+  // ── WAXES ─────────────────────────────────────────────────────────────────────
+  'emulsifying wax nf': _wax('#F5F0E6', '#FFFFFF'),
+  'microcrystalline wax': _wax('#E8E2D0', '#F5F0E6'),
+  'myristyl myristate': _wax('#F0E8D8', '#FFF8EE'),
+  'ozokerite': _wax('#8B6F47', '#C9A66B'),
+  'stearyl alcohol': _wax('#F5F5F0', '#FFFFFF'),
+
+  // ── PRESERVATIVES / LAB CHEMICALS ─────────────────────────────────────────────
+  'edta (tetrasodium)': _flask('#93C5FD', '#E5E7EB'),
+  'germaben ii': _flask('#A5B4FC', '#E5E7EB'),
+  'germall plus': _flask('#A5B4FC', '#E5E7EB'),
+  'leucidal liquid': _flask('#86EFAC', '#E5E7EB'),
+  'naticide': _flask('#86EFAC', '#E5E7EB'),
+  'optiphen plus': _flask('#93C5FD', '#E5E7EB'),
+  'phenoxyethanol': _flask('#93C5FD', '#E5E7EB'),
+  'potassium sorbate': _flask('#FDE68A', '#E5E7EB'),
+  'sodium benzoate': _flask('#FDE68A', '#E5E7EB'),
+  'sodium hydroxypropyl starch phosphate': _flask('#E5E7EB', '#F1F5F9'),
+  'vitamin e (preservative)': _flask('#FDBA74', '#E5E7EB'),
+
+  // ── FRAGRANCE OILS ────────────────────────────────────────────────────────────
+  'vanilla essence': _perfume('#F3E1C2', '#E8C39E'),
+  'rose fragrance oil': _perfume('#F48FB1', '#EC407A'),
+  'ocean dreams fragrance oil': _perfume('#93C5FD', '#60A5FA'),
+  'watermelon fragrance oil': _perfume('#FB7185', '#86EFAC'),
+  'mango peach fragrance oil': _perfume('#FDBA74', '#FBBF24'),
+  'pineapple fragrance oil': _perfume('#FDE047', '#FACC15'),
+  'cherry fragrance oil': _perfume('#EF4444', '#DC2626'),
+  'strawberry fragrance oil': _perfume('#F87171', '#EF4444'),
+  'apple fragrance oil': _perfume('#84CC16', '#4D7C0F'),
+  'passion fruit fragrance oil': _perfume('#F59E0B', '#EA580C'),
+  'chia fragrance oil': _perfume('#78716C', '#57534E'),
+  'mango fragrance oil': _perfume('#FBBF24', '#F59E0B'),
+  'peach fragrance oil': _perfume('#FDBA74', '#FB923C'),
+  'blueberry fragrance oil': _perfume('#3B82F6', '#2563EB'),
+  'raspberry fragrance oil': _perfume('#E11D48', '#BE123C'),
+  'coconut lime fragrance oil': _perfume('#BEF264', '#F5F5DC'),
+  'grapefruit fragrance oil': _perfume('#FB7185', '#FCA5A5'),
+  'pomegranate fragrance oil': _perfume('#9F1239', '#BE123C'),
+  'fig fragrance oil': _perfume('#6D3B6D', '#8B4B8B'),
+  'blackberry fragrance oil': _perfume('#5B21B6', '#6D28D9'),
+  'peach bellini fragrance oil': _perfume('#FBCFE8', '#FDBA74'),
+  'tropical mango fragrance oil': _perfume('#FBBF24', '#FB923C'),
+  'sweet pea fragrance oil': _perfume('#F9A8D4', '#F472B6'),
+  'freesia fragrance oil': _perfume('#FDE68A', '#FEF3C7'),
+  'magnolia fragrance oil': _perfume('#FBCFE8', '#F9FAFB'),
+  'peony fragrance oil': _perfume('#F9A8D4', '#EC4899'),
+  'lily fragrance oil': _perfume('#F8FAFC', '#E2E8F0'),
+  'orchid fragrance oil': _perfume('#D946EF', '#C026D3'),
+  'tuberose fragrance oil': _perfume('#FEF9E7', '#FDE68A'),
+  'violet fragrance oil': _perfume('#8B5CF6', '#7C3AED'),
+  'iris fragrance oil': _perfume('#818CF8', '#6366F1'),
+  'cherry blossom fragrance oil': _perfume('#FBCFE8', '#F9A8D4'),
+  'clean cotton fragrance oil': _perfume('#F1F5F9', '#E2E8F0'),
+  'sandalwood rose fragrance oil': _perfume('#C08552', '#E8A0BF'),
+  'amber vanilla fragrance oil': _perfume('#B45309', '#D97706'),
+  'caramel fragrance oil': _perfume('#B4700A', '#D2914A'),
+  'chocolate fragrance oil': _perfume('#5C3A21', '#7B4B28'),
+  'coffee cake fragrance oil': _perfume('#6B4A31', '#C9A66B'),
+  'pumpkin spice fragrance oil': _perfume('#D97706', '#92400E'),
+  'cinnamon roll fragrance oil': _perfume('#A0522D', '#E8C39E'),
+  'buttercream fragrance oil': _perfume('#FFF3D6', '#FDE9C8'),
+  'vanilla cupcake fragrance oil': _perfume('#F3E1C2', '#FBCFE8'),
+  'almond biscotti fragrance oil': _perfume('#D9B382', '#EFE0C0'),
+  'oatmeal milk honey fragrance oil': _perfume('#E8C39E', '#F3E1C2'),
+  'goat milk fragrance oil': _perfume('#F8FAFC', '#E2E8F0'),
+  'honey almond fragrance oil': _perfume('#E3A857', '#F3D6A0'),
+  'lemon drop fragrance oil': _perfume('#FDE047', '#FEF08A'),
+  'eucalyptus mint fragrance oil': _perfume('#34D399', '#6EE7B7'),
+  'lavender mint fragrance oil': _perfume('#A78BFA', '#6EE7B7'),
+  'peppermint vanilla fragrance oil': _perfume('#34D399', '#F3E1C2'),
+  'spearmint fragrance oil': _perfume('#4ADE80', '#86EFAC'),
+  'rosemary mint fragrance oil': _perfume('#4D7C0F', '#84CC16'),
+  'tea tree mint fragrance oil': _perfume('#16A34A', '#4ADE80'),
+  'cedarwood sage fragrance oil': _perfume('#8B5E3C', '#87A96B'),
+  'patchouli sandalwood fragrance oil': _perfume('#5C4033', '#B08968'),
+  'frankincense myrrh fragrance oil': _perfume('#C9A66B', '#7B5E3B'),
+  'bamboo fragrance oil': _perfume('#8BC34A', '#A5D66B'),
+  'green tea cucumber fragrance oil': _perfume('#84CC16', '#A7F3D0'),
+  'charcoal fragrance oil': _perfume('#374151', '#4B5563'),
+
+  // ── COLORANTS & PIGMENTS ──────────────────────────────────────────────────────
+  'aqua green colorant': _drop('#2DD4BF', '#0F766E'),
+  'purple colorant': _drop('#A855F7', '#7E22CE'),
+  'pink colorant': _drop('#EC4899', '#BE185D'),
+  'yellow colorant': _drop('#FACC15', '#CA8A04'),
+  'green colorant': _drop('#22C55E', '#15803D'),
+  'orange colorant': _drop('#F97316', '#C2410C'),
+  'red colorant': _drop('#EF4444', '#B91C1C'),
+  'ultramarine pink': _mica('#EC4899', '#FCE7F3'),
+  'ultramarine violet': _mica('#8B5CF6', '#EDE9FE'),
+  'ultramarine green': _mica('#22C55E', '#DCFCE7'),
+  'iron oxide red': _mica('#B91C1C', '#FEE2E2'),
+  'iron oxide yellow': _mica('#CA8A04', '#FEF9C3'),
+  'iron oxide brown': _mica('#78350F', '#FDE9C8'),
+  'iron oxide black': _mica('#27272A', '#E5E7EB'),
+  'pearl mica': _mica('#F8FAFC', '#E2E8F0'),
+  'holographic glitter': _mica('#A78BFA', '#E0E7FF'),
+  'biodegradable glitter': _mica('#5EEAD4', '#CCFBF1'),
+  'alkanet root powder': _mica('#6B2545', '#FBE7F0'),
+  'red soap colorant': _drop('#EF4444', '#B91C1C'),
+  'brick red soap colorant': _drop('#B91C1C', '#7F1D1D'),
+  'pink soap colorant': _drop('#EC4899', '#BE185D'),
+  'rose soap colorant': _drop('#F43F5E', '#BE123C'),
+  'cherry red soap colorant': _drop('#DC2626', '#991B1B'),
+  'orange soap colorant': _drop('#F97316', '#C2410C'),
+  'peach soap colorant': _drop('#FDBA74', '#FB923C'),
+  'lemon yellow soap colorant': _drop('#FDE047', '#EAB308'),
+  'yellow soap colorant': _drop('#FACC15', '#CA8A04'),
+  'matcha green soap colorant': _drop('#84CC16', '#4D7C0F'),
+  'grass green soap colorant': _drop('#4ADE80', '#16A34A'),
+  'teal soap colorant': _drop('#14B8A6', '#0F766E'),
+  'sky blue soap colorant': _drop('#38BDF8', '#0284C7'),
+  'navy blue soap colorant': _drop('#1E3A8A', '#172554'),
+  'sapphire blue soap colorant': _drop('#1D4ED8', '#1E40AF'),
+  'purple soap colorant': _drop('#A855F7', '#7E22CE'),
+  'violet soap colorant': _drop('#8B5CF6', '#6D28D9'),
+  'black soap colorant': _drop('#27272A', '#000000'),
+  'white soap colorant': _drop('#F8FAFC', '#E2E8F0'),
+  'coffee brown soap colorant': _drop('#6F4E37', '#4B3221'),
+  'nude mica': _mica('#D9B896', '#FBEEDC'),
+
+  // ── CLAY ──────────────────────────────────────────────────────────────────────
+  'white clay': _clay('#FAFAF9', '#F1F0EA'),
 };
 
 /**

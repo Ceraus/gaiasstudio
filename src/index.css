@@ -11,7 +11,7 @@
      * CSS transform, which would blur text and throw off Fabric's pointer math
      * on the canvas. Overridden at runtime from the saved uiScale setting.
      */
-    --gaia-ui-scale: 1.25;
+    --gaia-ui-scale: 1;
   }
   html {
     font-size: calc(16px * var(--gaia-ui-scale));

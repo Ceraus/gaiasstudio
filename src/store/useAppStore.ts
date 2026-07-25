@@ -141,6 +141,6 @@ export const useAppStore = create<AppState>((set) => ({
 
 /** Drives the rem-based interface zoom declared in index.css. */
 function applyUiScale(scale: number | undefined) {
-  const clamped = Math.min(1.6, Math.max(0.9, scale ?? 1.25));
+  const clamped = Math.min(1.6, Math.max(0.9, scale ?? 1));
   document.documentElement.style.setProperty('--gaia-ui-scale', String(clamped));
 }

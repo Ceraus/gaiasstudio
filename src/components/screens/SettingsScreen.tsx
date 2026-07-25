@@ -6,7 +6,7 @@ import { db } from '@/db/db';
 import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useLibraryStore } from '@/store/useLibraryStore';
 
-/** Interface zoom presets. 125% is the default for readability. */
+/** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
 
 export default function SettingsScreen() {
@@ -90,7 +90,7 @@ export default function SettingsScreen() {
             </p>
             <div className="flex flex-wrap gap-2">
               {UI_SCALES.map((scale) => {
-                const active = Math.abs((settings.uiScale ?? 1.25) - scale) < 0.001;
+                const active = Math.abs((settings.uiScale ?? 1) - scale) < 0.001;
                 return (
                   <button
                     key={scale}
@@ -99,7 +99,7 @@ export default function SettingsScreen() {
                     className={`btn ${active ? 'btn-primary' : 'btn-secondary'}`}
                   >
                     {Math.round(scale * 100)}%
-                    {scale === 1.25 && (
+                    {scale === 1 && (
                       <span className="text-[10px] font-normal opacity-70">
                         {t('settings.uiScaleDefault', 'default')}
                       </span>

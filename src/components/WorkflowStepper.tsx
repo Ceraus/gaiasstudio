@@ -230,7 +230,7 @@ export default function WorkflowStepper({ embedded = false }: WorkflowStepperPro
 
   return (
     <div className="border-b border-gaia-100 bg-gradient-to-b from-gaia-50/80 to-white/98 shadow-sm backdrop-blur">
-      <div className="mx-auto flex max-w-5xl items-center gap-0 px-6 py-3.5">
+      <div className="flex items-center gap-0 px-6 py-3.5">
         {stepPills}
       </div>
 

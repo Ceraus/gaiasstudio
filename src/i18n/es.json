@@ -6,6 +6,7 @@
   "common": {
     "back": "Atrás",
     "next": "Siguiente",
+    "previous": "Anterior",
     "cancel": "Cancelar",
     "save": "Guardar",
     "delete": "Eliminar",
@@ -325,6 +326,7 @@
     "footerPlaceholder": "ej. Hecho a mano por Gaia · gaiasoaps.com",
     "empty": "Aún no hay recetas, Rosa. ¡Comienza agregando tu primera receta de jabón de glicerina! 🧼",
     "yourRecipes": "Tus Recetas",
+    "pageOf": "Página {{page}} de {{total}}",
     "editing": "Editando",
     "createNew": "Crear Nueva Receta",
     "selected": "seleccionada",

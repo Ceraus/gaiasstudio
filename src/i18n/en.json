@@ -6,6 +6,7 @@
   "common": {
     "back": "Back",
     "next": "Next",
+    "previous": "Previous",
     "cancel": "Cancel",
     "save": "Save",
     "delete": "Delete",
@@ -325,6 +326,7 @@
     "footerPlaceholder": "e.g. Handmade by Gaia · gaiasoaps.com",
     "empty": "No recipes yet, Rosa. Start by adding your first glycerin soap recipe! 🧼",
     "yourRecipes": "Your Recipes",
+    "pageOf": "Page {{page}} of {{total}}",
     "editing": "Editing",
     "createNew": "Create New Recipe",
     "selected": "selected",

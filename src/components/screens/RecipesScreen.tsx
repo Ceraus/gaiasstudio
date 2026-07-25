@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Calculator, Check, ChevronDown, ChevronUp, DollarSign, Eye, FlaskConical, Info, Package, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, DollarSign, Eye, FlaskConical, Info, Package, Plus, Trash2 } from 'lucide-react';
 import type { Ingredient, IngredientCategory, Recipe } from '@/types';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useAppStore } from '@/store/useAppStore';
@@ -96,6 +96,10 @@ interface RecipeForm {
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
 }
 
+/** Max recipe rows shown per page in "Your Recipes" — chosen so the list's
+ *  height lines up with the taller stack of cards in the editor column. */
+const RECIPES_PER_PAGE = 19;
+
 const emptyForm: RecipeForm = {
   name: '',
   benefit: '',
@@ -125,6 +129,7 @@ export default function RecipesScreen() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showIncompleteDialog, setShowIncompleteDialog] = useState(false);
   const [highlightMissing, setHighlightMissing] = useState(false);
+  const [recipePage, setRecipePage] = useState(0);
 
   useEffect(() => {
     return () => {
@@ -140,6 +145,18 @@ export default function RecipesScreen() {
   useEffect(() => {
     void reload();
   }, []);
+
+  const recipeTotalPages = Math.max(1, Math.ceil(recipes.length / RECIPES_PER_PAGE));
+
+  // Keep the current page in range if recipes are deleted out from under it.
+  useEffect(() => {
+    if (recipePage > recipeTotalPages - 1) setRecipePage(recipeTotalPages - 1);
+  }, [recipePage, recipeTotalPages]);
+
+  const pagedRecipes = useMemo(
+    () => recipes.slice(recipePage * RECIPES_PER_PAGE, recipePage * RECIPES_PER_PAGE + RECIPES_PER_PAGE),
+    [recipes, recipePage],
+  );
 
   const selectRecipe = (r: Recipe) => {
     setEditingId(r.id);
@@ -191,6 +208,11 @@ export default function RecipesScreen() {
     else {
       const created = await recipesRepo.create(payload);
       setEditingId(created.id);
+      // Jump the list to whichever page the freshly-created recipe landed on
+      // (the list is sorted by name, so a new recipe rarely lands last).
+      const allAfterCreate = await recipesRepo.all();
+      const idx = allAfterCreate.findIndex((r) => r.id === created.id);
+      if (idx >= 0) setRecipePage(Math.floor(idx / RECIPES_PER_PAGE));
     }
     await reload();
     setSavedToast(true);
@@ -334,7 +356,7 @@ export default function RecipesScreen() {
             {recipes.length === 0 ? (
               <div className="card text-center text-sm text-slate-500">{t('recipes.empty')}</div>
             ) : (
-              recipes.map((r) => {
+              pagedRecipes.map((r) => {
                 const isSelected = activeRecipeId === r.id;
                 const isEditing  = editingId === r.id;
                 const theme      = getRecipeColor(r, ingredients);
@@ -396,6 +418,33 @@ export default function RecipesScreen() {
                 );
               })
             )}
+
+            {/* Pagination — keeps the list to a max of RECIPES_PER_PAGE rows
+                so it doesn't grow taller than the cards in the editor column. */}
+            {recipeTotalPages > 1 && (
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-gaia-300 hover:text-gaia-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => setRecipePage((p) => Math.max(0, p - 1))}
+                  disabled={recipePage === 0}
+                  aria-label={t('common.previous', 'Previous')}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="text-[11px] font-medium text-slate-400">
+                  {t('recipes.pageOf', 'Page {{page}} of {{total}}', { page: recipePage + 1, total: recipeTotalPages })}
+                </span>
+                <button
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-gaia-300 hover:text-gaia-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => setRecipePage((p) => Math.min(recipeTotalPages - 1, p + 1))}
+                  disabled={recipePage >= recipeTotalPages - 1}
+                  aria-label={t('common.next', 'Next')}
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
             <button
               className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-gaia-200 py-2 text-xs font-medium text-gaia-600 transition hover:border-gaia-400 hover:bg-gaia-50"
               onClick={newRecipe}
