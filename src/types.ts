@@ -98,6 +98,14 @@ export interface Ingredient {
    * Weight mode: cost per gram. Volume mode: cost per drop.
    */
   fractionalCost?: number;
+  /** Supplier product page URL — used by the price importer to re-check pricing. */
+  supplierUrl?: string;
+  /**
+   * Current stock on hand, in the ingredient's base unit
+   * (grams for weight ingredients, drops for volume ingredients).
+   * Undefined = not tracked; completed work orders only deduct tracked stock.
+   */
+  stockOnHand?: number;
 
   createdAt: number;
   updatedAt: number;
@@ -138,6 +146,12 @@ export interface Recipe {
   cogsTotal?: number;
   /** Auto-calculated gross profit margin % when retail price is set. */
   profitMargin?: number;
+  /**
+   * How many bars/units one batch of `ingredientAmounts` yields.
+   * Work orders divide the batch amounts by this to deduct per-unit usage.
+   * Undefined/0 is treated as 1 (amounts are per single unit).
+   */
+  barsPerBatch?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -324,6 +338,84 @@ export interface Receipt {
   notes?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Clients & Work Orders — the SALES side of the business tracker.
+//
+// Note the split: `Receipt` (above) is the EXPENSE ledger (money Rosa spends
+// at suppliers); a `WorkOrder` is money a client pays her. Completing a work
+// order deducts tracked ingredient stock and produces a client-facing PDF
+// receipt. Items live in their own table so the mapping to better-sqlite3
+// stays 1:1 (see electron/schema.sql).
+// ---------------------------------------------------------------------------
+
+export interface Client {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type WorkOrderStatus = 'open' | 'completed';
+
+/**
+ * One recipe line inside a work order. The recipe name and unit price are
+ * denormalized at order time so receipts stay correct even if the recipe is
+ * later renamed, re-priced or deleted.
+ */
+export interface WorkOrderItem {
+  id: string;
+  workOrderId: string;
+  recipeId: string;
+  recipeName: string;
+  quantity: number;
+  /** Retail price per unit at the time of sale (USD). */
+  unitPrice: number;
+  /** quantity × unitPrice, stored for cheap receipt/summary rendering. */
+  lineTotal: number;
+  createdAt: number;
+}
+
+/**
+ * A single ingredient deduction recorded when an order is completed.
+ * Stored on the order so "Reopen" can restore exactly what was deducted.
+ */
+export interface WorkOrderUsageLine {
+  ingredientId: string;
+  ingredientName: string;
+  /** Amount used in the ingredient's base unit (grams or drops). */
+  amount: number;
+  unit: 'g' | 'drops';
+  /** Material cost of this line (amount × fractionalCost), when priced. */
+  cost?: number;
+  /** True when stockOnHand was tracked and actually reduced. */
+  deducted: boolean;
+}
+
+export interface WorkOrder {
+  id: string;
+  /** Human-friendly sequential number, e.g. "ORD-007". */
+  orderNumber: string;
+  clientId: string;
+  /** Denormalized so the dashboard renders without a join. */
+  clientName: string;
+  status: WorkOrderStatus;
+  notes?: string;
+  /** Sum of item line totals (USD). */
+  subtotal: number;
+  /** Grand total (USD). Currently equals subtotal — no tax handling. */
+  total: number;
+  /** Raw-material cost snapshot computed at completion (COGS). */
+  materialCost?: number;
+  /** Exact ingredient deductions applied at completion. */
+  usageSnapshot?: WorkOrderUsageLine[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
 }
 
 // ---------------------------------------------------------------------------

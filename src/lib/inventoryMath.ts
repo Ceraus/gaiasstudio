@@ -50,6 +50,23 @@ export function fractionalCostLabel(ing: Pick<Ingredient, 'measurementType' | 'c
   return isVolumeIngredient(ing) ? '/drop' : '/g';
 }
 
+/** Base unit an ingredient is measured (and stocked) in: grams or drops. */
+export function baseUnitOf(ing: Pick<Ingredient, 'measurementType' | 'category'>): 'g' | 'drops' {
+  return isVolumeIngredient(ing) ? 'drops' : 'g';
+}
+
+/**
+ * Converts one purchase container into base units (grams or drops) — used by
+ * the "+1 container" stock shortcut and low-stock detection.
+ */
+export function containerBaseUnits(
+  ing: Pick<Ingredient, 'measurementType' | 'category' | 'purchaseSize' | 'purchaseUnit'>,
+): number | null {
+  if (!ing.purchaseSize || ing.purchaseSize <= 0) return null;
+  if (isVolumeIngredient(ing)) return purchaseSizeToDrops(ing.purchaseSize);
+  return purchaseSizeToGrams(ing.purchaseSize, ing.purchaseUnit);
+}
+
 /** Sum raw material COGS for a recipe from ingredient amounts × fractional costs. */
 export function calculateRecipeMaterialCogs(
   recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'customCosts'>,
