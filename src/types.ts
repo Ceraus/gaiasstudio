@@ -223,6 +223,12 @@ export interface AppSettings {
    * backend). The user can turn it off here; it never calls out to the cloud.
    */
   localAiEnabled?: boolean;
+  /** `bundled` = in-app model; `ollama` = network/local Ollama server. */
+  localAiBackend?: 'bundled' | 'ollama';
+  /** Ollama API base URL (e.g. http://192.168.1.10:11434 on your LAN). */
+  ollamaUrl?: string;
+  /** Model tag served by Ollama (e.g. llama3.2, qwen2.5). */
+  ollamaModel?: string;
 
   // ── Guided tours & tips ───────────────────────────────────────────────────
   /** Tour ids the user finished (or skipped) — they stop auto-suggesting. */

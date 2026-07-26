@@ -4,7 +4,7 @@ import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database,
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { useLibraryStore } from '@/store/useLibraryStore';
-import { checkBundledAiStatus, type LocalAiStatus } from '@/lib/localAi';
+import { checkLocalAiStatus, type LocalAiStatus } from '@/lib/localAi';
 import { exportBackup, restoreBackup } from '@/lib/backup';
 
 /** Interface zoom presets. 100% is the default. */
@@ -514,12 +514,12 @@ function LocalAiSection() {
 
   useEffect(() => {
     setStatus(null);
-  }, [settings.localAiEnabled]);
+  }, [settings.localAiEnabled, settings.localAiBackend, settings.ollamaUrl, settings.ollamaModel]);
 
   const testConnection = async () => {
     setTesting(true);
     setStatus(null);
-    const result = await checkBundledAiStatus();
+    const result = await checkLocalAiStatus(settings);
     setStatus(result);
     setTesting(false);
   };
@@ -562,6 +562,51 @@ function LocalAiSection() {
 
       {settings.localAiEnabled && (
         <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+          <div>
+            <label className="label">{t('settings.localAiBackend', 'AI backend')}</label>
+            <select
+              className="input"
+              value={settings.localAiBackend ?? 'bundled'}
+              onChange={(e) =>
+                void updateSettings({
+                  localAiBackend: e.target.value as 'bundled' | 'ollama',
+                })
+              }
+            >
+              <option value="bundled">{t('settings.localAiBundled', 'Built-in (desktop app)')}</option>
+              <option value="ollama">{t('settings.localAiOllama', 'Ollama (network / local)')}</option>
+            </select>
+          </div>
+
+          {settings.localAiBackend === 'ollama' && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div>
+                <label className="label">{t('settings.ollamaUrl', 'Ollama URL')}</label>
+                <input
+                  className="input font-mono text-sm"
+                  placeholder="http://192.168.1.10:11434"
+                  value={settings.ollamaUrl ?? 'http://localhost:11434'}
+                  onChange={(e) => void updateSettings({ ollamaUrl: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">{t('settings.ollamaModel', 'Model')}</label>
+                <input
+                  className="input font-mono text-sm"
+                  placeholder="llama3.2"
+                  value={settings.ollamaModel ?? 'llama3.2'}
+                  onChange={(e) => void updateSettings({ ollamaModel: e.target.value })}
+                />
+              </div>
+              <p className="sm:col-span-2 text-[11px] text-slate-400">
+                {t(
+                  'settings.ollamaNetworkHint',
+                  'For another PC on your network, run Ollama with OLLAMA_HOST=0.0.0.0 and use its IP here.',
+                )}
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

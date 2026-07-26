@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowLeft, Check, Cloud, Keyboard, Layers, Loader2, Prin
 import { useAppStore } from '@/store/useAppStore';
 import { useEditorStore } from '@/store/useEditorStore';
 import { describeSize } from '@/lib/units';
+import { maskLabelPngForTemplate } from '@/lib/labelMask';
 import { editor } from '@/lib/fabric/editorController';
 import { setsRepo } from '@/db/repositories';
 import type { LabelSet } from '@/types';
@@ -41,8 +42,10 @@ export default function EditorHeader() {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  const openExport = () => {
-    setLabelPng(editor.exportLabelPng());
+  const openExport = async () => {
+    const raw = editor.exportLabelPng();
+    const png = template ? await maskLabelPngForTemplate(raw, template) : raw;
+    setLabelPng(png);
     setDesignJson(editor.serialize());
     goto('export');
   };
@@ -106,7 +109,7 @@ export default function EditorHeader() {
             <Keyboard className="h-4 w-4" />
           </button>
 
-          <button className="btn-primary" onClick={openExport}>
+          <button className="btn-primary" onClick={() => void openExport()}>
             <Printer className="h-4 w-4" /> {t('export.title')}
           </button>
         </div>

@@ -157,13 +157,16 @@ export const db = new GaiaDatabase();
 
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'app',
-  language: 'en',
+  language: 'es',
   filenamePrefix: "Gaia's Essences",
   bleedIn: 0.0625,
   safeIn: 0.0625,
   onboarded: false,
   uiScale: 1,
   localAiEnabled: true,
+  localAiBackend: 'bundled',
+  ollamaUrl: 'http://localhost:11434',
+  ollamaModel: 'llama3.2',
   businessName: "Gaia's Essences",
   businessAddress: "1836 Westchester Ave, Unit #282, Bronx, NY 10472",
   contact: 'Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/',

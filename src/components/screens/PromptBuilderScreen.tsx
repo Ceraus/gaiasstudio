@@ -347,7 +347,17 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function PromptBuilderScreen() {
+export interface PromptBuilderScreenProps {
+  /** When true, renders inside Background step (no separate navigation). */
+  embedded?: boolean;
+  /** Called when user picks or auto-imports a background image. */
+  onBackgroundSelect?: (url: string) => void;
+}
+
+export default function PromptBuilderScreen({
+  embedded = false,
+  onBackgroundSelect,
+}: PromptBuilderScreenProps = {}) {
   const { t } = useTranslation();
 
   // ── Store ──────────────────────────────────────────────────────────────────
@@ -484,7 +494,12 @@ export default function PromptBuilderScreen() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const api = (window as any).electronAPI;
     if (!api?.onImageDownloaded) return;
-    const unsub = api.onImageDownloaded(() => loadRecentAiAssets());
+    const unsub = api.onImageDownloaded(({ dataUrl }: { dataUrl: string; filename: string }) => {
+      loadRecentAiAssets();
+      if (embedded && onBackgroundSelect && dataUrl) {
+        onBackgroundSelect(dataUrl);
+      }
+    });
     return () => unsub?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

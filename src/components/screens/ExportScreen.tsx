@@ -5,7 +5,7 @@ import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import { editor, parseTextObjectsFromJson } from '@/lib/fabric/editorController';
 import { recipesRepo, ingredientsRepo, draftsRepo } from '@/db/repositories';
-import type { Ingredient, Recipe } from '@/types';
+import type { Ingredient, Recipe, AveryTemplate } from '@/types';
 import {
   buildCalibrationPdf,
   bumpExportSeq,
@@ -18,7 +18,8 @@ import {
   type ExportNameOptions,
 } from '@/lib/pdfExport';
 import { footprintHeightIn, footprintWidthIn, slotPositionIn } from '@/lib/units';
-import type { AveryTemplate } from '@/types';
+import { maskLabelPngForTemplate } from '@/lib/labelMask';
+import type { LayoutLang } from '@/lib/layoutEngine';
 
 /** Resolve the recipe name shown in export file names. */
 function useExportRecipeName(): string {
@@ -64,8 +65,16 @@ export default function ExportScreen() {
   const goto = useAppStore((s) => s.goto);
   const template = useAppStore((s) => s.template);
   const labelPng = useAppStore((s) => s.labelPng);
+  const setPendingExportLang = useAppStore((s) => s.setPendingExportLang);
   const settings = useAppStore((s) => s.settings);
   const recipeName = useExportRecipeName();
+
+  const [exportLang, setExportLang] = useState<LayoutLang>(() => settings.language ?? 'es');
+  const [previewPng, setPreviewPng] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPreviewPng(labelPng);
+  }, [labelPng]);
 
   const [quantity, setQuantity] = useState(() => template?.perSheet ?? 12);
   const [fillSheet, setFillSheet] = useState(false);
@@ -82,7 +91,7 @@ export default function ExportScreen() {
     [template, quantity, fillSheet],
   );
 
-  if (!template || !labelPng) {
+  if (!template || !previewPng) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
         <p className="text-sm text-slate-500">{t('editor.emptyCanvas')}</p>
@@ -102,7 +111,7 @@ export default function ExportScreen() {
     try {
       const bytes = await buildLabelSheetPdf({
         template,
-        pngDataUrl: labelPng,
+        pngDataUrl: previewPng,
         quantity,
         fillSheet,
         lotCode: lotCode.trim() || undefined,
@@ -120,31 +129,57 @@ export default function ExportScreen() {
     }
   };
 
-  const exportPng = () => {
+  const exportPng = async () => {
     const opts = buildExportOpts(settings.filenamePrefix, recipeName, 'png');
     const name = peekExportName(opts);
-    downloadDataUrl(labelPng, name);
+    const masked = await maskLabelPngForTemplate(previewPng, template);
+    downloadDataUrl(masked, name);
     bumpExportSeq(opts);
     setDoneName(name);
   };
 
+  const applyLabelLanguage = () => {
+    setPendingExportLang(exportLang);
+    goto('editor');
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
-    <div className="flex-1 overflow-y-auto bg-gaia-50">
-      <div className="mx-auto max-w-5xl px-6 py-8">
-        <div className="mb-6 flex items-center gap-3">
-          <button className="icon-btn" onClick={() => goto('editor')}>
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-semibold text-gaia-900">{t('export.title')}</h1>
-            <p className="text-sm text-slate-600">{t('export.subtitle')}</p>
+      <div className="flex min-h-0 flex-1 overflow-hidden bg-gaia-50">
+        <div className="w-[340px] shrink-0 overflow-y-auto border-r border-slate-200 px-4 py-6">
+          <div className="mb-4 flex items-center gap-3">
+            <button className="icon-btn" onClick={() => goto('editor')}>
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div>
+              <h1 className="text-lg font-semibold text-gaia-900">{t('export.title')}</h1>
+              <p className="text-xs text-slate-600">{t('export.subtitle')}</p>
+            </div>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[340px_1fr]">
           <div className="space-y-4">
             <div className="card space-y-4">
+              <div>
+                <label className="label">{t('export.labelLanguage', 'Label language')}</label>
+                <select
+                  className="input"
+                  value={exportLang}
+                  onChange={(e) => setExportLang(e.target.value as LayoutLang)}
+                >
+                  <option value="es">{t('export.langEs', 'Español (label text)')}</option>
+                  <option value="en">{t('export.langEn', 'English (label text)')}</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn-secondary mt-2 w-full text-sm"
+                  onClick={applyLabelLanguage}
+                >
+                  {t('export.applyLabelLanguage', 'Apply language to label')}
+                </button>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {t('export.labelLanguageHint', 'Re-applies ingredients, directions, and warnings in the chosen language.')}
+                </p>
+              </div>
               <div>
                 <label className="label">{t('export.quantity')}</label>
                 <input
@@ -194,7 +229,7 @@ export default function ExportScreen() {
               {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
               {busy ? t('export.exporting') : t('export.exportPdf')}
             </button>
-            <button className="btn-secondary w-full" onClick={exportPng}>
+            <button className="btn-secondary w-full" onClick={() => void exportPng()}>
               <FileImage className="h-4 w-4" /> {t('export.exportPng')}
             </button>
 
@@ -262,15 +297,15 @@ export default function ExportScreen() {
 
             <p className="text-xs text-slate-400">{t('export.tip')}</p>
           </div>
-
-          <SheetPreviewCard
-            template={template}
-            labelPng={labelPng}
-            filled={plan?.total ?? quantity}
-          />
         </div>
+
+        <SheetPreviewCard
+          className="min-h-0 flex-1"
+          template={template}
+          labelPng={previewPng}
+          filled={plan?.total ?? quantity}
+        />
       </div>
-    </div>
       <WorkflowNav
         prevScreen="editor"
         prevLabel={t('workflow.backToEditor')}
@@ -431,14 +466,28 @@ function SheetPreviewCard({
   template,
   labelPng,
   filled,
+  className = '',
 }: {
   template: AveryTemplate;
   labelPng: string;
   filled: number;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [previewH, setPreviewH] = useState(520);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const h = entry.contentRect.height;
+      if (h > 80) setPreviewH(Math.floor(h - 8));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const zoomOut = () =>
     setZoom((z) => ZOOM_STEPS[Math.max(0, ZOOM_STEPS.indexOf(z) - 1)] ?? ZOOM_STEPS[0]);
@@ -450,7 +499,7 @@ function SheetPreviewCard({
   const canZoomIn  = ZOOM_STEPS.indexOf(zoom) < ZOOM_STEPS.length - 1;
 
   return (
-    <div className="card flex flex-col gap-3">
+    <div className={`card flex min-h-0 flex-col gap-3 rounded-none border-0 border-l border-slate-200 shadow-none ${className}`}>
       {/* Toolbar */}
       <div className="flex items-center justify-between">
         <p className="label mb-0">{t('export.sheetPreview')}</p>
@@ -496,15 +545,14 @@ function SheetPreviewCard({
       {/* Scrollable preview area */}
       <div
         ref={scrollRef}
-        className="overflow-auto rounded-lg bg-slate-100"
-        style={{ maxHeight: '70vh' }}
+        className="min-h-0 flex-1 overflow-auto rounded-lg bg-slate-100"
       >
         <div
           className="flex min-h-full min-w-full items-start justify-center p-4"
           style={{ minWidth: 'max-content' }}
         >
           <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
-            <SheetWysiwyg template={template} labelPng={labelPng} filled={filled} />
+            <SheetWysiwyg template={template} labelPng={labelPng} filled={filled} previewH={previewH} />
           </div>
         </div>
       </div>
@@ -520,12 +568,13 @@ function SheetWysiwyg({
   template,
   labelPng,
   filled,
+  previewH,
 }: {
   template: AveryTemplate;
   labelPng: string;
   filled: number;
+  previewH: number;
 }) {
-  const previewH = 460;
   const scale = previewH / template.pageHeightIn;
   const previewW = template.pageWidthIn * scale;
   const fw = footprintWidthIn(template) * scale;

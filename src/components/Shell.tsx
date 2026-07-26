@@ -80,6 +80,23 @@ export default function Shell() {
     return cleanup;
   }, []);
 
+  // Keep in-app navigation on the browser Back/Forward buttons instead of leaving the app.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.history.replaceState({ gaiaScreen: screen }, '', `#/${screen}`);
+    const onPopState = (event: PopStateEvent) => {
+      const target = (event.state as { gaiaScreen?: Screen } | null)?.gaiaScreen;
+      if (target) {
+        useAppStore.setState({ screen: target });
+      } else {
+        useAppStore.setState({ screen: 'welcome' });
+        window.history.replaceState({ gaiaScreen: 'welcome' }, '', '#/welcome');
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [screen]);
+
   const showStepper = STEPPER_SCREENS.includes(screen);
 
   /** Language toggle. */

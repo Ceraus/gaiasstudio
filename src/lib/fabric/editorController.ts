@@ -7,6 +7,12 @@ import { versionsRepo, draftsRepo, recipesRepo, ingredientsRepo } from '@/db/rep
 import { useEditorStore, type LayerInfo, type SelectionInfo, type SaveState } from '@/store/useEditorStore';
 import { useAppStore } from '@/store/useAppStore';
 import { configureFabricOnce, CUSTOM_PROPS } from './fabricConfig';
+import {
+  CIRCLE_INNER_DISC_RATIO,
+  CIRCLE_LEGIBILITY_OPACITY,
+  CIRCLE_SAGE_BASE,
+  isCircleTemplate,
+} from '@/lib/circleLabelTemplate';
 import { drawBleedOverlay, type OverlayConfig } from './overlay';
 import {
   computeResizeGuides,
@@ -163,12 +169,20 @@ class EditorController {
     if (opts.initialJson) {
       await this.load(opts.initialJson);
       if (token !== this.initToken || !this.canvas) return; // a newer init/dispose superseded us
+      // Background chosen on the workflow step must apply even when a saved design exists.
+      const { backgroundImageUrl: bgAfterLoad } = useAppStore.getState();
+      if (bgAfterLoad) {
+        await this.setBackgroundFromUrl(bgAfterLoad);
+        useAppStore.getState().setBackgroundImageUrl(null);
+        if (token !== this.initToken || !this.canvas) return;
+      }
     } else {
       this.addDefaultLayers();
       // Inject background image chosen in the workflow Background step (fresh designs only).
       const { backgroundImageUrl } = useAppStore.getState();
       if (backgroundImageUrl) {
         await this.setBackgroundFromUrl(backgroundImageUrl);
+        useAppStore.getState().setBackgroundImageUrl(null);
         if (token !== this.initToken || !this.canvas) return;
       }
     }
@@ -225,24 +239,33 @@ class EditorController {
    * AI-generated art.
    */
   private buildLegibilityShape(): fabric.FabricObject & Gaia {
+    const isRound = isCircleTemplate(this.template ?? null);
     const common = {
       left: this.trim.left,
       top: this.trim.top,
       originX: 'left' as const,
       originY: 'top' as const,
       fill: '#ffffff',
-      opacity: 0.15,
+      opacity: isRound ? CIRCLE_LEGIBILITY_OPACITY : 0.15,
       stroke: '',
       strokeWidth: 0,
       ...EditorController.LOCKED_PROPS,
     };
     const shape = this.template?.shape;
     if (shape === 'circle' || shape === 'oval') {
-      return new fabric.Ellipse({
-        ...common,
-        rx: this.labelWpx / 2,
-        ry: this.labelHpx / 2,
-      }) as fabric.Ellipse & Gaia;
+      const r = this.labelWpx * CIRCLE_INNER_DISC_RATIO;
+      return new fabric.Circle({
+        left: this.trim.cx,
+        top: this.trim.cy,
+        originX: 'center',
+        originY: 'center',
+        radius: r,
+        fill: '#ffffff',
+        opacity: CIRCLE_LEGIBILITY_OPACITY,
+        stroke: '',
+        strokeWidth: 0,
+        ...EditorController.LOCKED_PROPS,
+      }) as fabric.Circle & Gaia;
     }
     const radius =
       shape === 'rounded-rectangle' ? (this.template?.cornerRadiusIn || 0.1) * EDITOR_PPI : 0;
@@ -268,13 +291,14 @@ class EditorController {
     if (!this.canvas) return;
     this.isRestoring = true;
     try {
-      // Layer 1 — Base: solid white rect covering the label trim zone.
+      // Layer 1 — Base: sage for round labels, white for rectangular.
+      const baseFill = isCircleTemplate(this.template ?? null) ? CIRCLE_SAGE_BASE : '#ffffff';
       const base = new fabric.Rect({
         left: this.trim.left,
         top: this.trim.top,
         width: this.labelWpx,
         height: this.labelHpx,
-        fill: '#ffffff',
+        fill: baseFill,
         stroke: '',
         strokeWidth: 0,
         originX: 'left',
@@ -286,6 +310,10 @@ class EditorController {
       base.name = 'Base';
       base.locked = true;
       this.canvas.add(base);
+
+      if (isCircleTemplate(this.template ?? null)) {
+        this.canvas.backgroundColor = CIRCLE_SAGE_BASE;
+      }
 
       // Layer 2 — Background slot: fully transparent placeholder rect that a
       // real AI/photo background replaces in place (see insertBackgroundImage).
@@ -1602,7 +1630,7 @@ class EditorController {
    * Exposed on window.gaiaEditor so EditorScreen can call it once on mount.
    * Pass an explicit context (e.g. `'back'`) to override this.context.
    */
-  async applyAutoLayout(context?: LabelContext): Promise<void> {
+  async applyAutoLayout(context?: LabelContext, lang?: import('@/lib/layoutEngine').LayoutLang): Promise<void> {
     const { activeRecipeId } = useAppStore.getState();
     if (!activeRecipeId || !this.canvas || !this.template) return;
 
@@ -1615,7 +1643,7 @@ class EditorController {
     // Dynamic import breaks the layoutEngine → editorController → layoutEngine cycle.
     const { applyAutoLayout: runLayout } = await import('@/lib/layoutEngine');
     const appSettings = useAppStore.getState().settings;
-    await runLayout(recipe, ingredients, context ?? this.context, undefined, appSettings);
+    await runLayout(recipe, ingredients, context ?? this.context, lang, appSettings);
   }
 
   // -- helpers used by the auto-layout engine -------------------------------

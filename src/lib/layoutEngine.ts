@@ -2,6 +2,14 @@ import * as fabric from 'fabric';
 import i18next from 'i18next';
 import type { AppSettings, Ingredient, LabelContext, Recipe } from '@/types';
 import { applyCurveToText, editor } from '@/lib/fabric/editorController';
+import {
+  applyCircleBaseTint,
+  circleInnerDiscRadiusPx,
+  circleRingMetrics,
+  CIRCLE_TEXT_HEIGHT_RATIO,
+  CIRCLE_TEXT_WIDTH_RATIO,
+  syncCircleLegibilityDisc,
+} from '@/lib/circleLabelTemplate';
 import { EDITOR_PPI, ptToPx } from '@/lib/units';
 import { loadFont } from '@/lib/fontManager';
 
@@ -128,7 +136,7 @@ export async function applyAutoLayout(
   recipe: Recipe,
   ingredients: Ingredient[],
   context: LabelContext,
-  lang: LayoutLang = 'en',
+  lang?: LayoutLang,
   settings: Partial<AppSettings> = {},
 ) {
   const canvas = editor.canvas;
@@ -146,19 +154,19 @@ export async function applyAutoLayout(
   await Promise.all([
     loadFont(HEADING_FONT),
     loadFont(BODY_FONT),
-    ...(context === 'front' || (isRound && context === 'back') ? [loadFont(ROUND_BACK_FONT)] : []),
+    ...(isRound ? [loadFont(ROUND_BACK_FONT)] : []),
   ]);
 
   clearForLayout();
 
-  if (context === 'front') {
-    layoutFront(recipe, str, settings, isRound);
+  // Every circle/oval uses the same Avery-style stack: background ring,
+  // inner legibility disc, and full formatted regulatory text.
+  if (isRound) {
+    layoutCircleLabel(recipe, ingredients, str, settings, resolvedLang);
+  } else if (context === 'front') {
+    layoutFront(recipe, str, settings, false);
   } else if (context === 'back') {
-    if (isRound) {
-      layoutRoundBack(recipe, ingredients, str, settings);
-    } else {
-      layoutBack(recipe, ingredients, str);
-    }
+    layoutBack(recipe, ingredients, str);
   } else {
     layoutSide(recipe, str);
   }
@@ -333,10 +341,9 @@ function fitBlock(
   return null;
 }
 
-/** `"128 g"` → `"Net Wt. 128g / 4.52 oz"`. Returns '' when there's no weight. */
+/** `"128 g"` → `"Net Wt. 128g / 4.52 oz"`. Falls back to 100g when unset. */
 function formatNetWeight(raw: string | undefined): string {
-  const value = raw?.trim();
-  if (!value) return '';
+  const value = raw?.trim() || '100g';
   const grams = value.match(/(\d+(?:\.\d+)?)\s*g\b/i);
   if (!grams) return `Net Wt. ${value}`;
   const g = parseFloat(grams[1]);
@@ -568,72 +575,91 @@ function layoutBack(recipe: Recipe, ingredients: Ingredient[], str: Str) {
   editor.addCustom(rightCol, 'text', 'Ingredients (2)');
 }
 
+type LinePart = { text: string; bold?: boolean };
+type LogicalLine = { parts: LinePart[] };
+
 /**
- * Back-label layout for circle/oval templates.
- *
- * Adds a circular white legibility overlay at 70% opacity and a single
- * centred text block containing the full ingredient list, directions,
- * warnings, benefits, maker info, net weight, and year — formatted and
- * sized to fit comfortably inside the inscribed area of the overlay.
+ * Canonical round-label layout (Avery 22562-style):
+ *   • Full-bleed background visible in the outer ring
+ *   • Inner white legibility disc (70% opacity)
+ *   • Curved product name in the ring (when space allows)
+ *   • Full formatted text block inside the disc
  */
-function layoutRoundBack(
+function layoutCircleLabel(
   recipe: Recipe,
   ingredients: Ingredient[],
   str: Str,
   settings: Partial<AppSettings>,
+  lang: LayoutLang,
 ) {
   const s = safeRect();
   const fontFamily = ROUND_BACK_FONT;
   const LINE_HEIGHT = 1.25;
 
-  // Circular legibility overlay
-  const safeRadius = Math.min(s.width, s.height) / 2;
-  const overlayRadius = safeRadius * 0.88;
+  applyCircleBaseTint();
 
-  const circleOverlay = new fabric.Circle({
-    radius: overlayRadius,
-    fill: '#ffffff',
-    opacity: 0.70,
-    stroke: '',
-    strokeWidth: 0,
-    originX: 'center',
-    originY: 'center',
-    left: s.cx,
-    top: s.cy,
-  }) as fabric.Circle & { isLegibilityOverlay?: boolean };
-  circleOverlay.isLegibilityOverlay = true;
-  editor.addCustom(circleOverlay as fabric.FabricObject, 'shape', 'Legibility Overlay');
+  const discRadius = circleInnerDiscRadiusPx(editor.labelWpx);
+  syncCircleLegibilityDisc(s.cx, s.cy, discRadius);
 
-  // Inscribed rectangle for text — slightly narrower than the theoretical maximum
-  // so no text clips against the circle edge.
-  const textW = overlayRadius * Math.sqrt(2) * 0.78;
-  const availH = overlayRadius * Math.sqrt(2) * 0.88;
+  const textW = discRadius * 2 * CIRCLE_TEXT_WIDTH_RATIO;
+  const availH = discRadius * 2 * CIRCLE_TEXT_HEIGHT_RATIO;
 
-  // Resolve ingredient names
+  const productName = (recipe.name || str.productName).trim();
+  const { ringMid, ringThickness, ringUsable } = circleRingMetrics(s.width, s.height, discRadius);
+
+  if (ringUsable && productName) {
+    addRingText(productName, {
+      cx: s.cx,
+      ringMid,
+      ringThickness,
+      safeTop: s.top,
+      safeBottom: s.top + s.height,
+      atTop: true,
+      fontFamily: HEADING_FONT,
+      name: 'Product name',
+    });
+  }
+
+  const logicalLines = buildCircleLabelLines(recipe, ingredients, str, settings, lang);
+  placeCircleFormattedText(logicalLines, s.cx, s.cy, textW, availH, fontFamily, LINE_HEIGHT);
+}
+
+/** Builds Ingredients / Directions / Warning / Benefits / Handmade lines. */
+function buildCircleLabelLines(
+  recipe: Recipe,
+  ingredients: Ingredient[],
+  str: Str,
+  settings: Partial<AppSettings>,
+  lang: LayoutLang,
+): LogicalLine[] {
   const byId = new Map(ingredients.map((i) => [i.id, i]));
-  const ingNames = recipe.ingredientIds
+  const glycerinBase = ingredients.find(
+    (i) => i.isSoapBase && /glycerin base \(clear\)/i.test(i.name),
+  );
+  const orderedIds = glycerinBase && !recipe.ingredientIds.includes(glycerinBase.id)
+    ? [glycerinBase.id, ...recipe.ingredientIds]
+    : glycerinBase
+      ? [glycerinBase.id, ...recipe.ingredientIds.filter((id) => id !== glycerinBase.id)]
+      : recipe.ingredientIds;
+  const ingNames = orderedIds
     .map((id) => byId.get(id))
     .filter((i): i is Ingredient => !!i)
     .map((i) => (i.inci?.trim() ? i.inci : i.name));
 
-  // Net-weight line: parse grams and derive oz
+  // Net-weight line: parse grams and derive oz (default 100g)
   let netWtLine = '';
-  if (recipe.netWeight?.trim()) {
-    const gMatch = recipe.netWeight.match(/(\d+(?:\.\d+)?)\s*g\b/i);
-    if (gMatch) {
-      const grams = parseFloat(gMatch[1]);
-      const oz = (grams * 0.035274).toFixed(2);
-      netWtLine = `Net Wt. ${grams}g / ${oz} oz`;
-    } else {
-      netWtLine = `Net Wt. ${recipe.netWeight}`;
-    }
+  const weightRaw = recipe.netWeight?.trim() || '100g';
+  const gMatch = weightRaw.match(/(\d+(?:\.\d+)?)\s*g\b/i);
+  if (gMatch) {
+    const grams = parseFloat(gMatch[1]);
+    const oz = (grams * 0.035274).toFixed(2);
+    netWtLine = `Net Wt. ${grams}g / ${oz} oz`;
+  } else {
+    netWtLine = `Net Wt. ${weightRaw}`;
   }
 
   const year = new Date().getFullYear();
 
-  // Build logical lines with per-span bold flags
-  type LinePart = { text: string; bold?: boolean };
-  type LogicalLine = { parts: LinePart[] };
   const logicalLines: LogicalLine[] = [];
 
   const addBoldLine = (label: string) => logicalLines.push({ parts: [{ text: label, bold: true }] });
@@ -648,8 +674,16 @@ function layoutRoundBack(
   addBlank();
 
   // Section 2 — Directions + Warning (always present; defaults used when recipe leaves them blank)
-  const directionsText = recipe.directions?.trim() || 'Lather, rinse, and enjoy.';
-  const warningText = recipe.warnings?.trim() || 'For external use only. Avoid contact with eyes.';
+  const directionsText =
+    recipe.directions?.trim() ||
+    (lang === 'es'
+      ? 'Enjabona con agua, enjuaga y disfruta.'
+      : 'Lather with water, rinse, and enjoy.');
+  const warningText =
+    recipe.warnings?.trim() ||
+    (lang === 'es'
+      ? 'Solo para uso externo. Evite el contacto con los ojos.'
+      : 'For external use only. Avoid contact with eyes.');
   addInlineBold(str.directionsRound, directionsText);
   addInlineBold(str.warningRound, warningText);
   addBlank();
@@ -677,40 +711,40 @@ function layoutRoundBack(
   }
   addNormal(`${str.handcraftedIn} ${year}`);
 
-  // Assemble the full text string
+  return logicalLines;
+}
+
+function placeCircleFormattedText(
+  logicalLines: LogicalLine[],
+  cx: number,
+  cy: number,
+  textW: number,
+  availH: number,
+  fontFamily: string,
+  lineHeight: number,
+) {
   const textLines = logicalLines.map((l) => l.parts.map((p) => p.text).join(''));
   const fullText = textLines.join('\n');
 
-  // Build Fabric per-character styles for bold spans
-  // Fabric v6 styles: { [lineIndex]: { [charIndex]: StyleDeclaration } }
   type FabricStyleDecl = { fontWeight?: string; fontSize?: number };
   const stylesObj: Record<number, Record<number, FabricStyleDecl>> = {};
 
   logicalLines.forEach((line, lineIdx) => {
-    const lineText = textLines[lineIdx];
     let charOffset = 0;
-    const isIngredientHeader = lineIdx === 0; // INGREDIENTS: header gets a size bump
+    const isIngredientHeader = lineIdx === 0;
 
     for (const part of line.parts) {
       if (part.bold || isIngredientHeader) {
         if (!stylesObj[lineIdx]) stylesObj[lineIdx] = {};
         for (let c = 0; c < part.text.length; c++) {
-          const decl: FabricStyleDecl = { fontWeight: 'bold' };
-          // INGREDIENTS header line gets a slightly larger font size
-          if (isIngredientHeader && lineText.length > 0) {
-            decl.fontSize = undefined; // set after we know pt; placeholder
-          }
-          stylesObj[lineIdx][charOffset + c] = decl;
+          stylesObj[lineIdx][charOffset + c] = { fontWeight: 'bold' };
         }
       }
       charOffset += part.text.length;
     }
   });
 
-  // Auto-scale font to fit the available inscribed area
-  const pt = fitFont(fullText, textW, availH, 11, 4.5, fontFamily, LINE_HEIGHT);
-
-  // Now fix the INGREDIENTS header font size (1.2× body)
+  const pt = fitFont(fullText, textW, availH, 11, 4.5, fontFamily, lineHeight);
   const headerPt = pt * 1.2;
   if (stylesObj[0]) {
     const headerLineLen = textLines[0].length;
@@ -724,15 +758,15 @@ function layoutRoundBack(
     fontFamily,
     fontSize: ptToPx(pt),
     fill: INK,
-    lineHeight: LINE_HEIGHT,
+    lineHeight,
     textAlign: 'center',
     originX: 'center',
     originY: 'center',
-    left: s.cx,
-    top: s.cy,
+    left: cx,
+    top: cy,
     styles: stylesObj as Record<number, Record<number, object>>,
   });
-  editor.addCustom(textbox, 'text', 'Back label text');
+  editor.addCustom(textbox, 'text', 'Label text');
 }
 
 function layoutSide(recipe: Recipe, str: Str) {

@@ -9,7 +9,7 @@ import {
   marginHealth,
   MARGIN_HEALTH_CLASSES,
 } from '@/lib/inventoryMath';
-import { suggestBenefitStatement } from '@/lib/localAi';
+import { suggestBenefitStatement, suggestRemixRecipe } from '@/lib/localAi';
 import { getIngredientDisplayName } from '@/lib/ingredientI18n';
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
@@ -122,13 +122,16 @@ const EARTH_TONE_ROWS: Array<{ bg: string; border: string }> = [
   { bg: 'bg-emerald-50/60',  border: 'border-emerald-100' },  // moss
 ];
 
+const BUSINESS_FOOTER =
+  'Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/';
+
 const emptyForm: RecipeForm = {
   name: '',
   benefit: '',
-  netWeight: '',
-  directions: 'Lather with water and apply to skin. Rinse thoroughly.',
-  warnings: 'For external use only. Avoid contact with eyes.',
-  footer: '',
+  netWeight: '100g',
+  directions: 'Enjabona con agua y aplica sobre la piel. Enjuaga bien.',
+  warnings: 'Solo para uso externo. Evite el contacto con los ojos.',
+  footer: BUSINESS_FOOTER,
   ingredientIds: [],
   ingredientAmounts: {},
   color: undefined,
@@ -162,6 +165,7 @@ export default function RecipesScreen() {
   const [showIncompleteDialog, setShowIncompleteDialog] = useState(false);
   const [highlightMissing, setHighlightMissing] = useState(false);
   const [recipePage, setRecipePage] = useState(0);
+  const [remixing, setRemixing] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -317,14 +321,18 @@ export default function RecipesScreen() {
     setEditingSuggestion(false);
     setSuggestingBenefit(true);
     try {
-      const result = await suggestBenefitStatement({
-        recipeName: form.name,
-        ingredients: selectedIngredientsForSuggest.map((i) => ({
-          name: i.name,
-          category: i.category,
-          benefit: i.benefit,
-        })),
-      });
+      const result = await suggestBenefitStatement(
+        {
+          recipeName: form.name,
+          ingredients: selectedIngredientsForSuggest.map((i) => ({
+            name: i.name,
+            category: i.category,
+            benefit: i.benefit,
+          })),
+          language: settings.language,
+        },
+        settings,
+      );
       if (result.ok && result.suggestion) {
         setBenefitSuggestion(result.suggestion);
       } else {
@@ -332,6 +340,49 @@ export default function RecipesScreen() {
       }
     } finally {
       setSuggestingBenefit(false);
+    }
+  };
+
+  const handleAutoRemix = async () => {
+    setRemixing(true);
+    try {
+      const glycerinBase = ingredients.find(
+        (i) => i.isSoapBase && /glycerin base \(clear\)/i.test(i.name),
+      );
+      const pool = ingredients.filter((i) => i.active !== false && !i.isSoapBase);
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      const extraCount = 2 + Math.floor(Math.random() * 3);
+      const extraIds = shuffled.slice(0, extraCount).map((i) => i.id);
+      const ids = glycerinBase
+        ? [glycerinBase.id, ...extraIds.filter((id) => id !== glycerinBase.id)]
+        : extraIds;
+      const names = ids
+        .map((id) => ingredients.find((i) => i.id === id)?.name)
+        .filter((n): n is string => !!n);
+
+      let remixName = `Remix ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+      let remixBenefit = 'Artesanal y aromático';
+      if (settings.localAiEnabled && names.length > 0) {
+        const ai = await suggestRemixRecipe(names, settings);
+        if (ai?.name) remixName = ai.name;
+        if (ai?.benefit) remixBenefit = ai.benefit;
+      }
+
+      setEditingId(null);
+      setForm({
+        ...emptyForm,
+        name: remixName,
+        benefit: remixBenefit,
+        ingredientIds: ids,
+        netWeight: '100g',
+        footer: BUSINESS_FOOTER,
+      });
+      setHighlightMissing(false);
+      setBenefitSuggestion(null);
+      setEditingSuggestion(false);
+      setBenefitSuggestError(null);
+    } finally {
+      setRemixing(false);
     }
   };
 
@@ -439,9 +490,21 @@ export default function RecipesScreen() {
             <h1 className="text-2xl font-semibold">{t('recipes.title')}</h1>
             <p className="mt-1 max-w-2xl text-sm text-gaia-100">{t('recipes.subtitle')}</p>
           </div>
-          <button className="shrink-0 rounded-xl bg-white/20 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/30" onClick={newRecipe}>
-            <Plus className="inline-block h-4 w-4 mr-1" /> {t('recipes.new')}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              className="shrink-0 rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/20 disabled:opacity-60"
+              onClick={() => void handleAutoRemix()}
+              disabled={remixing || ingredients.length === 0}
+              title={t('recipes.autoRemixHint', 'Random glycerin-base recipe with AI-suggested name & benefit')}
+            >
+              {remixing ? <Loader2 className="inline-block h-4 w-4 animate-spin" /> : <Sparkles className="inline-block h-4 w-4 mr-1" />}
+              {t('recipes.autoRemix', 'Auto Remix')}
+            </button>
+            <button className="shrink-0 rounded-xl bg-white/20 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/30" onClick={newRecipe}>
+              <Plus className="inline-block h-4 w-4 mr-1" /> {t('recipes.new')}
+            </button>
+          </div>
         </div>
       </div>
 

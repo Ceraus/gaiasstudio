@@ -22,7 +22,6 @@ import {
   Image as ImageIcon,
   Loader2,
   Search,
-  Sparkles,
   Square,
   Trash2,
   Upload,
@@ -32,6 +31,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { assetsRepo } from '@/db/repositories';
 import type { AssetRecord } from '@/types';
+import PromptBuilderScreen from '@/components/screens/PromptBuilderScreen';
 import WorkflowNav from '@/components/WorkflowNav';
 import { searchStock, fetchStockPhotoAsDataUrl, triggerUnsplashDownload, type StockPhoto } from '@/lib/stock';
 import { isElectronWithBridge } from '@/lib/autoImport';
@@ -128,7 +128,9 @@ export default function BackgroundScreen() {
         {tab === 'myPhotos' && <MyPhotosTab onSelect={handleSelect} />}
         {tab === 'library'  && <LibraryTab  onSelect={handleSelect} />}
         {tab === 'stock'    && <StockTab    onSelect={handleSelect} settings={settings} />}
-        {tab === 'ai'       && <AIPromptTab onSelect={handleSelect} />}
+        {tab === 'ai'       && (
+          <PromptBuilderScreen embedded onBackgroundSelect={handleSelect} />
+        )}
       </div>
 
       {/* Workflow bottom bar */}
@@ -707,60 +709,6 @@ function StockTab({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// AI Prompt Builder tab — navigates to the full PromptBuilderScreen
-// ---------------------------------------------------------------------------
-
-function AIPromptTab({ onSelect }: { onSelect: (url: string) => void }) {
-  const { t } = useTranslation();
-  const goto = useAppStore((s) => s.goto);
-  const [recentAssets, setRecentAssets] = useState<AssetRecord[]>([]);
-
-  useEffect(() => {
-    assetsRepo.all().then((all) => {
-      setRecentAssets(all.slice(-6).reverse());
-    });
-  }, []);
-
-  return (
-    <div className="flex h-full flex-col items-center overflow-y-auto bg-gaia-50 p-8">
-      {/* Main CTA card */}
-      <div className="w-full max-w-lg rounded-2xl border border-gaia-200 bg-white p-6 shadow-sm">
-        <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gaia-100">
-            <Sparkles className="h-5 w-5 text-gaia-600" />
-          </div>
-          <div>
-            <h2 className="font-semibold text-slate-800">
-              {t('background.aiPrompt', 'AI Prompt Builder')}
-            </h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              {t('background.aiPromptTip', 'Generate a custom background with AI, then import it here.')}
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={() => goto('promptBuilder')}
-          className="btn btn-primary flex w-full items-center justify-center gap-2 py-3 text-sm font-semibold"
-        >
-          <Sparkles className="h-4 w-4 shrink-0" />
-          {t('background.openPromptBuilder', 'Open AI Prompt Builder →')}
-        </button>
-      </div>
-
-      {/* Recent assets preview */}
-      {recentAssets.length > 0 && (
-        <div className="mt-6 w-full max-w-lg">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
-            Recent Images
-          </p>
-          <AssetGrid assets={recentAssets} onSelect={(a) => onSelect(a.dataUrl)} />
-        </div>
-      )}
     </div>
   );
 }

@@ -51,6 +51,9 @@ interface AppState {
   /** Background image URL chosen in the Background step (data URL or remote URL). */
   backgroundImageUrl: string | null;
 
+  /** When set, editor re-applies auto-layout in this language then returns to export. */
+  pendingExportLang: 'en' | 'es' | null;
+
   /** Designs queued from the Workspace for a mixed (ink-saving) print sheet. */
   batchDraftIds: string[];
 
@@ -60,6 +63,7 @@ interface AppState {
   setBatchDraftIds: (ids: string[]) => void;
   setPromptBuilderOutput: (prompt: string | null) => void;
   setBackgroundImageUrl: (url: string | null) => void;
+  setPendingExportLang: (lang: 'en' | 'es' | null) => void;
   /** Persist a chosen template + context to the store without navigating to the editor.
    *  Used by the WorkflowNav "Next" button so the workflow stepper gate sees a template. */
   setTemplate: (template: AveryTemplate, context: LabelContext) => void;
@@ -85,14 +89,21 @@ export const useAppStore = create<AppState>((set) => ({
   activeRecipeId: null,
   promptBuilderOutput: null,
   backgroundImageUrl: null,
+  pendingExportLang: null,
   batchDraftIds: [],
 
-  goto: (screen) => set((s) => ({ previousScreen: s.screen, screen })),
+  goto: (screen) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ gaiaScreen: screen }, '', `#/${screen}`);
+    }
+    set((s) => ({ previousScreen: s.screen, screen }));
+  },
   setActiveRecipeId: (id) => set({ activeRecipeId: id }),
   setActiveDraftId: (id) => set({ activeDraftId: id }),
   setBatchDraftIds: (ids) => set({ batchDraftIds: ids }),
   setPromptBuilderOutput: (prompt) => set({ promptBuilderOutput: prompt }),
   setBackgroundImageUrl: (url) => set({ backgroundImageUrl: url }),
+  setPendingExportLang: (lang) => set({ pendingExportLang: lang }),
   setTemplate: (template, context) => set({ template, context }),
 
   startNewDesign: (template, context) =>

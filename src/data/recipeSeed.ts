@@ -21,149 +21,152 @@ interface RecipeDef {
   ingredientNames: string[];
   benefit: string;
   directions?: string;
+  netWeight?: string;
 }
+
+const GLYCERIN_BASE = 'Glycerin Base (Clear)';
 
 const RECIPE_SEED: RecipeDef[] = [
   {
     name: 'Sandalwood Bliss',
     ingredientNames: ['Shea Butter', 'Coconut Oil', 'Honey Powder', 'Rose Petal Fragrance Oil'],
-    benefit: 'Moisturizing & Aromatic',
-    directions: 'Sandalwood inspired',
+    benefit: 'Aromático y suave',
+    directions: 'Inspirado en sándalo',
   },
   {
     name: 'Rose Petal',
     ingredientNames: ['Rose Petals', 'Mango Butter', 'Coconut Oil', 'Rose Petal Fragrance Oil', 'Beet Root Powder'],
-    benefit: 'Romantic & Moisturizing',
+    benefit: 'Romántico y cremoso',
   },
   {
     name: 'Ocean Dreams',
     ingredientNames: ['Ocean Breeze Fragrance Oil', 'Cocoa Butter', 'Argan Oil', 'Spirulina Powder'],
-    benefit: 'Fresh & Hydrating',
+    benefit: 'Fresco y ligero',
   },
   {
     name: 'Watermelon Fresh',
     ingredientNames: ['Watermelon FO', 'Mango Butter', 'Grapeseed Oil'],
-    benefit: 'Light & Refreshing',
+    benefit: 'Ligero y refrescante',
   },
   {
     name: 'Rice & Geranium',
     ingredientNames: ['Sweet Almond Oil', 'Rice Bran Powder', 'Honey Powder', 'Geranium EO'],
-    benefit: 'Brightening & Balancing',
+    benefit: 'Floral y equilibrado',
   },
   {
     name: 'Coffee Scrub',
     ingredientNames: ['Ground Coffee', 'Shea Butter', 'Sweet Almond Oil'],
-    benefit: 'Invigorating Exfoliant',
+    benefit: 'Exfoliante aromático',
   },
   {
     name: 'Rose Garden',
     ingredientNames: ['Mango Butter', 'Rose Petals', 'Rosehip Oil', 'Rose Petal Fragrance Oil'],
-    benefit: 'Luxurious & Anti-Aging',
+    benefit: 'Lujoso y delicado',
   },
   {
     name: 'Aloe Fresh',
     ingredientNames: ['Aloe Vera', 'Vitamin E Oil', 'Coconut Oil'],
-    benefit: 'Soothing & Hydrating',
+    benefit: 'Suave y reconfortante',
   },
   {
     name: 'Golden Turmeric',
     ingredientNames: ['Turmeric Powder', 'Coconut Oil', 'Lavender EO', 'Vitamin E Oil'],
-    benefit: 'Brightening & Anti-Inflammatory',
+    benefit: 'Cálido y especiado',
   },
   {
     name: 'Detox Charcoal',
     ingredientNames: ['Activated Charcoal', 'Tea Tree EO', 'Eucalyptus EO'],
-    benefit: 'Deep Cleansing & Purifying',
+    benefit: 'Fresco y herbal',
   },
   {
     name: 'Lavender Dreams',
     ingredientNames: ['Lavender Fragrance Oil', 'Shea Butter', 'Coconut Oil', 'Butterfly Pea Flower', 'White Kaolin Clay'],
-    benefit: 'Calming & Cleansing',
+    benefit: 'Calmante y floral',
   },
   {
     name: 'Mango Peach',
     ingredientNames: ['Grapefruit Mango FO', 'Mango Butter', 'Jojoba Oil', 'Annatto Powder'],
-    benefit: 'Tropical & Nourishing',
+    benefit: 'Tropical y cremoso',
   },
   {
     name: 'Chia Pineapple',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Turmeric Powder', 'Citrus Burst Fragrance Oil'],
-    benefit: 'Brightening & Energizing',
+    benefit: 'Cítrico y vibrante',
   },
   {
     name: 'Chia Watermelon',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Spirulina Powder', 'Watermelon FO'],
-    benefit: 'Refreshing & Hydrating',
+    benefit: 'Refrescante y ligero',
   },
   {
     name: 'Chia Cherry',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Butterfly Pea Flower', 'Cherry Almond Fragrance Oil'],
-    benefit: 'Sweet & Antioxidant-Rich',
+    benefit: 'Dulce y afrutado',
   },
   {
     name: 'Chia Mango Peach',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Annatto Powder', 'Grapefruit Mango FO'],
-    benefit: 'Tropical & Omega-Rich',
+    benefit: 'Tropical y suave',
   },
   {
     name: 'Chia Strawberry',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Beet Root Powder', 'Strawberry FO'],
-    benefit: 'Sweet & Nourishing',
+    benefit: 'Dulce y cremoso',
   },
   {
     name: 'Chia Apple',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Madder Root Powder', 'Apple FO'],
-    benefit: 'Crisp & Antioxidant',
+    benefit: 'Fresco y frutal',
   },
   {
     name: 'Chia Passion Fruit',
     ingredientNames: ['Chia Seed', 'Vitamin E Oil', 'Butterfly Pea Flower', 'Passion Fruit FO'],
-    benefit: 'Exotic & Nourishing',
+    benefit: 'Exótico y floral',
   },
   {
     name: 'Coconut Scrub',
     ingredientNames: ['Coconut Oil', 'Colloidal Oatmeal'],
-    benefit: 'Tropical Exfoliant',
+    benefit: 'Exfoliante tropical',
   },
   {
     name: 'Rice & Honey',
     ingredientNames: ['Rice Bran Powder', 'Honey Powder', 'Vitamin E Oil', 'White Kaolin Clay'],
-    benefit: 'Brightening & Clarifying',
+    benefit: 'Suave y miel',
   },
   {
     name: 'Oatmeal Honey',
     ingredientNames: ['Colloidal Oatmeal', 'Shea Butter', 'Honey Powder', 'Vitamin E Oil'],
-    benefit: 'Soothing & Deeply Moisturizing',
+    benefit: 'Reconfortante y nutritivo',
   },
   {
     name: 'Coffee Turmeric',
     ingredientNames: ['Ground Coffee', 'Turmeric Powder', 'Vitamin E Oil'],
-    benefit: 'Energizing & Anti-Inflammatory',
+    benefit: 'Energizante y especiado',
   },
   {
     name: 'Argan Mango Peach',
     ingredientNames: ['Mango Butter', 'Argan Oil', 'Grapefruit Mango FO'],
-    benefit: 'Luxurious & Tropical',
+    benefit: 'Lujoso y tropical',
   },
   {
     name: 'Shea Rose',
     ingredientNames: ['Shea Butter', 'Sweet Almond Oil', 'Rose Petal Fragrance Oil'],
-    benefit: 'Rich & Romantic',
+    benefit: 'Rico y romántico',
   },
   {
     name: 'Calendula Gentle',
     ingredientNames: ['Calendula', 'Sweet Almond Oil', 'Lavender Herb'],
-    benefit: 'Ultra-Gentle & Soothing',
+    benefit: 'Extra suave y delicado',
   },
   {
     name: 'Oatmeal Vanilla',
     ingredientNames: ['Colloidal Oatmeal', 'Honey Powder', 'Sweet Almond Oil', 'Vanilla Powder', 'Vitamin E Oil'],
-    benefit: 'Comforting & Nourishing',
+    benefit: 'Acogedor y cremoso',
   },
   {
     name: 'Chamomile Calm',
     ingredientNames: ['Chamomile', 'Sweet Almond Oil', 'Lavender EO', 'Vitamin E Oil'],
-    benefit: 'Calming & Gentle',
+    benefit: 'Calmante y suave',
   },
 ];
 
@@ -187,6 +190,7 @@ async function populateSeedRecipes(replaceExisting: boolean): Promise<number> {
   // Collect every ingredient name referenced across all recipes.
   const needed = new Set<string>();
   for (const recipe of RECIPE_SEED) {
+    needed.add(GLYCERIN_BASE.toLowerCase().trim());
     for (const name of recipe.ingredientNames) {
       needed.add(name.toLowerCase().trim());
     }
@@ -224,7 +228,8 @@ async function populateSeedRecipes(replaceExisting: boolean): Promise<number> {
   // ── Step 3: Create recipe records ─────────────────────────────────────────
   const recipeNow = Date.now();
   const recipes = RECIPE_SEED.map((r) => {
-    const ingredientIds = r.ingredientNames
+    const names = [GLYCERIN_BASE, ...r.ingredientNames.filter((n) => n !== GLYCERIN_BASE)];
+    const ingredientIds = names
       .map((n) => nameToId.get(n.toLowerCase().trim()))
       .filter((id): id is string => id !== undefined);
     return {
@@ -233,6 +238,7 @@ async function populateSeedRecipes(replaceExisting: boolean): Promise<number> {
       ingredientIds,
       benefit: r.benefit,
       directions: r.directions,
+      netWeight: r.netWeight ?? '100g',
       createdAt: recipeNow,
       updatedAt: recipeNow,
     };

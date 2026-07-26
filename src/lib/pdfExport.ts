@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import type { AveryTemplate } from '@/types';
+import { maskLabelPngForTemplate } from '@/lib/labelMask';
 import {
   footprintHeightIn,
   footprintWidthIn,
@@ -59,7 +60,8 @@ export async function buildLabelSheetPdf({
   lotCode,
 }: BuildPdfArgs): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
-  const png = await doc.embedPng(pngDataUrl);
+  const maskedPng = await maskLabelPngForTemplate(pngDataUrl, template);
+  const png = await doc.embedPng(maskedPng);
   const lot = lotCode?.trim();
   const lotFont = lot ? await doc.embedFont(StandardFonts.Helvetica) : null;
   const lotColor = rgb(0.32, 0.35, 0.32);
@@ -236,7 +238,9 @@ export async function buildMixedSheetPdf({
   const doc = await PDFDocument.create();
   // Each distinct design is embedded once and re-drawn, keeping the PDF small
   // even when a sheet holds 80 stickers.
-  const embedded = await Promise.all(items.map((item) => doc.embedPng(item.pngDataUrl)));
+  const embedded = await Promise.all(
+    items.map((item) => maskLabelPngForTemplate(item.pngDataUrl, template).then((url) => doc.embedPng(url))),
+  );
 
   const pageWpt = inToPt(template.pageWidthIn);
   const pageHpt = inToPt(template.pageHeightIn);
