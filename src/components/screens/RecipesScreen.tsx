@@ -466,7 +466,7 @@ export default function RecipesScreen() {
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="mt-2 grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
           {/* Recipe list */}
-          <div className="space-y-2">
+          <div className="space-y-2" data-tour="recipe-list">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               {t('recipes.yourRecipes', 'Your Recipes')}
             </p>

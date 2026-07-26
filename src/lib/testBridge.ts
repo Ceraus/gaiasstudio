@@ -11,6 +11,7 @@
 import type { AveryDataset, Ingredient, LabelContext, Recipe } from '@/types';
 import { useAppStore } from '@/store/useAppStore';
 import { useEditorStore } from '@/store/useEditorStore';
+import { useTourStore } from '@/store/useTourStore';
 import dataset from '@/data/averyTemplates.json';
 
 interface GaiaEditorLike {
@@ -217,5 +218,6 @@ if (typeof window !== 'undefined') {
   (window as unknown as { gaiaTestStores: unknown }).gaiaTestStores = {
     useAppStore,
     useEditorStore,
+    useTourStore,
   };
 }

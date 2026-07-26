@@ -1,24 +1,26 @@
 import { useTranslation } from 'react-i18next';
 import { Download, Image as ImageIcon, LayoutTemplate, Sparkles, X } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useTourStore } from '@/store/useTourStore';
 
 /**
- * First-run coach marks. A single, friendly, dismissible card that walks a
- * non-technical maker through the whole flow. The dismiss state lives in
- * settings so it never nags again.
+ * First-run welcome card. The primary action hands off to the full guided
+ * tour (TourOverlay); dismissing just marks onboarding done. Both paths are
+ * always recoverable from the Help hub. The dismiss state lives in settings
+ * so it never nags again.
  */
 export default function OnboardingCoach() {
   const { t } = useTranslation();
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
-  const goto = useAppStore((s) => s.goto);
+  const startTour = useTourStore((s) => s.start);
 
   if (settings.onboarded) return null;
 
   const dismiss = () => void updateSettings({ onboarded: true });
   const start = () => {
     void updateSettings({ onboarded: true });
-    goto('template');
+    startTour('getting-started');
   };
 
   const steps = [
@@ -67,9 +69,12 @@ export default function OnboardingCoach() {
               {t('onboarding.dismiss')}
             </button>
             <button className="btn-primary w-full sm:w-auto" onClick={start}>
-              {t('onboarding.start')}
+              {t('onboarding.startTour', 'Show me around')}
             </button>
           </div>
+          <p className="mt-3 text-center text-[11px] text-slate-400">
+            {t('onboarding.hubHint', 'You can replay every walkthrough later from the ? button in the header.')}
+          </p>
         </div>
       </div>
     </div>

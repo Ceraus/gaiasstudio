@@ -205,7 +205,7 @@ export default function TemplateScreen() {
   // ── Template grid renderer ────────────────────────────────────────────────
   function TemplateGrid({ templates }: { templates: AveryTemplate[] }) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4" data-tour="template-grid">
         {templates.map((tpl) => (
           <TemplateCard
             key={tpl.id}

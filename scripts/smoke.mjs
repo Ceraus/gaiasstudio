@@ -573,6 +573,44 @@ async function main() {
       workspace.headers.join(' / '),
     );
 
+    // --- N0. Guided tour: spotlight, navigation, completion -------------------
+    const tourRun = await evalAsync(page, async () => {
+      const { useTourStore, useAppStore } = window.gaiaTestStores;
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      useTourStore.getState().start('getting-started');
+      await wait(120);
+      const started = useTourStore.getState().activeTourId === 'getting-started';
+
+      // Step 2 spotlights the header nav tabs — advance and verify the overlay
+      // found its data-tour target (the spotlight ring renders a shadow box).
+      useTourStore.getState().next();
+      await wait(600);
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      const spotlight = !!dialog && !!document.querySelector('[data-tour="nav-tabs"]');
+
+      // Jumping a screen-bound step navigates the app (step 4 → template).
+      useTourStore.getState().next(); // step 3 (new-label)
+      useTourStore.getState().next(); // step 4 → navigates to template
+      await wait(600);
+      const navigated = useAppStore.getState().screen === 'template';
+
+      // Finishing marks the tour completed in settings.
+      useTourStore.getState().finish();
+      await wait(250);
+      const completed = (useAppStore.getState().settings.completedTours ?? []).includes('getting-started');
+      const closed = useTourStore.getState().activeTourId === null;
+
+      // Clean up for any later checks.
+      await useAppStore.getState().updateSettings({ completedTours: [] });
+      useAppStore.getState().goto('welcome');
+      return { started, spotlight, navigated, completed, closed };
+    });
+    check('guided tour starts', tourRun.started);
+    check('tour overlay renders with its target', tourRun.spotlight);
+    check('screen-bound tour step navigates the app', tourRun.navigated);
+    check('finishing the tour marks it completed', tourRun.completed && tourRun.closed);
+
     // --- N. Full backup → restore round trip ---------------------------------
     // Seed some workspace data first so the round trip moves real rows.
     const backup = await evalAsync(page, async () => {

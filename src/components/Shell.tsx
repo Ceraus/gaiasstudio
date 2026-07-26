@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BookOpen, ClipboardList, FileStack, FlaskConical, Layers,
+  BookOpen, ClipboardList, FileStack, FlaskConical, HelpCircle, Layers,
   Leaf, Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
 import { useAppStore, type Screen } from '@/store/useAppStore';
@@ -18,6 +18,8 @@ import DraftsScreen from '@/components/screens/DraftsScreen';
 import OnboardingCoach from '@/components/OnboardingCoach';
 import WorkflowStepper from '@/components/WorkflowStepper';
 import DebugPanel from '@/components/debug/DebugPanel';
+import HelpHub from '@/components/HelpHub';
+import TourOverlay from '@/components/tour/TourOverlay';
 import { startAutoImport, onAutoImportToast } from '@/lib/autoImport';
 import { maybeRunAutoBackup } from '@/lib/backup';
 import { seedRecipes } from '@/data/recipeSeed';
@@ -63,6 +65,7 @@ export default function Shell() {
   const settings       = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const { t }          = useTranslation();
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const LIBRARY_TABS = BASE_LIBRARY_TABS.filter(
     (tab) => !tab.optional || settings?.showLabelSets
@@ -137,7 +140,7 @@ export default function Shell() {
             tab's top-right corner (overflow-x-auto forces overflow-y to
             compute as auto too, per the CSS spec, cropping that overhang). */}
         <div className="min-w-0 flex-1">
-          <nav className="flex items-center justify-start gap-0.5">
+          <nav className="flex items-center justify-start gap-0.5" data-tour="nav-tabs">
             {LIBRARY_TABS.map(({ id, labelKey, defaultLabel, icon: Icon }) => {
               const isActive    = screen === id;
               const hasDraftWip = id === 'drafts' && !!activeDraftId;
@@ -180,6 +183,7 @@ export default function Shell() {
           <button
             onClick={() => goto('template')}
             className="btn btn-primary flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm"
+            data-tour="new-label"
           >
             <Plus className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline">{t('nav.newLabel', 'New Label')}</span>
@@ -195,6 +199,15 @@ export default function Shell() {
           >
             <Sparkles className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline">{t('nav.promptBuilder', 'AI Prompt')}</span>
+          </button>
+          <button
+            onClick={() => setHelpOpen(true)}
+            title={t('nav.help', 'Help & walkthroughs')}
+            aria-label={t('nav.help', 'Help & walkthroughs')}
+            className="btn btn-ghost shrink-0 p-2"
+            data-tour="help"
+          >
+            <HelpCircle className="h-4 w-4" />
           </button>
           <button
             onClick={() => goto('settings')}
@@ -238,6 +251,8 @@ export default function Shell() {
       </main>
 
       <OnboardingCoach />
+      <HelpHub open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <TourOverlay />
       <AutoImportToast />
       <DebugPanel />
     </div>

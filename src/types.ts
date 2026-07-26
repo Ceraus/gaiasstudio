@@ -223,6 +223,12 @@ export interface AppSettings {
    * backend). The user can turn it off here; it never calls out to the cloud.
    */
   localAiEnabled?: boolean;
+
+  // ── Guided tours & tips ───────────────────────────────────────────────────
+  /** Tour ids the user finished (or skipped) — they stop auto-suggesting. */
+  completedTours?: string[];
+  /** Tip banner ids permanently dismissed with "Got it". */
+  dismissedTips?: string[];
 }
 
 // ---------------------------------------------------------------------------
