@@ -166,5 +166,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localAiEnabled: true,
   businessName: "Gaia's Essences",
   businessAddress: "1836 Westchester Ave, Unit #282, Bronx, NY 10472",
-  contact: 'Rosa Suarez · https://www.gaiasessences.com/',
+  contact: 'Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/',
 };

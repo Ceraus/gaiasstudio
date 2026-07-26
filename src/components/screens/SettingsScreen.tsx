@@ -270,7 +270,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.contact', 'Contact Info')}</label>
               <input
                 className="input"
-                placeholder="e.g. Rosa Suarez · https://www.gaiasessences.com/"
+                placeholder="e.g. Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/"
                 value={settings.contact ?? ''}
                 onChange={(e) => void updateSettings({ contact: e.target.value })}
               />
