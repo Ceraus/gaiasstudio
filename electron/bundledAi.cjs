@@ -8,7 +8,7 @@
 // node-llama-cpp is an ESM-only native-addon package; this file stays
 // CommonJS (like the rest of electron/) and uses dynamic import() to load it.
 //
-// Scope: same narrow copywriting-assist prompt as the Ollama backend in
+// Scope: narrow copywriting-assist prompt only, invoked from
 // src/lib/localAi.ts. Never used for COGS/pricing or INCI/compliance text.
 const path = require('path');
 const fs = require('fs');

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Trash2, WifiOff, X, XCircle, ZoomIn } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Trash2, WifiOff, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useLibraryStore } from '@/store/useLibraryStore';
-import { checkBundledAiStatus, checkOllamaStatus, type LocalAiStatus } from '@/lib/localAi';
+import { checkBundledAiStatus, type LocalAiStatus } from '@/lib/localAi';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -43,6 +43,30 @@ export default function SettingsScreen() {
     a.download = `gaia-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceResult, setMaintenanceResult] = useState<string | null>(null);
+
+  const runRosaMaintenance = async () => {
+    if (!window.confirm(t('settings.rosaMaintenanceConfirm'))) return;
+    setMaintenanceBusy(true);
+    setMaintenanceResult(null);
+    try {
+      const { runRosaMaintenance: run } = await import('@/lib/maintenance');
+      const result = await run();
+      await loadLibrary();
+      setMaintenanceResult(
+        t('settings.rosaMaintenanceDone', {
+          deactivated: result.ingredientsDeactivated,
+          restored: result.recipesRestored,
+        }),
+      );
+    } catch (err) {
+      setMaintenanceResult(String(err));
+    } finally {
+      setMaintenanceBusy(false);
+    }
   };
 
   const clearAll = async () => {
@@ -118,7 +142,7 @@ export default function SettingsScreen() {
               value={settings.filenamePrefix}
               onChange={(e) =>
                 void updateSettings({
-                  filenamePrefix: e.target.value.replace(/[^\w-]/g, '').toUpperCase().slice(0, 12) || 'ROSA',
+                  filenamePrefix: e.target.value.replace(/[^\w\s-]/g, '').trim().slice(0, 24) || 'Gaia',
                 })
               }
             />
@@ -326,10 +350,23 @@ export default function SettingsScreen() {
               <button className="btn-secondary" onClick={() => void exportBackup()}>
                 <Download className="h-4 w-4" /> {t('settings.exportData')}
               </button>
+              <button
+                className="btn-secondary"
+                disabled={maintenanceBusy}
+                onClick={() => void runRosaMaintenance()}
+              >
+                {maintenanceBusy
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Database className="h-4 w-4" />}
+                {t('settings.rosaMaintenance')}
+              </button>
               <button className="btn-danger" onClick={() => void clearAll()}>
                 <Trash2 className="h-4 w-4" /> {t('settings.clearData')}
               </button>
             </div>
+            {maintenanceResult && (
+              <p className="mt-3 text-xs text-slate-500">{maintenanceResult}</p>
+            )}
           </section>
 
           {/* Advanced (collapsible) */}
@@ -407,52 +444,24 @@ export default function SettingsScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Local AI (optional) — 100% offline copywriting assist.
-// Two backends: "bundled" (built into the app, zero setup) or "ollama"
-// (advanced/external, for power users who want a bigger/better model).
+// Local AI (optional) — bundled offline copywriting assist (desktop app only).
 // ---------------------------------------------------------------------------
 function LocalAiSection() {
   const { t } = useTranslation();
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const backend = settings.localAiBackend ?? 'bundled';
-  const [baseUrlInput, setBaseUrlInput] = useState(settings.localAiBaseUrl ?? 'http://localhost:11434');
-  const [modelInput, setModelInput] = useState(settings.localAiModel ?? 'llama3.2:3b');
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
 
-  // Keep local inputs in sync if settings load/change from elsewhere (e.g. after a backup import).
-  useEffect(() => {
-    setBaseUrlInput(settings.localAiBaseUrl ?? 'http://localhost:11434');
-    setModelInput(settings.localAiModel ?? 'llama3.2:3b');
-  }, [settings.localAiBaseUrl, settings.localAiModel]);
-
-  // Re-test automatically whenever the backend or enabled state changes, so
-  // the status shown always matches what "Suggest" will actually use.
   useEffect(() => {
     setStatus(null);
-  }, [backend, settings.localAiEnabled]);
-
-  const commitBaseUrl = () => {
-    const trimmed = baseUrlInput.trim() || 'http://localhost:11434';
-    setBaseUrlInput(trimmed);
-    if (trimmed !== settings.localAiBaseUrl) void updateSettings({ localAiBaseUrl: trimmed });
-  };
-
-  const commitModel = () => {
-    const trimmed = modelInput.trim() || 'llama3.2:3b';
-    setModelInput(trimmed);
-    if (trimmed !== settings.localAiModel) void updateSettings({ localAiModel: trimmed });
-  };
+  }, [settings.localAiEnabled]);
 
   const testConnection = async () => {
     setTesting(true);
     setStatus(null);
-    const result =
-      backend === 'bundled'
-        ? await checkBundledAiStatus()
-        : await checkOllamaStatus(baseUrlInput.trim() || 'http://localhost:11434', modelInput.trim() || 'llama3.2:3b');
+    const result = await checkBundledAiStatus();
     setStatus(result);
     setTesting(false);
   };
@@ -486,88 +495,15 @@ function LocalAiSection() {
         )}
       </p>
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-colors ${
-            backend === 'bundled' ? 'bg-gaia-600 text-white ring-gaia-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
-          }`}
-          onClick={() => void updateSettings({ localAiBackend: 'bundled' })}
-        >
-          {t('settings.localAiBackendBundled', 'Built-in (bundled)')}
-        </button>
-        <button
-          type="button"
-          className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-colors ${
-            backend === 'ollama' ? 'bg-gaia-600 text-white ring-gaia-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
-          }`}
-          onClick={() => void updateSettings({ localAiBackend: 'ollama' })}
-        >
-          {t('settings.localAiBackendOllama', 'Ollama (external, advanced)')}
-        </button>
-      </div>
-
-      {backend === 'bundled' ? (
-        <p className="text-xs text-slate-400">
-          {t(
-            'settings.localAiBundledHint',
-            'Uses a small model shipped inside the app itself — nothing to install. Good for short taglines; for longer or more creative copy, try the external Ollama option instead.',
-          )}
-        </p>
-      ) : (
-        <>
-          <p className="text-xs text-slate-400">
-            {t('settings.localAiSetupIntro', 'Setup (one-time, on this computer):')}
-          </p>
-          <ol className="ml-4 list-decimal space-y-0.5 text-xs text-slate-500">
-            <li>
-              <a
-                href="https://ollama.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-gaia-600 hover:underline"
-              >
-                {t('settings.localAiDownload', 'Download and install Ollama →')}
-              </a>
-            </li>
-            <li>
-              {t('settings.localAiPullStep', 'Open a terminal and run:')}{' '}
-              <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
-                ollama pull {modelInput.trim() || 'llama3.2:3b'}
-              </code>
-            </li>
-            <li>{t('settings.localAiToggleStep', 'Turn on the switch above, then use "Test Connection" below.')}</li>
-          </ol>
-        </>
-      )}
+      <p className="text-xs text-slate-400">
+        {t(
+          'settings.localAiBundledHint',
+          'Uses a small model built into the desktop app — nothing to install. In the browser dev preview, AI stays offline until you run the packaged app.',
+        )}
+      </p>
 
       {settings.localAiEnabled && (
         <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-          {backend === 'ollama' && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="label text-[11px]">{t('settings.localAiBaseUrl', 'Ollama address')}</label>
-                <input
-                  className="input text-sm"
-                  placeholder="http://localhost:11434"
-                  value={baseUrlInput}
-                  onChange={(e) => setBaseUrlInput(e.target.value)}
-                  onBlur={commitBaseUrl}
-                />
-              </div>
-              <div>
-                <label className="label text-[11px]">{t('settings.localAiModel', 'Model name')}</label>
-                <input
-                  className="input text-sm"
-                  placeholder="llama3.2:3b"
-                  value={modelInput}
-                  onChange={(e) => setModelInput(e.target.value)}
-                  onBlur={commitModel}
-                />
-              </div>
-            </div>
-          )}
-
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -582,33 +518,22 @@ function LocalAiSection() {
             {status?.state === 'connected' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                {backend === 'bundled'
-                  ? t('settings.localAiBundledConnected', 'Built-in model is ready.')
-                  : t('settings.localAiConnected', 'Connected — "{{model}}" is ready.', { model: modelInput.trim() || 'llama3.2:3b' })}
-              </span>
-            )}
-            {status?.state === 'model-missing' && (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600">
-                <XCircle className="h-4 w-4 shrink-0" />
-                {t('settings.localAiModelMissing', 'Ollama is running, but "{{model}}" isn\'t pulled yet.', { model: modelInput.trim() || 'llama3.2:3b' })}
+                {t('settings.localAiBundledConnected', 'Built-in model is ready.')}
               </span>
             )}
             {status?.state === 'unreachable' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-rose-600">
                 <WifiOff className="h-4 w-4 shrink-0" />
-                {status.message ??
-                  (backend === 'bundled'
-                    ? t('settings.localAiBundledUnreachable', "Couldn't reach the built-in model.")
-                    : t('settings.localAiUnreachable', "Couldn't reach Ollama at this address. Is it running?"))}
+                {status.message ?? t('settings.localAiBundledUnreachable', "Couldn't reach the built-in model.")}
+              </span>
+            )}
+            {status?.state === 'loading' && (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                {t('common.aiChecking', 'Checking AI…')}
               </span>
             )}
           </div>
-
-          {status?.models && status.models.length > 0 && (
-            <p className="text-[11px] text-slate-400">
-              {t('settings.localAiAvailableModels', 'Models found: {{models}}', { models: status.models.join(', ') })}
-            </p>
-          )}
         </div>
       )}
     </section>

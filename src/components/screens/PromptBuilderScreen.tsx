@@ -26,6 +26,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { db } from '@/db/db';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
+import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
 import type { AssetRecord, Ingredient, IngredientCategory, Recipe } from '@/types';
 
 // ── Style presets ─────────────────────────────────────────────────────────────
@@ -160,21 +161,113 @@ const INGREDIENT_ICON_CATEGORY: Record<string, IngredientCategory> = {
 const MATCH_SKIP = new Set([
   'butter', 'oil', 'essential', 'extract', 'gel', 'powder', 'base',
   'fragrance', 'acid', 'hydrolyzed', 'water', 'bark', 'root', 'wax',
-  'seed', 'seeds', 'flour', 'meal', 'juice', 'milk', 'cream',
+  'seed', 'seeds', 'flour', 'meal', 'juice', 'milk', 'cream', 'clear',
+  'white', 'custom', 'glycerin', 'melt', 'pour', 'sodium', 'cocoate',
 ]);
+
+/** Catalog-name patterns → visual prompt tokens (first match wins per name variant). */
+const VISUAL_ALIAS_RULES: Array<{ pattern: RegExp; tokens: string[] }> = [
+  { pattern: /sweet almond/, tokens: ['sweet almond branches'] },
+  { pattern: /\balmond\b/, tokens: ['almond branches'] },
+  { pattern: /lavender/, tokens: ['lavender sprigs'] },
+  { pattern: /activated charcoal|\bcharcoal\b/, tokens: ['charcoal chunks'] },
+  { pattern: /kaolin|white kaolin/, tokens: ['white clay bowls'] },
+  { pattern: /bentonite/, tokens: ['bentonite clay bowls'] },
+  { pattern: /french green|green clay/, tokens: ['green clay bowls'] },
+  { pattern: /rose kaolin|pink clay/, tokens: ['pink clay bowls'] },
+  { pattern: /australian red|red clay/, tokens: ['red clay bowls'] },
+  { pattern: /yellow clay/, tokens: ['yellow clay bowls'] },
+  { pattern: /blue clay/, tokens: ['blue clay bowls'] },
+  { pattern: /shea/, tokens: ['shea nuts'] },
+  { pattern: /cocoa/, tokens: ['cocoa pods'] },
+  { pattern: /mango/, tokens: ['mango halves'] },
+  { pattern: /coconut/, tokens: ['cracked coconuts'] },
+  { pattern: /olive/, tokens: ['olive branches'] },
+  { pattern: /jojoba/, tokens: ['jojoba branches'] },
+  { pattern: /argan/, tokens: ['argan nuts'] },
+  { pattern: /avocado/, tokens: ['avocado halves'] },
+  { pattern: /grapeseed|grape seed/, tokens: ['grape clusters'] },
+  { pattern: /\bgrape\b/, tokens: ['grape clusters'] },
+  { pattern: /babassu/, tokens: ['babassu palm fruits'] },
+  { pattern: /castor/, tokens: ['castor bean pods'] },
+  { pattern: /rosehip|rose hip/, tokens: ['rosehip berries'] },
+  { pattern: /calendula/, tokens: ['calendula blossoms'] },
+  { pattern: /chamomile/, tokens: ['chamomile flowers'] },
+  { pattern: /rosemary/, tokens: ['rosemary sprigs'] },
+  { pattern: /eucalyptus/, tokens: ['eucalyptus leaves'] },
+  { pattern: /peppermint/, tokens: ['peppermint leaves'] },
+  { pattern: /patchouli/, tokens: ['patchouli leaves'] },
+  { pattern: /lemongrass/, tokens: ['lemongrass stalks'] },
+  { pattern: /tea tree/, tokens: ['tea tree leaves'] },
+  { pattern: /green tea/, tokens: ['green tea leaves'] },
+  { pattern: /\btea\b/, tokens: ['tea leaves'] },
+  { pattern: /vanilla/, tokens: ['vanilla pods'] },
+  { pattern: /honey/, tokens: ['honeycomb'] },
+  { pattern: /goat milk|milk powder|\bmilk\b/, tokens: ['small milk bottles'] },
+  { pattern: /oatmeal|colloidal oat|\boat\b/, tokens: ['oat ears'] },
+  { pattern: /rice/, tokens: ['rice stalks'] },
+  { pattern: /coffee/, tokens: ['coffee beans'] },
+  { pattern: /cinnamon/, tokens: ['cinnamon sticks'] },
+  { pattern: /spirulina/, tokens: ['spirulina swirls'] },
+  { pattern: /beeswax/, tokens: ['beeswax'] },
+  { pattern: /aloe/, tokens: ['aloe leaves'] },
+  { pattern: /geranium/, tokens: ['geranium blooms'] },
+  { pattern: /ylang/, tokens: ['ylang-ylang flowers'] },
+  { pattern: /jasmine/, tokens: ['jasmine blossoms'] },
+  { pattern: /rose petal|\brose\b/, tokens: ['rose blooms'] },
+  { pattern: /orange blossom/, tokens: ['orange blossoms'] },
+  { pattern: /bergamot/, tokens: ['bergamot fruits'] },
+  { pattern: /lemon/, tokens: ['lemon slices'] },
+  { pattern: /\borange\b/, tokens: ['orange slices'] },
+  { pattern: /cedar/, tokens: ['cedar sprigs'] },
+  { pattern: /clary sage/, tokens: ['clary sage blooms'] },
+  { pattern: /myrrh/, tokens: ['myrrh resin tears'] },
+  { pattern: /palmarosa/, tokens: ['palmarosa grass'] },
+  { pattern: /neem/, tokens: ['neem seeds'] },
+  { pattern: /poppy/, tokens: ['poppy pods'] },
+  { pattern: /silk/, tokens: ['silk cocoons'] },
+];
+
+/** Expand a catalog name into variants (parenthetical content, stripped base prefix). */
+function expandCatalogNames(name: string): string[] {
+  const results = new Set<string>([name]);
+  const paren = name.match(/\(([^)]+)\)/);
+  if (paren?.[1]) results.add(paren[1]);
+  const stripped = name
+    .replace(/^(glycerin base|melt & pour base)\s*/i, '')
+    .replace(/[()]/g, ' ')
+    .trim();
+  if (stripped) results.add(stripped);
+  return [...results];
+}
+
+function matchSingleCatalogName(name: string): string[] {
+  const norm = name.toLowerCase();
+  for (const rule of VISUAL_ALIAS_RULES) {
+    if (rule.pattern.test(norm)) return rule.tokens;
+  }
+
+  const keywords = norm
+    .split(/[\s\-/]+/)
+    .filter((w) => (w.length >= 4 && !MATCH_SKIP.has(w)) || (w.length >= 3 && ['aloe', 'tea', 'oat', 'neem', 'rose', 'clay'].includes(w)));
+
+  const tokens: string[] = [];
+  for (const token of INGREDIENTS) {
+    const lowerToken = token.toLowerCase();
+    if (keywords.some((kw) => lowerToken.includes(kw))) {
+      tokens.push(token);
+      break;
+    }
+  }
+  return tokens;
+}
 
 function matchRecipeIngredientsToTokens(names: string[]): Set<string> {
   const matched = new Set<string>();
-  for (const name of names) {
-    const keywords = name
-      .toLowerCase()
-      .split(/[\s\-/]+/)
-      .filter((w) => w.length >= 4 && !MATCH_SKIP.has(w));
-    for (const token of INGREDIENTS) {
-      const lowerToken = token.toLowerCase();
-      if (keywords.some((kw) => lowerToken.includes(kw))) {
+  for (const rawName of names) {
+    for (const variant of expandCatalogNames(rawName)) {
+      for (const token of matchSingleCatalogName(variant)) {
         matched.add(token);
-        break;
       }
     }
   }
@@ -208,14 +301,47 @@ function buildPrompt(
 const AI_STUDIO_URL = 'https://aistudio.google.com/app/prompts/new_chat';
 const GEMINI_URL    = 'https://gemini.google.com/app';
 
-/** Open a URL in the dedicated Electron AI window, or fall back to system browser. */
-function openAiBrowser(url: string) {
+type AiTarget = 'aistudio' | 'gemini';
+
+function urlForAiTarget(target: AiTarget): string {
+  return target === 'gemini' ? GEMINI_URL : AI_STUDIO_URL;
+}
+
+function aiTargetFromUrl(url: string): AiTarget | null {
+  if (url.includes('gemini.google.com')) return 'gemini';
+  if (url.includes('aistudio.google.com')) return 'aistudio';
+  return null;
+}
+
+/** Open in the OS default browser (Electron) or a new tab (web). */
+function openInDefaultBrowser(url: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const api = (window as any).electronAPI;
-  if (api?.openAiBrowser) {
-    api.openAiBrowser(url);
+  if (api?.openExternalUrl) {
+    void api.openExternalUrl(url);
   } else {
-    window.open(url, '_blank');
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -257,6 +383,7 @@ export default function PromptBuilderScreen() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const webviewRef = useRef<any>(null);
   const [urlBarValue, setUrlBarValue] = useState(AI_STUDIO_URL);
+  const [aiTarget, setAiTarget] = useState<AiTarget>('aistudio');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
@@ -336,6 +463,12 @@ export default function PromptBuilderScreen() {
     return () => { cancelled = true; };
   }, [activeRecipeId]);
 
+  // Keep checklist in sync when recipe ingredient list updates
+  useEffect(() => {
+    if (!activeRecipe || recipeIngredientNames.length === 0) return;
+    setSelected(matchRecipeIngredientsToTokens(recipeIngredientNames));
+  }, [activeRecipe, recipeIngredientNames]);
+
   // ── Load + refresh recently auto-imported AI images ───────────────────────
   const loadRecentAiAssets = () => {
     db.assets.orderBy('createdAt').reverse()
@@ -360,7 +493,11 @@ export default function PromptBuilderScreen() {
   useEffect(() => {
     const wv = webviewRef.current;
     if (!wv) return;
-    const onNavigate = (e: { url: string }) => setUrlBarValue(e.url);
+    const onNavigate = (e: { url: string }) => {
+      setUrlBarValue(e.url);
+      const target = aiTargetFromUrl(e.url);
+      if (target) setAiTarget(target);
+    };
     wv.addEventListener('did-navigate', onNavigate);
     wv.addEventListener('did-navigate-in-page', onNavigate);
     return () => {
@@ -417,28 +554,50 @@ export default function PromptBuilderScreen() {
 
   // ── Clipboard helpers ──────────────────────────────────────────────────────
   const copy = async () => {
-    await navigator.clipboard.writeText(prompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const ok = await copyTextToClipboard(prompt);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
-  const copyAndOpen = async () => {
-    await navigator.clipboard.writeText(prompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    openAiBrowser(AI_STUDIO_URL);
+  const copyAndOpen = () => {
+    const url = urlForAiTarget(aiTarget);
+    // Open synchronously on click so popup blockers don't intercept it.
+    openInDefaultBrowser(url);
+    void copyTextToClipboard(prompt).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    });
   };
 
-  // ── Active-token matching ──────────────────────────────────────────────────
+  // ── Token lists for checklist sections ─────────────────────────────────────
+  const recipeMatchedTokens = useMemo(
+    () => matchRecipeIngredientsToTokens(recipeIngredientNames),
+    [recipeIngredientNames],
+  );
+
   const activelyMatchedTokens = useMemo(
     () => matchRecipeIngredientsToTokens(activeDbIngredients.map((i) => i.name)),
     [activeDbIngredients],
   );
 
-  // Tokens NOT matched by any active DB ingredient
+  /** Featured section: recipe ingredients when a recipe is loaded, else all active. */
+  const featuredTokens = useMemo(() => {
+    if (activeRecipe && recipeIngredientNames.length > 0) {
+      return [...recipeMatchedTokens].sort();
+    }
+    return [...activelyMatchedTokens].sort();
+  }, [activeRecipe, recipeIngredientNames.length, recipeMatchedTokens, activelyMatchedTokens]);
+
+  const featuredSet = useMemo(() => new Set(featuredTokens), [featuredTokens]);
+
+  // Tokens NOT in the featured section
   const nonActiveTokens = useMemo(
-    () => INGREDIENTS.filter((t) => !activelyMatchedTokens.has(t)),
-    [activelyMatchedTokens],
+    () => INGREDIENTS.filter((t) => !featuredSet.has(t)),
+    [featuredSet],
   );
 
   // Columns for the "All Botanicals" portion (4 logical columns, 2-col CSS grid)
@@ -448,18 +607,17 @@ export default function PromptBuilderScreen() {
     nonActiveTokens.slice(ci * perCol, ci * perCol + perCol),
   );
 
-  // Columns for matched active tokens (2-col)
-  const activeTokenList = [...activelyMatchedTokens].sort();
-  const activePerCol = Math.ceil(activeTokenList.length / 2);
-  const activeColumns: string[][] = Array.from({ length: 2 }, (_, ci) =>
-    activeTokenList.slice(ci * activePerCol, ci * activePerCol + activePerCol),
+  // Columns for featured tokens (2-col)
+  const featuredPerCol = Math.ceil(featuredTokens.length / 2);
+  const featuredColumns: string[][] = Array.from({ length: 2 }, (_, ci) =>
+    featuredTokens.slice(ci * featuredPerCol, ci * featuredPerCol + featuredPerCol),
   );
 
   // ── Catalog filtered & grouped ─────────────────────────────────────────────
   const catalogGrouped = useMemo(() => {
-    const q = catalogQuery.toLowerCase().trim();
+    const q = catalogQuery.trim();
     const filtered = q
-      ? allDbIngredients.filter((i) => i.name.toLowerCase().includes(q) || (i.benefit ?? '').toLowerCase().includes(q))
+      ? allDbIngredients.filter((i) => ingredientMatchesQuery(i, q))
       : allDbIngredients;
     const grouped = new Map<IngredientCategory | 'other', Ingredient[]>();
     for (const ing of filtered) {
@@ -468,7 +626,7 @@ export default function PromptBuilderScreen() {
       grouped.get(cat)!.push(ing);
     }
     return grouped;
-  }, [allDbIngredients, catalogQuery]);
+  }, [allDbIngredients, catalogQuery, t]);
 
   return (
     <div className="flex h-full min-w-0 overflow-x-hidden overflow-y-hidden">
@@ -676,17 +834,19 @@ export default function PromptBuilderScreen() {
               </p>
             )}
 
-            {/* ── Your Active Ingredients ──────────────────────────────── */}
-            {activeTokenList.length > 0 && (
+            {/* ── Recipe / Active Ingredients ───────────────────────────── */}
+            {featuredTokens.length > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                    {t('promptBuilder.yourActiveIngredients', 'Your Active Ingredients')}
+                    {activeRecipe
+                      ? t('promptBuilder.recipeIngredients', 'Recipe Ingredients')
+                      : t('promptBuilder.yourActiveIngredients', 'Your Active Ingredients')}
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-x-3">
-                  {activeColumns.map((col, ci) => (
+                  {featuredColumns.map((col, ci) => (
                     <div key={ci} className="space-y-0.5">
                       {col.map((ing) => (
                         <label
@@ -703,9 +863,15 @@ export default function PromptBuilderScreen() {
                           />
                           <IngredientIcon category={INGREDIENT_ICON_CATEGORY[ing] ?? 'other'} name={ing} size="sm" />
                           <span className="leading-snug">{ing}</span>
-                          <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
-                            Active
-                          </span>
+                          {activeRecipe ? (
+                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                              {t('promptBuilder.fromRecipe', 'In recipe')}
+                            </span>
+                          ) : (
+                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                              Active
+                            </span>
+                          )}
                         </label>
                       ))}
                     </div>
@@ -716,7 +882,7 @@ export default function PromptBuilderScreen() {
 
             {/* ── All Botanicals ────────────────────────────────────────── */}
             <div className="space-y-1.5">
-              {activeTokenList.length > 0 && (
+              {featuredTokens.length > 0 && (
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   {t('promptBuilder.allBotanicals', 'All Botanicals')}
                 </p>
@@ -788,7 +954,7 @@ export default function PromptBuilderScreen() {
                       {[...catalogGrouped.entries()].map(([cat, ings]) => (
                         <div key={cat}>
                           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                            {CATEGORY_LABELS[cat as IngredientCategory] ?? cat}
+                            {getCategoryLabel(cat as IngredientCategory, t)}
                           </p>
                           <div className="grid grid-cols-2 gap-x-3">
                             {ings.map((ing) => (
@@ -805,7 +971,7 @@ export default function PromptBuilderScreen() {
                                   onChange={() => toggle(ing.name)}
                                 />
                                 <IngredientIcon category={ing.category} name={ing.name} size="sm" />
-                                <span className="truncate leading-snug">{ing.name}</span>
+                                <span className="truncate leading-snug">{getIngredientDisplayName(ing.name, t)}</span>
                               </label>
                             ))}
                           </div>
@@ -884,9 +1050,19 @@ export default function PromptBuilderScreen() {
                 }
               </button>
 
-              {/* Copy & Open */}
+              {/* Copy & Open — uses aiTarget selector below */}
+              <select
+                className="input h-8 w-[7.5rem] shrink-0 py-0 text-xs"
+                value={aiTarget}
+                onChange={(e) => setAiTarget(e.target.value as AiTarget)}
+                aria-label={t('promptBuilder.aiDestination', 'Open in')}
+              >
+                <option value="aistudio">{t('promptBuilder.openAiStudio', 'AI Studio')}</option>
+                <option value="gemini">{t('promptBuilder.openGemini', 'Gemini')}</option>
+              </select>
               <button
-                onClick={() => void copyAndOpen()}
+                type="button"
+                onClick={copyAndOpen}
                 className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-gaia-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-gaia-700"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -936,13 +1112,21 @@ export default function PromptBuilderScreen() {
                 }}
               />
               <button
-                onClick={() => webviewRef.current?.loadURL(AI_STUDIO_URL)}
+                type="button"
+                onClick={() => {
+                  setAiTarget('aistudio');
+                  webviewRef.current?.loadURL(AI_STUDIO_URL);
+                }}
                 className="shrink-0 rounded px-2 py-1 text-xs font-medium text-gaia-600 hover:bg-gaia-50"
               >
                 AI Studio
               </button>
               <button
-                onClick={() => webviewRef.current?.loadURL(GEMINI_URL)}
+                type="button"
+                onClick={() => {
+                  setAiTarget('gemini');
+                  webviewRef.current?.loadURL(GEMINI_URL);
+                }}
                 className="shrink-0 rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
               >
                 Gemini
@@ -973,7 +1157,11 @@ export default function PromptBuilderScreen() {
               </div>
 
               <button
-                onClick={() => openAiBrowser(AI_STUDIO_URL)}
+                type="button"
+                onClick={() => {
+                  setAiTarget('aistudio');
+                  openInDefaultBrowser(AI_STUDIO_URL);
+                }}
                 className="flex w-full items-center justify-center gap-3 rounded-xl bg-gaia-600 px-6 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-gaia-700 active:scale-[0.98]"
               >
                 <ExternalLink className="h-5 w-5 shrink-0" />
@@ -981,7 +1169,11 @@ export default function PromptBuilderScreen() {
               </button>
 
               <button
-                onClick={() => openAiBrowser(GEMINI_URL)}
+                type="button"
+                onClick={() => {
+                  setAiTarget('gemini');
+                  openInDefaultBrowser(GEMINI_URL);
+                }}
                 className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-6 py-4 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98]"
               >
                 <ExternalLink className="h-5 w-5 shrink-0 text-gaia-500" />

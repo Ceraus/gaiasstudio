@@ -26,6 +26,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Opens a URL in the user's default system browser (Chrome, Edge, etc.).
+   * @param {string} url
+   */
+  openExternalUrl(url) {
+    return ipcRenderer.invoke('gaia:open-external-url', { url });
+  },
+
+  /**
    * Opens the given URL in a dedicated Electron BrowserWindow with full
    * Google sign-in support (uses the persist:aistudio session).
    * @param {string} url

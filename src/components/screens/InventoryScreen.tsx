@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, ChevronDown, ChevronUp, Database, DollarSign, Loader2,
-  Package, PackageCheck, Pin, Plus, ShoppingBag, Sparkles, Trash2, X,
+  MinusCircle, Package, PackageCheck, Pin, Plus, ShoppingBag, Sparkles, Trash2, X,
 } from 'lucide-react';
-import type { Ingredient, IngredientCategory, Recipe, SetPurchase } from '@/types';
-import { ingredientsRepo, recipesRepo, setPurchasesRepo } from '@/db/repositories';
-import { seedInventoryPrices } from '@/data/inventorySeed';
+import type { CustomMaterial, Ingredient, IngredientCategory, MaterialCategory, Recipe, SetPurchase } from '@/types';
+import { customMaterialsRepo, ingredientsRepo, recipesRepo, setPurchasesRepo } from '@/db/repositories';
 import {
   calculateFractionalCost,
   DROPS_PER_ML,
@@ -14,6 +13,7 @@ import {
   isVolumeIngredient,
 } from '@/lib/inventoryMath';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
+import { getCategoryLabel, getIngredientDisplayName } from '@/lib/ingredientI18n';
 import Modal from '@/components/common/Modal';
 import { useAppStore } from '@/store/useAppStore';
 
@@ -53,6 +53,8 @@ function getCategoryDefaultUnit(category?: IngredientCategory): 'oz' | 'lbs' | '
   return category && VOLUME_CATEGORIES.has(category) ? 'ml' : 'oz';
 }
 
+const MATERIAL_CATEGORIES: MaterialCategory[] = ['packaging', 'label', 'bag', 'box', 'container', 'other'];
+
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
@@ -66,22 +68,23 @@ export default function InventoryScreen() {
   const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
   const [activeRecipe, setActiveRecipe] = useState<Recipe | null>(null);
   const [setPurchases, setSetPurchases] = useState<SetPurchase[]>([]);
-  const [seeding, setSeeding] = useState(false);
-  const [seedDone, setSeedDone] = useState(false);
+  const [customMaterials, setCustomMaterials] = useState<CustomMaterial[]>([]);
   const [activeTab, setActiveTab] = useState<InventoryTab>('bases-butters');
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null);
 
   const reload = async () => {
-    const [all, active, sets, recipes] = await Promise.all([
+    const [all, active, sets, recipes, materials] = await Promise.all([
       ingredientsRepo.all(),
       ingredientsRepo.active(),
       setPurchasesRepo.all(),
       recipesRepo.all(),
+      customMaterialsRepo.all(),
     ]);
     setAllIngredients(all);
     setActiveIngredients(active);
     setSetPurchases(sets);
     setAllRecipes(recipes);
+    setCustomMaterials(materials);
   };
 
   // Ingredients referenced by any saved recipe — pinned to the top so Rosa
@@ -134,27 +137,13 @@ export default function InventoryScreen() {
         const lineCost = amount * ing.fractionalCost;
         total += lineCost;
         costed++;
-        lines.push({ id, name: ing.name, amount, unit, cost: lineCost });
+        lines.push({ id, name: getIngredientDisplayName(ing.name, t), amount, unit, cost: lineCost });
       } else {
         missing++;
       }
     }
     return { total, costed, missing, recipeName: activeRecipe.name, lines };
-  }, [activeRecipe, allIngredients]);
-
-  const loadSamplePrices = async () => {
-    setSeeding(true);
-    try {
-      await seedInventoryPrices();
-      await reload();
-      setSeedDone(true);
-      setTimeout(() => setSeedDone(false), 3000);
-    } catch (err) {
-      console.error('[Inventory] Failed to load sample prices:', err);
-    } finally {
-      setSeeding(false);
-    }
-  };
+  }, [activeRecipe, allIngredients, t]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -171,16 +160,6 @@ export default function InventoryScreen() {
                 {t('inventory.subtitleZeroMath', 'Tell us what you paid and bottle size — we handle the rest.')}
               </p>
             </div>
-            <button
-              className="btn-secondary"
-              disabled={seeding || allIngredients.length === 0}
-              onClick={() => void loadSamplePrices()}
-            >
-              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-              {seedDone
-                ? t('inventory.sampleDone', 'Prices loaded!')
-                : t('inventory.loadSample', 'Load Sample Prices')}
-            </button>
           </div>
 
           {activeIngredients.length > 0 && (
@@ -203,6 +182,10 @@ export default function InventoryScreen() {
 
           <div className="mt-6">
             <SetPurchasesCard ingredients={allIngredients} setPurchases={setPurchases} onChanged={reload} />
+          </div>
+
+          <div className="mt-6">
+            <CustomMaterialsLibraryCard materials={customMaterials} onChanged={reload} />
           </div>
 
           <div className="mt-6">
@@ -297,7 +280,8 @@ function InventoryGridItem({ ing, onEdit }: { ing: Ingredient; onEdit: () => voi
   const { t } = useTranslation();
   const isPriced = ing.fractionalCost !== undefined;
   const unitLabel = fractionalCostLabel(ing);
-  const catLabel = CATEGORY_LABELS[ing.category ?? 'other'] ?? 'Other';
+  const displayName = getIngredientDisplayName(ing.name, t);
+  const catLabel = getCategoryLabel(ing.category ?? 'other', t);
 
   return (
     <button
@@ -311,7 +295,7 @@ function InventoryGridItem({ ing, onEdit }: { ing: Ingredient; onEdit: () => voi
         <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${isPriced ? 'bg-emerald-400' : 'bg-amber-400'}`} />
         <IngredientIcon category={ing.category} name={ing.name} />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold text-slate-800">{ing.name}</p>
+          <p className="truncate font-semibold text-slate-800">{displayName}</p>
           <p className="text-xs text-slate-400">{catLabel}</p>
         </div>
       </div>
@@ -589,13 +573,14 @@ function PriceEditModal({
   };
 
   const costLabel = fractionalCostLabel({ measurementType: form.measurementType, category: ing.category });
+  const displayName = getIngredientDisplayName(ing.name, t);
 
   return (
     <Modal
       open
       onClose={onClose}
       width={420}
-      title={ing.name}
+      title={displayName}
       footer={
         <div className="flex justify-end gap-2">
           <button className="btn-secondary" onClick={onClose}>{t('common.cancel', 'Cancel')}</button>
@@ -875,7 +860,7 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
                       <label key={ing.id} className={`flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm ${checked ? 'bg-gaia-50' : 'hover:bg-slate-50'}`}>
                         <input type="checkbox" className="h-3.5 w-3.5 accent-gaia-600" checked={checked} onChange={() => toggleIngredient(ing.id)} />
                         <IngredientIcon category={ing.category} name={ing.name} size="sm" />
-                        <span className="flex-1 truncate text-slate-700">{ing.name}</span>
+                        <span className="flex-1 truncate text-slate-700">{getIngredientDisplayName(ing.name, t)}</span>
                       </label>
                     );
                   })}
@@ -887,6 +872,225 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
               </button>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Custom Materials & Packaging — a reusable library of materials costs
+// (bags, boxes, labels) shared with the Recipe Builder, following the same
+// active/inactive pattern as Ingredients.
+// ---------------------------------------------------------------------------
+
+interface MaterialForm {
+  name: string;
+  category: MaterialCategory;
+  cost: string;
+  unit: string;
+}
+
+const emptyMaterialForm: MaterialForm = { name: '', category: 'packaging', cost: '', unit: '' };
+
+function CustomMaterialsLibraryCard({
+  materials,
+  onChanged,
+}: {
+  materials: CustomMaterial[];
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
+  const [form, setForm] = useState<MaterialForm>(emptyMaterialForm);
+  const [saving, setSaving] = useState(false);
+
+  const active = useMemo(() => materials.filter((m) => m.active), [materials]);
+  const inactive = useMemo(() => materials.filter((m) => !m.active), [materials]);
+
+  const handleAdd = async () => {
+    const cost = parseFloat(form.cost);
+    if (!form.name.trim() || isNaN(cost) || cost < 0) return;
+    setSaving(true);
+    try {
+      await customMaterialsRepo.create({
+        name: form.name.trim(),
+        category: form.category,
+        cost,
+        unit: form.unit.trim() || undefined,
+        active: true,
+      });
+      setForm({ ...emptyMaterialForm, category: form.category });
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleActive = async (id: string) => {
+    await customMaterialsRepo.toggleActive(id);
+    onChanged();
+  };
+
+  const handleDelete = async (id: string) => {
+    await customMaterialsRepo.remove(id);
+    onChanged();
+  };
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+      <button
+        className="flex w-full items-center gap-3 px-5 py-4 text-left"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <Database className="h-5 w-5 shrink-0 text-violet-600" />
+        <div className="flex-1">
+          <p className="font-semibold text-slate-800">{t('materials.title', 'Custom Materials & Packaging')}</p>
+          <p className="text-xs text-slate-400">
+            {t('materials.subtitle', 'Bags, boxes, labels and other packaging you use regularly — priced once, reused in every recipe.')}
+          </p>
+        </div>
+        {active.length > 0 && (
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
+            {active.length}
+          </span>
+        )}
+        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+
+      {open && (
+        <div className="space-y-4 border-t border-slate-100 px-5 pb-5 pt-4">
+          {active.length === 0 ? (
+            <p className="text-xs italic text-slate-400">
+              {t('materials.empty', 'No materials yet — add packaging, bags, or labels below.')}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {active.map((m) => (
+                <div key={m.id} className="flex items-center gap-3 rounded-lg bg-violet-50 px-3 py-2 text-xs">
+                  <Package className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+                  <span className="flex-1 truncate font-medium text-slate-700">{m.name}</span>
+                  <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-violet-600 ring-1 ring-violet-200">
+                    {t(`materials.categories.${m.category}`, m.category)}
+                  </span>
+                  <span className="shrink-0 text-slate-500">
+                    ${m.cost.toFixed(2)}
+                    <span className="text-slate-400">/{m.unit || t('materials.perItem', 'item')}</span>
+                  </span>
+                  <button
+                    onClick={() => void handleToggleActive(m.id)}
+                    title={t('materials.deactivate', 'Move to inactive')}
+                    className="shrink-0"
+                  >
+                    <MinusCircle className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-amber-500" />
+                  </button>
+                  <button onClick={() => void handleDelete(m.id)} aria-label="Remove material" className="shrink-0">
+                    <Trash2 className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-rose-500" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {inactive.length > 0 && (
+            <div>
+              <button
+                type="button"
+                className="text-xs font-medium text-gaia-700 hover:underline"
+                onClick={() => setShowInactive((v) => !v)}
+              >
+                {showInactive
+                  ? t('materials.hideInactive', 'Hide inactive ({{count}})', { count: inactive.length })
+                  : t('materials.showInactive', 'Show inactive ({{count}})', { count: inactive.length })}
+              </button>
+              {showInactive && (
+                <div className="mt-2 space-y-1.5">
+                  {inactive.map((m) => (
+                    <div key={m.id} className="flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                      <span className="flex-1 truncate text-slate-500">{m.name}</span>
+                      <span className="shrink-0 text-slate-400">
+                        ${m.cost.toFixed(2)}/{m.unit || t('materials.perItem', 'item')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleActive(m.id)}
+                        className="shrink-0 text-[11px] font-medium text-gaia-600 hover:underline"
+                      >
+                        {t('materials.activate', 'Activate')}
+                      </button>
+                      <button onClick={() => void handleDelete(m.id)} aria-label="Remove material" className="shrink-0">
+                        <Trash2 className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-rose-500" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:items-end">
+            <div className="col-span-2 sm:col-span-1">
+              <label className="mb-1 block text-[11px] font-medium text-slate-500">
+                {t('materials.name', 'Item name')}
+              </label>
+              <input
+                className="input text-sm"
+                placeholder={t('materials.namePlaceholder', 'e.g. Kraft bag')}
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500">
+                {t('materials.category', 'Category')}
+              </label>
+              <select
+                className="input text-sm"
+                value={form.category}
+                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value as MaterialCategory }))}
+              >
+                {MATERIAL_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{t(`materials.categories.${c}`, c)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500">
+                {t('materials.cost', 'Cost ($)')}
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                className="input text-sm"
+                placeholder="0.35"
+                value={form.cost}
+                onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500">
+                {t('materials.unit', 'Unit')}
+              </label>
+              <input
+                className="input text-sm"
+                placeholder={t('materials.unitPlaceholder', 'per bar')}
+                value={form.unit}
+                onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn-primary py-2 text-sm"
+              onClick={() => void handleAdd()}
+              disabled={!form.name.trim() || !form.cost.trim() || saving}
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              {t('materials.add', 'Add')}
+            </button>
+          </div>
         </div>
       )}
     </div>

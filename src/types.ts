@@ -131,7 +131,7 @@ export interface Recipe {
   /** Optional manual color override — a Tailwind color key like 'pink', 'green', etc. */
   color?: string;
   /** Per-bar packaging / materials costs added by the user (e.g. bags, boxes, labels). */
-  customCosts?: Array<{ id: string; name: string; cost: number; unit?: string }>;
+  customCosts?: Array<{ id: string; name: string; cost: number; unit?: string; materialId?: string }>;
   /** Planned retail price per bar (USD). */
   retailPrice?: number;
   /** Auto-calculated total raw material COGS when the recipe is saved. */
@@ -209,17 +209,6 @@ export interface AppSettings {
    * backend). The user can turn it off here; it never calls out to the cloud.
    */
   localAiEnabled?: boolean;
-  /**
-   * Which local AI backend to use. "bundled" runs the small model shipped
-   * inside the app (zero setup, in-process via node-llama-cpp). "ollama" is
-   * the advanced/external option for power users who want a bigger/better
-   * model via a separately-installed Ollama server. Defaults to "bundled".
-   */
-  localAiBackend?: 'bundled' | 'ollama';
-  /** Base URL of the locally-running Ollama server (only used when backend is "ollama"). */
-  localAiBaseUrl?: string;
-  /** Ollama model name/tag to use for text generation (e.g. "llama3.2:3b"). Only used when backend is "ollama". */
-  localAiModel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +263,67 @@ export interface SetPurchase {
   pricePerItem: number;
   assignedIngredientIds: string[];
   createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Custom Materials & Packaging — a reusable library of packaging/materials
+// costs (e.g. bags, boxes, labels) shared between Inventory and the Recipe
+// Builder, mirroring the Ingredients active/inactive pattern.
+// ---------------------------------------------------------------------------
+
+export type MaterialCategory = 'packaging' | 'label' | 'bag' | 'box' | 'container' | 'other';
+
+export interface CustomMaterial {
+  id: string;
+  name: string;
+  category: MaterialCategory;
+  cost: number;
+  /** Free text, e.g. "per bar", "per item". Defaults to "per item" when blank. */
+  unit?: string;
+  /** Regularly-used materials are active; the rest sit in an inactive pool, like ingredients. */
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Receipts — an automated expense ledger for finances. Logging a receipt can
+// optionally push its line-item prices back into Inventory / Custom Materials
+// so pricing stays current without a separate manual edit.
+// ---------------------------------------------------------------------------
+
+export type ExpenseCategory = 'ingredients' | 'packaging' | 'shipping' | 'equipment' | 'other';
+
+export interface ReceiptLineItem {
+  id: string;
+  description: string;
+  /** Links back to the Ingredients library, when this line item is restocking an ingredient. */
+  ingredientId?: string;
+  /** Links back to the Custom Materials library, when this line item is restocking a material. */
+  materialId?: string;
+  quantity: number;
+  unitCost: number;
+  /** quantity * unitCost by default; the user can override it directly. */
+  lineTotal: number;
+  /** When true and ingredientId/materialId is set, saving the receipt pushes unitCost into that record's price. */
+  syncPrice: boolean;
+}
+
+export interface Receipt {
+  id: string;
+  vendor: string;
+  /** Purchase date (timestamp), user-editable — defaults to today. */
+  date: number;
+  category: ExpenseCategory;
+  lineItems: ReceiptLineItem[];
+  tax?: number;
+  /** Auto-calculated: sum of lineItem.lineTotal. */
+  subtotal: number;
+  /** Auto-calculated: subtotal + (tax ?? 0). */
+  total: number;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ---------------------------------------------------------------------------

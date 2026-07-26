@@ -9,6 +9,7 @@ import {
   ChevronRight,
   FlaskConical,
   Loader2,
+  MinusCircle,
   Pencil,
   Plus,
   Search,
@@ -18,9 +19,10 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Ingredient, IngredientCategory } from '@/types';
-import { ingredientsRepo } from '@/db/repositories';
+import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { MODULAR_BENEFITS } from '@/data/benefits';
 import { INGREDIENT_CATALOG_SIZE, INGREDIENT_SEED, syncIngredientCatalog } from '@/data/ingredientSeed';
+import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
 import WorkflowNav from '@/components/WorkflowNav';
 import Modal from '@/components/common/Modal';
@@ -91,6 +93,10 @@ export default function IngredientsScreen() {
   const [lastSyncAdded, setLastSyncAdded] = useState(0);
   const [catFilter, setCatFilter] = useState<'all' | IngredientCategory>('all');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [trimConfirmOpen, setTrimConfirmOpen] = useState(false);
+  const [trimPreview, setTrimPreview] = useState<{ deactivate: number; keep: number; recipeCount: number } | null>(null);
+  const [trimming, setTrimming] = useState(false);
+  const [trimDone, setTrimDone] = useState<number | null>(null);
 
   const reload = async () => {
     const items = await ingredientsRepo.all();
@@ -140,14 +146,14 @@ export default function IngredientsScreen() {
   }, [all]);
 
   const filteredInactive = useMemo(() => {
-    const q   = inactiveQuery.toLowerCase().trim();
+    const q   = inactiveQuery.trim();
     const cat = catFilter === 'all' ? inactive : inactive.filter((i) => (i.category ?? 'other') === catFilter);
-    return q ? cat.filter((i) => i.name.toLowerCase().includes(q) || i.benefit.toLowerCase().includes(q)) : cat;
+    return q ? cat.filter((i) => ingredientMatchesQuery(i, q)) : cat;
   }, [inactive, inactiveQuery, catFilter]);
 
   const filteredActive = useMemo(() => {
-    const q = activeQuery.toLowerCase().trim();
-    return q ? active.filter((i) => i.name.toLowerCase().includes(q) || i.benefit.toLowerCase().includes(q)) : active;
+    const q = activeQuery.trim();
+    return q ? active.filter((i) => ingredientMatchesQuery(i, q)) : active;
   }, [active, activeQuery]);
 
   /** Count per category for the tab badges */
@@ -181,6 +187,39 @@ export default function IngredientsScreen() {
       await ingredientsRepo.create({ name, benefit: '', inci: '', isSoapBase: false, active: true, category: 'other' });
     }
     void reload();
+  };
+
+  const openTrimConfirm = async () => {
+    const recipes = await recipesRepo.all();
+    const usedIds = new Set<string>();
+    for (const r of recipes) {
+      for (const id of r.ingredientIds) usedIds.add(id);
+    }
+    const toKeep = active.filter((i) => usedIds.has(i.id)).length;
+    const toDeactivate = active.filter((i) => !usedIds.has(i.id)).length;
+    setTrimPreview({ deactivate: toDeactivate, keep: toKeep, recipeCount: recipes.length });
+    setTrimConfirmOpen(true);
+  };
+
+  const trimToRecipes = async () => {
+    setTrimming(true);
+    setTrimDone(null);
+    try {
+      const recipes = await recipesRepo.all();
+      const usedIds = new Set<string>();
+      for (const r of recipes) {
+        for (const id of r.ingredientIds) usedIds.add(id);
+      }
+      const deactivated = await ingredientsRepo.deactivateExcept(usedIds);
+      await reload();
+      setTrimConfirmOpen(false);
+      setTrimDone(deactivated);
+      setTimeout(() => setTrimDone(null), 4000);
+    } catch (err) {
+      console.error('[Ingredients] Failed to trim active list to recipes:', err);
+    } finally {
+      setTrimming(false);
+    }
   };
 
   const save = async () => {
@@ -283,7 +322,7 @@ export default function IngredientsScreen() {
         </div>
 
         {/* ── Stats ──────────────────────────────────────────────────────── */}
-        <div className="mt-4 flex flex-wrap gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-xl bg-gaia-600 px-4 py-2 text-sm text-white">
             <Star className="h-4 w-4" />
             <span className="font-semibold">{active.length}</span>
@@ -294,6 +333,22 @@ export default function IngredientsScreen() {
             <span className="font-semibold">{inactive.length}</span>
             <span className="text-slate-400">{t('ingredients.inactiveCount', 'in library')}</span>
           </div>
+          {active.length > 0 && (
+            <button
+              type="button"
+              className="btn-secondary py-2 text-xs"
+              onClick={() => void openTrimConfirm()}
+              title={t('ingredients.trimToRecipesHint', 'Move active ingredients not used in any saved recipe back to the library')}
+            >
+              <MinusCircle className="h-4 w-4" />
+              {t('ingredients.trimToRecipes', 'Trim to recipes')}
+            </button>
+          )}
+          {trimDone !== null && trimDone > 0 && (
+            <span className="text-xs font-medium text-emerald-700">
+              {t('ingredients.trimDone', '{{count}} moved to inactive', { count: trimDone })}
+            </span>
+          )}
         </div>
 
         {/* ── Quick-activate chips ────────────────────────────────────────── */}
@@ -310,7 +365,7 @@ export default function IngredientsScreen() {
                   onClick={() => void quickActivate(name)}
                   className="rounded-full border border-gaia-200 bg-gaia-50 px-2.5 py-1 text-xs font-medium text-gaia-700 transition hover:bg-gaia-100 active:scale-95"
                 >
-                  + {name}
+                  + {getIngredientDisplayName(name, t)}
                 </button>
               ))}
             </div>
@@ -318,11 +373,11 @@ export default function IngredientsScreen() {
         )}
 
         {/* ── Dual pane ──────────────────────────────────────────────────── */}
-        <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:grid-rows-[auto_auto_auto_minmax(12rem,30rem)]">
 
           {/* INACTIVE pane */}
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
+          <div className="grid gap-3 lg:row-span-4 lg:grid-rows-subgrid">
+            <div className="flex min-h-8 items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                 {t('ingredients.inactiveTitle', 'Library (inactive)')}
               </h2>
@@ -340,8 +395,8 @@ export default function IngredientsScreen() {
               </div>
             </div>
 
-            {/* Category filter tabs */}
-            <div className="flex flex-wrap gap-1">
+            {/* Category filter tabs — row height syncs with active pane via subgrid */}
+            <div className="flex flex-wrap content-start gap-1">
               {FILTER_CATS.map((cat) => {
                 const count = catCounts[cat] ?? 0;
                 if (cat !== 'all' && count === 0) return null;
@@ -355,7 +410,7 @@ export default function IngredientsScreen() {
                         : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-gaia-50'
                     }`}
                   >
-                    {cat === 'all' ? 'All' : CATEGORY_LABELS[cat as IngredientCategory]}
+                    {cat === 'all' ? t('ingredients.categoryAll', 'All') : getCategoryLabel(cat as IngredientCategory, t)}
                     <span className={`rounded-full px-1 text-[9px] font-bold ${catFilter === cat ? 'bg-white/20' : 'bg-slate-100'}`}>
                       {count}
                     </span>
@@ -364,7 +419,6 @@ export default function IngredientsScreen() {
               })}
             </div>
 
-            {/* Search */}
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -375,7 +429,7 @@ export default function IngredientsScreen() {
               />
             </div>
 
-            <div className="max-h-[30rem] space-y-1.5 overflow-y-auto pr-1">
+            <div className="min-h-0 space-y-1.5 overflow-y-auto pr-1">
               {filteredInactive.length === 0 ? (
                 <div className="rounded-xl bg-white py-8 text-center text-sm text-slate-400 ring-1 ring-slate-100">
                   {inactiveQuery ? t('ingredients.noResults', 'No results') : t('ingredients.allActive', 'All seeded — great!')}
@@ -395,16 +449,18 @@ export default function IngredientsScreen() {
           </div>
 
           {/* ACTIVE pane */}
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
+          <div className="grid gap-3 lg:row-span-4 lg:grid-rows-subgrid">
+            <div className="flex min-h-8 items-center justify-between">
               <h2 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-gaia-700">
-                <Star className="h-3.5 w-3.5 fill-gaia-500 text-gaia-500" />
+                <Star className="h-3.5 w-3.5 shrink-0 fill-gaia-500 text-gaia-500" />
                 {t('ingredients.activeTitle', 'My Active Ingredients')}
               </h2>
               <span className="chip bg-gaia-100 text-gaia-700">{filteredActive.length}</span>
             </div>
-            {/* Spacer aligns list with inactive pane category-filter row */}
-            <div className="min-h-[1.75rem] shrink-0" aria-hidden="true" />
+
+            {/* Empty toolbar row — stretches to match category filters on the left */}
+            <div aria-hidden="true" />
+
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -414,7 +470,8 @@ export default function IngredientsScreen() {
                 onChange={(e) => setActiveQuery(e.target.value)}
               />
             </div>
-            <div className="max-h-[30rem] space-y-1.5 overflow-y-auto pr-1">
+
+            <div className="min-h-0 space-y-1.5 overflow-y-auto pr-1">
               {filteredActive.length === 0 ? (
                 <div className="rounded-xl border-2 border-dashed border-gaia-200 bg-gaia-50 py-8 text-center">
                   <Star className="mx-auto mb-2 h-6 w-6 text-gaia-300" />
@@ -490,7 +547,7 @@ export default function IngredientsScreen() {
               <div>
                 <label className="label">{t('ingredients.category', 'Category')}</label>
                 <div className="flex flex-wrap gap-1.5">
-                  {(Object.entries(CATEGORY_LABELS) as [IngredientCategory, string][]).map(([cat, label]) => (
+                  {(Object.keys(CATEGORY_LABELS) as IngredientCategory[]).map((cat) => (
                     <button
                       key={cat} type="button"
                       onClick={() => setForm({ ...form, category: cat })}
@@ -501,7 +558,7 @@ export default function IngredientsScreen() {
                       }`}
                     >
                       <IngredientIcon category={cat} size="sm" />
-                      {label}
+                      {getCategoryLabel(cat, t)}
                     </button>
                   ))}
                 </div>
@@ -531,6 +588,52 @@ export default function IngredientsScreen() {
         prevScreen="recipes"
         prevLabel={t('workflow.backToRecipes')}
       />
+
+      <Modal
+        open={trimConfirmOpen}
+        onClose={() => !trimming && setTrimConfirmOpen(false)}
+        width={420}
+        title={
+          <span className="flex items-center gap-2 text-slate-800">
+            <MinusCircle className="h-5 w-5 shrink-0 text-gaia-600" />
+            {t('ingredients.trimToRecipesTitle', 'Trim active ingredients?')}
+          </span>
+        }
+        footer={
+          <div className="flex justify-end gap-2">
+            <button className="btn-secondary" disabled={trimming} onClick={() => setTrimConfirmOpen(false)}>
+              {t('common.cancel')}
+            </button>
+            <button
+              className="btn-primary"
+              disabled={trimming || !trimPreview || (trimPreview.recipeCount === 0) || trimPreview.deactivate === 0}
+              onClick={() => void trimToRecipes()}
+            >
+              {trimming ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {t('ingredients.trimConfirm', 'Deactivate unused')}
+            </button>
+          </div>
+        }
+      >
+        {trimPreview?.recipeCount === 0 ? (
+          <p className="text-sm text-slate-600">
+            {t('ingredients.trimNoRecipes', 'Create at least one recipe first — there is nothing to match against.')}
+          </p>
+        ) : trimPreview ? (
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>{t('ingredients.trimBody', 'Only ingredients used in your saved recipes will stay active. Everything else moves back to the library.')}</p>
+            <ul className="list-inside list-disc space-y-1 text-slate-700">
+              <li>{t('ingredients.trimKeep', '{{count}} kept active', { count: trimPreview.keep })}</li>
+              <li>{t('ingredients.trimRemove', '{{count}} deactivated', { count: trimPreview.deactivate })}</li>
+            </ul>
+            {trimPreview.deactivate === 0 && (
+              <p className="text-xs text-emerald-700">
+                {t('ingredients.trimNothingToDo', 'All active ingredients are already used in a recipe.')}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={confirmDeleteId !== null}
@@ -574,8 +677,7 @@ function IngredientRow({
   t: TFunction;
   isActive: boolean;
 }) {
-  const ingKey = ing.name.toLowerCase().replace(/ /g, '_');
-  const displayName = t(`ingredientNames.${ingKey}`, ing.name);
+  const displayName = getIngredientDisplayName(ing.name, t);
   const actionBtn =
     'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition';
   return (

@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   BookOpen, FileStack, FlaskConical, Layers,
-  Leaf, Loader2, Package, Plus, Settings as SettingsIcon, Sparkles,
+  Leaf, Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
 import { useAppStore, type Screen } from '@/store/useAppStore';
 import WelcomeScreen from '@/components/screens/WelcomeScreen';
@@ -20,6 +20,7 @@ import WorkflowStepper from '@/components/WorkflowStepper';
 import DebugPanel from '@/components/debug/DebugPanel';
 import { startAutoImport, onAutoImportToast } from '@/lib/autoImport';
 import { seedRecipes } from '@/data/recipeSeed';
+import LocalAiStatusBadge from '@/components/LocalAiStatusBadge';
 
 // Editor pulls in Fabric.js and Export pulls in pdf-lib — load these heavy
 // libraries on demand so the initial bundle stays light.
@@ -28,10 +29,11 @@ const ExportScreen = lazy(() => import('@/components/screens/ExportScreen'));
 // Mixed batch printing pulls in both Fabric (to rasterize each saved design)
 // and pdf-lib, so it stays out of the initial bundle too.
 const BatchPrintScreen = lazy(() => import('@/components/screens/BatchPrintScreen'));
+const FinancesScreen = lazy(() => import('@/components/screens/FinancesScreen'));
 
 /** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings). */
 const STEPPER_SCREENS: Screen[] = [
-  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder',
+  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances',
 ];
 
 /** Library tabs shown in the center of the browsing-mode header. */
@@ -46,6 +48,7 @@ const BASE_LIBRARY_TABS: Array<{
   { id: 'recipes',     labelKey: 'nav.recipes',     defaultLabel: 'Recipes',     icon: BookOpen     },
   { id: 'ingredients', labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: FlaskConical },
   { id: 'inventory',   labelKey: 'nav.inventory',   defaultLabel: 'Inventory',   icon: Package      },
+  { id: 'finances',    labelKey: 'nav.finances',    defaultLabel: 'Finances',    icon: Receipt      },
   { id: 'sets',        labelKey: 'nav.sets',        defaultLabel: 'Label Sets',  icon: Layers,      optional: true },
 ];
 
@@ -164,8 +167,9 @@ export default function Shell() {
             always renders fully and on one line — it's the nav band (above)
             that gives up space first. */}
         <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
-          <span className="hidden shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-gaia-50 px-3 py-1 text-xs font-medium text-gaia-700 ring-1 ring-gaia-100 lg:inline-flex">
-            🌹 {t('common.greeting', 'Hi Rosa')}
+          <span className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-gaia-50 px-3 py-1 text-xs font-medium text-gaia-700 ring-1 ring-gaia-100 lg:inline-flex">
+            <span>🌹 {t('common.greeting', 'Hi Rosa')}</span>
+            <LocalAiStatusBadge settings={settings} />
           </span>
           <button
             onClick={() => goto('template')}
@@ -222,6 +226,7 @@ export default function Shell() {
           {screen === 'sets'          && <LabelSetsScreen />}
           {screen === 'drafts'        && <DraftsScreen />}
           {screen === 'batch'         && <BatchPrintScreen />}
+          {screen === 'finances'      && <FinancesScreen />}
         </Suspense>
       </main>
 

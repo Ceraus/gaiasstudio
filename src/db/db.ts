@@ -3,10 +3,12 @@ import type {
   AppSettings,
   AssetRecord,
   Collection,
+  CustomMaterial,
   DesignVersion,
   Draft,
   Ingredient,
   LabelSet,
+  Receipt,
   Recipe,
   SetPurchase,
 } from '@/types';
@@ -33,6 +35,8 @@ export class GaiaDatabase extends Dexie {
   drafts!: Table<Draft, string>;
   setPurchases!: Table<SetPurchase, string>;
   collections!: Table<Collection, string>;
+  customMaterials!: Table<CustomMaterial, string>;
+  receipts!: Table<Receipt, string>;
 
   constructor() {
     super('gaia-label-studio');
@@ -115,6 +119,20 @@ export class GaiaDatabase extends Dexie {
     this.version(10).stores({
       recipes: 'id, name, createdAt, cogsTotal, retailPrice',
     });
+
+    // Version 11 — adds the Custom Materials & Packaging library, a reusable
+    // set of packaging/materials costs shared between Inventory and the
+    // Recipe Builder (mirrors the Ingredients active/inactive pattern).
+    this.version(11).stores({
+      customMaterials: 'id, name, category, active, createdAt',
+    });
+
+    // Version 12 — adds Receipts, an automated expense ledger for finances.
+    // Logging a receipt line item can optionally sync its price back into
+    // Ingredients or Custom Materials.
+    this.version(12).stores({
+      receipts: 'id, vendor, date, category, createdAt',
+    });
   }
 }
 
@@ -123,13 +141,10 @@ export const db = new GaiaDatabase();
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'app',
   language: 'en',
-  filenamePrefix: 'ROSA',
+  filenamePrefix: 'Gaia',
   bleedIn: 0.0625,
   safeIn: 0.0625,
   onboarded: false,
   uiScale: 1,
   localAiEnabled: true,
-  localAiBackend: 'bundled',
-  localAiBaseUrl: 'http://localhost:11434',
-  localAiModel: 'llama3.2:3b',
 };

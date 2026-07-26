@@ -17,7 +17,8 @@ export type Screen =
   | 'promptBuilder'
   | 'sets'
   | 'drafts'
-  | 'batch';
+  | 'batch'
+  | 'finances';
 
 const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto

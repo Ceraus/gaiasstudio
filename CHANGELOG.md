@@ -7,6 +7,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Custom Materials & Packaging library** — a reusable, shared list of
+  packaging/materials costs (bags, boxes, labels) with categories, cost and
+  unit, active/inactive states (Dexie v11). Managed from a new card on the
+  Inventory screen; the Recipe Builder's Custom Costs section now offers
+  one-tap chips to pull items from the library (or save a one-off cost back
+  into it via a "Save to library" checkbox) instead of re-typing them per
+  recipe.
+- **Finances screen — automated receipt/expense ledger** (Dexie v12) — log
+  purchase receipts (vendor, date, category, line items, tax) and see
+  This Month / This Year / All Time totals plus a spend-by-category
+  breakdown. Line items can link to an Ingredient or a Custom Material and
+  optionally sync their cost straight back into Inventory on save. Includes
+  a CSV export for handing records to an accountant.
+- **`npm run restore:rosa`** / in-app maintenance action — deactivates all
+  ingredients and force-restores Rosa's 28 seed recipes, for accounts whose
+  recipes went missing. Also runnable headlessly via `GAIA_MAINTENANCE=1`
+  (Electron loads, runs maintenance, and quits automatically).
+- **Bilingual ingredient names & search** — every catalog ingredient now has
+  a proper Spanish translation (`sync:i18n` script covers 658/670 entries),
+  category labels are localized, and searching in Ingredients, Inventory,
+  and the AI Prompt Builder matches both the English and Spanish name.
+- **Redesigned export file names** — exports now save as
+  `Gaia - Lavender Dream - v01.pdf` (brand, recipe/product name, per-series
+  version) instead of an opaque `PREFIX___01.pdf` counter.
+- **"Open in browser" for AI links** exposed via a new
+  `electronAPI.openExternalUrl` bridge.
+
+### Changed
+- **Ollama support removed entirely** — the app now ships with the bundled,
+  fully offline local AI (Qwen2.5-0.5B) as the only AI backend. Settings no
+  longer shows a backend toggle or Ollama URL/model fields, just an on/off
+  toggle and "Test Connection" for the bundled model.
+- **AI Suggestions are more prominent** — the Recipe Builder's benefit
+  "Suggest" button is larger, and the status badge now reads
+  "AI Suggestions" instead of the more cryptic "AI Ready".
+- Removed the "Load Sample Prices" one-shot inventory seeder in favor of the
+  Custom Materials library and manual pricing flows.
+
+### Removed
+- Dead code cleanup: an unused `debugLog` helper (`src/lib/debug.ts`), an
+  unused re-export block in `src/db/repositories.ts`, and an unused
+  `ROSA_RECIPE_COUNT` re-export from `src/lib/maintenance.ts`. No functional
+  change.
+
+## [2.0.31] - 2026-07-25
+
+### Added
 - **Bundled local AI (Qwen2.5-0.5B)** ships inside the Windows executable —
   no Ollama install required.
 - **Built-in AI enabled by default**; Ollama remains an optional advanced path

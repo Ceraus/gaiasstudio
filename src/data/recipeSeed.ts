@@ -176,15 +176,9 @@ const uid = () =>
     ? crypto.randomUUID()
     : `recipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-/**
- * Ensures the active recipe-ingredient seeds exist in the DB, then creates
- * the starter recipe library. Safe to call at every app startup — exits
- * immediately once any recipe is already present.
- */
-export async function seedRecipes(): Promise<void> {
-  // Skip if recipes are already loaded.
-  const recipeCount = await db.recipes.count();
-  if (recipeCount > 0) return;
+/** Shared seeding logic — optionally replaces the entire recipe table first. */
+async function populateSeedRecipes(replaceExisting: boolean): Promise<number> {
+  if (replaceExisting) await db.recipes.clear();
 
   // ── Step 1: Ensure every ingredient referenced by a recipe exists ─────────
   const existing: Ingredient[] = await db.ingredients.toArray();
@@ -245,4 +239,23 @@ export async function seedRecipes(): Promise<void> {
   });
 
   await db.recipes.bulkAdd(recipes);
+  return recipes.length;
 }
+
+/**
+ * Ensures the active recipe-ingredient seeds exist in the DB, then creates
+ * the starter recipe library. Safe to call at every app startup — exits
+ * immediately once any recipe is already present.
+ */
+export async function seedRecipes(): Promise<void> {
+  const recipeCount = await db.recipes.count();
+  if (recipeCount > 0) return;
+  await populateSeedRecipes(false);
+}
+
+/** Clears recipes and re-seeds Rosa's 28 starter recipes from RECIPE_SEED. */
+export async function forceRestoreSeedRecipes(): Promise<number> {
+  return populateSeedRecipes(true);
+}
+
+export const ROSA_RECIPE_COUNT = RECIPE_SEED.length;

@@ -30,6 +30,7 @@ import {
   peekExportName,
   planBatchSlots,
   type BatchItem,
+  type ExportNameOptions,
 } from '@/lib/pdfExport';
 import { footprintHeightIn, footprintWidthIn, slotPositionIn } from '@/lib/units';
 
@@ -126,9 +127,14 @@ export default function BatchPrintScreen() {
         items.push({ pngDataUrl: png, quantity: entry.quantity });
       }
       const bytes = await buildMixedSheetPdf({ template, items });
-      const name = peekExportName(`${settings.filenamePrefix}-BATCH`);
+      const opts: ExportNameOptions = {
+        brand: settings.filenamePrefix,
+        recipeName: 'Batch Print',
+        series: 'batch',
+      };
+      const name = peekExportName(opts);
       downloadBytes(bytes, name);
-      bumpExportSeq(`${settings.filenamePrefix}-BATCH`);
+      bumpExportSeq(opts);
       setDoneName(name);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Batch export failed');

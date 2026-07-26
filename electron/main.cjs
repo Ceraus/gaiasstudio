@@ -191,7 +191,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     title: "Gaia's Label Studio — Rosa's Workshop",
-    show: false,
+    show: process.env.GAIA_MAINTENANCE !== '1',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -247,6 +247,25 @@ function createWindow() {
   });
 
   void mainWindow.loadFile(distIndex());
+}
+
+/** Headless maintenance: deactivate ingredients + restore Rosa's 28 recipes. */
+async function runMaintenanceAndQuit(win) {
+  win.webContents.once('did-finish-load', () => {
+    void (async () => {
+      try {
+        const result = await win.webContents.executeJavaScript(
+          `(async () => window.gaiaMaintenance.runRosaMaintenance())()`,
+          true,
+        );
+        console.log('[Gaia] Maintenance complete:', JSON.stringify(result, null, 2));
+        app.exit(0);
+      } catch (err) {
+        console.error('[Gaia] Maintenance failed:', err);
+        app.exit(1);
+      }
+    })();
+  });
 }
 
 app.whenReady().then(() => {
@@ -322,6 +341,13 @@ app.whenReady().then(() => {
   // supports full Google sign-in via a real browser session.
   ipcMain.handle('gaia:open-ai-browser', (_event, { url }) => openAiWindow(url));
 
+  /** Opens an allowlisted AI URL in the user's default system browser. */
+  ipcMain.handle('gaia:open-external-url', async (_event, { url }) => {
+    if (!isAllowedAiUrl(url)) return false;
+    await shell.openExternal(url);
+    return true;
+  });
+
   // Bundled local AI (copywriting assist) — runs entirely in this process via
   // node-llama-cpp against the model shipped in resources/models. Zero setup,
   // 100% offline. See electron/bundledAi.cjs.
@@ -329,6 +355,10 @@ app.whenReady().then(() => {
   ipcMain.handle('gaia:bundled-ai-generate', (_event, prompt) => bundledAi.generateBundledAi(String(prompt || '')));
 
   createWindow();
+
+  if (process.env.GAIA_MAINTENANCE === '1') {
+    void runMaintenanceAndQuit(mainWindow);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

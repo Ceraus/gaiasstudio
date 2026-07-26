@@ -4,7 +4,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Clipbo
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import { editor, parseTextObjectsFromJson } from '@/lib/fabric/editorController';
-import { recipesRepo, ingredientsRepo } from '@/db/repositories';
+import { recipesRepo, ingredientsRepo, draftsRepo } from '@/db/repositories';
 import type { Ingredient, Recipe } from '@/types';
 import {
   bumpExportSeq,
@@ -13,9 +13,49 @@ import {
   downloadDataUrl,
   peekExportName,
   planSheets,
+  type ExportNameOptions,
 } from '@/lib/pdfExport';
 import { footprintHeightIn, footprintWidthIn, slotPositionIn } from '@/lib/units';
 import type { AveryTemplate } from '@/types';
+
+/** Resolve the recipe name shown in export file names. */
+function useExportRecipeName(): string {
+  const activeRecipeId = useAppStore((s) => s.activeRecipeId);
+  const activeDraftId = useAppStore((s) => s.activeDraftId);
+  const [recipeName, setRecipeName] = useState('Label');
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolve = async () => {
+      if (activeRecipeId) {
+        const recipe = await recipesRepo.get(activeRecipeId);
+        if (!cancelled && recipe?.name) {
+          setRecipeName(recipe.name);
+          return;
+        }
+      }
+      if (activeDraftId) {
+        const draft = await draftsRepo.get(activeDraftId);
+        if (draft?.recipeId) {
+          const recipe = await recipesRepo.get(draft.recipeId);
+          if (!cancelled && recipe?.name) {
+            setRecipeName(recipe.name);
+            return;
+          }
+        }
+      }
+      if (!cancelled) setRecipeName('Label');
+    };
+    void resolve();
+    return () => { cancelled = true; };
+  }, [activeRecipeId, activeDraftId]);
+
+  return recipeName;
+}
+
+function buildExportOpts(brand: string, recipeName: string, ext = 'pdf'): ExportNameOptions {
+  return { brand, recipeName, ext };
+}
 
 export default function ExportScreen() {
   const { t } = useTranslation();
@@ -23,6 +63,7 @@ export default function ExportScreen() {
   const template = useAppStore((s) => s.template);
   const labelPng = useAppStore((s) => s.labelPng);
   const settings = useAppStore((s) => s.settings);
+  const recipeName = useExportRecipeName();
 
   const [quantity, setQuantity] = useState(() => template?.perSheet ?? 12);
   const [fillSheet, setFillSheet] = useState(false);
@@ -47,7 +88,7 @@ export default function ExportScreen() {
     );
   }
 
-  const pdfName = peekExportName(settings.filenamePrefix);
+  const pdfName = peekExportName(buildExportOpts(settings.filenamePrefix, recipeName));
 
   const exportPdf = async () => {
     setBusy(true);
@@ -60,9 +101,10 @@ export default function ExportScreen() {
         quantity,
         fillSheet,
       });
-      const name = peekExportName(settings.filenamePrefix);
+      const opts = buildExportOpts(settings.filenamePrefix, recipeName);
+      const name = peekExportName(opts);
       downloadBytes(bytes, name);
-      bumpExportSeq(settings.filenamePrefix);
+      bumpExportSeq(opts);
       setDoneName(name);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -73,9 +115,10 @@ export default function ExportScreen() {
   };
 
   const exportPng = () => {
-    const name = peekExportName(settings.filenamePrefix, 'png');
+    const opts = buildExportOpts(settings.filenamePrefix, recipeName, 'png');
+    const name = peekExportName(opts);
     downloadDataUrl(labelPng, name);
-    bumpExportSeq(settings.filenamePrefix);
+    bumpExportSeq(opts);
     setDoneName(name);
   };
 
@@ -147,7 +190,13 @@ export default function ExportScreen() {
             )}
 
             {/* Quick Variant */}
-            <QuickVariantCard template={template} quantity={quantity} fillSheet={fillSheet} />
+            <QuickVariantCard
+              template={template}
+              quantity={quantity}
+              fillSheet={fillSheet}
+              brand={settings.filenamePrefix}
+              recipeName={recipeName}
+            />
 
             {/* Avery Print Preflight */}
             {!preflightDismissed && (
@@ -209,10 +258,14 @@ function QuickVariantCard({
   template,
   quantity,
   fillSheet,
+  brand,
+  recipeName,
 }: {
   template: AveryTemplate;
   quantity: number;
   fillSheet: boolean;
+  brand: string;
+  recipeName: string;
 }) {
   const { t } = useTranslation();
   const settings  = useAppStore((s) => s.settings);
@@ -255,9 +308,10 @@ function QuickVariantCard({
       const variantPng = await editor.exportVariantPng(json, selected, replacement, template, settings);
 
       const bytes = await buildLabelSheetPdf({ template, pngDataUrl: variantPng, quantity, fillSheet });
-      const name = peekExportName(`${settings.filenamePrefix}-VAR`);
+      const opts: ExportNameOptions = { brand, recipeName, series: 'variant' };
+      const name = peekExportName(opts);
       downloadBytes(bytes, name);
-      bumpExportSeq(`${settings.filenamePrefix}-VAR`);
+      bumpExportSeq(opts);
       setDone(name);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Export failed');

@@ -3,10 +3,14 @@ import type {
   AppSettings,
   AssetRecord,
   Collection,
+  CustomMaterial,
   DesignVersion,
   Draft,
+  ExpenseCategory,
   Ingredient,
   LabelSet,
+  Receipt,
+  ReceiptLineItem,
   Recipe,
   SetPurchase,
 } from '@/types';
@@ -17,12 +21,6 @@ const uid = () =>
     : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs } from '@/lib/inventoryMath';
-
-export {
-  calculateFractionalCost,
-  calculateProfitMargin,
-  calculateRecipeMaterialCogs,
-} from '@/lib/inventoryMath';
 
 function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
   const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
@@ -72,7 +70,61 @@ export const ingredientsRepo = {
     if (!ing) return;
     await db.ingredients.update(id, { active: !ing.active, updatedAt: Date.now() });
   },
+  /** Deactivates every active ingredient whose id is not in `keepIds`. */
+  async deactivateExcept(keepIds: Set<string>): Promise<number> {
+    const active = await db.ingredients.filter((i) => i.active === true).toArray();
+    const now = Date.now();
+    let count = 0;
+    for (const ing of active) {
+      if (!keepIds.has(ing.id)) {
+        await db.ingredients.update(ing.id, { active: false, updatedAt: now });
+        count++;
+      }
+    }
+    return count;
+  },
+  /** Deactivates every currently active ingredient. */
+  async deactivateAll(): Promise<number> {
+    return this.deactivateExcept(new Set());
+  },
   remove: (id: string) => db.ingredients.delete(id),
+};
+
+// --- Custom Materials & Packaging --------------------------------------------
+
+export const customMaterialsRepo = {
+  all: () => db.customMaterials.orderBy('name').toArray(),
+  active: () =>
+    db.customMaterials
+      .filter((m) => m.active === true)
+      .sortBy('name'),
+  inactive: () =>
+    db.customMaterials
+      .filter((m) => m.active !== true)
+      .sortBy('name'),
+  async create(
+    input: Omit<CustomMaterial, 'id' | 'createdAt' | 'updatedAt'>,
+  ): Promise<CustomMaterial> {
+    const now = Date.now();
+    const rec: CustomMaterial = {
+      ...input,
+      active: input.active ?? true,
+      id: uid(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.customMaterials.add(rec);
+    return rec;
+  },
+  async update(id: string, patch: Partial<CustomMaterial>) {
+    await db.customMaterials.update(id, { ...patch, updatedAt: Date.now() });
+  },
+  async toggleActive(id: string) {
+    const material = await db.customMaterials.get(id);
+    if (!material) return;
+    await db.customMaterials.update(id, { active: !material.active, updatedAt: Date.now() });
+  },
+  remove: (id: string) => db.customMaterials.delete(id),
 };
 
 // --- Recipes ---------------------------------------------------------------
@@ -290,6 +342,100 @@ export const setPurchasesRepo = {
     await db.setPurchases.update(id, patch);
   },
   remove: (id: string) => db.setPurchases.delete(id),
+};
+
+// --- Receipts ----------------------------------------------------------------
+
+function computeReceiptTotals(lineItems: ReceiptLineItem[], tax?: number) {
+  const subtotal = lineItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const total = subtotal + (tax ?? 0);
+  return { subtotal, total };
+}
+
+/**
+ * Pushes each line item's unitCost back into the Ingredient or Custom
+ * Material it's linked to, when the line item opts in via `syncPrice`.
+ * Ingredients store the *total* paid for a purchase (purchasePrice) plus the
+ * quantity (purchaseSize), so a receipt line syncs quantity → purchaseSize
+ * and lineTotal → purchasePrice. Custom Materials store a flat per-unit
+ * cost, so a receipt line syncs unitCost → cost directly.
+ */
+async function syncLineItemPrices(lineItems: ReceiptLineItem[]) {
+  for (const item of lineItems) {
+    if (!item.syncPrice) continue;
+    if (item.ingredientId) {
+      const ing = await db.ingredients.get(item.ingredientId);
+      if (ing) {
+        await ingredientsRepo.update(item.ingredientId, {
+          purchaseSize: item.quantity,
+          purchasePrice: item.lineTotal,
+        });
+      }
+    } else if (item.materialId) {
+      const material = await db.customMaterials.get(item.materialId);
+      if (material) {
+        await customMaterialsRepo.update(item.materialId, { cost: item.unitCost });
+      }
+    }
+  }
+}
+
+export const receiptsRepo = {
+  all: async () => {
+    const asc = await db.receipts.orderBy('date').toArray();
+    return asc.reverse();
+  },
+  get: (id: string) => db.receipts.get(id),
+  async create(
+    input: Omit<Receipt, 'id' | 'createdAt' | 'updatedAt' | 'subtotal' | 'total'>,
+  ): Promise<Receipt> {
+    const now = Date.now();
+    const { subtotal, total } = computeReceiptTotals(input.lineItems, input.tax);
+    const rec: Receipt = { ...input, subtotal, total, id: uid(), createdAt: now, updatedAt: now };
+    await db.receipts.add(rec);
+    await syncLineItemPrices(rec.lineItems);
+    return rec;
+  },
+  async update(
+    id: string,
+    patch: Partial<Omit<Receipt, 'id' | 'createdAt' | 'subtotal' | 'total'>>,
+  ) {
+    const existing = await db.receipts.get(id);
+    if (!existing) return;
+    const merged = { ...existing, ...patch };
+    const { subtotal, total } = computeReceiptTotals(merged.lineItems, merged.tax);
+    await db.receipts.update(id, { ...patch, subtotal, total, updatedAt: Date.now() });
+    if (patch.lineItems) await syncLineItemPrices(patch.lineItems);
+  },
+  remove: (id: string) => db.receipts.delete(id),
+  /** Totals for this month / this year / all time, plus a spend-by-category breakdown. */
+  summarize(receipts: Receipt[]) {
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${now.getMonth()}`;
+    const year = now.getFullYear();
+
+    let thisMonth = 0;
+    let thisYear = 0;
+    let allTime = 0;
+    const byCategory = new Map<ExpenseCategory, number>();
+
+    for (const r of receipts) {
+      const d = new Date(r.date);
+      allTime += r.total;
+      if (d.getFullYear() === year) {
+        thisYear += r.total;
+        if (`${d.getFullYear()}-${d.getMonth()}` === monthKey) thisMonth += r.total;
+      }
+      byCategory.set(r.category, (byCategory.get(r.category) ?? 0) + r.total);
+    }
+
+    return {
+      thisMonth,
+      thisYear,
+      allTime,
+      byCategory: Array.from(byCategory.entries()).sort((a, b) => b[1] - a[1]),
+    };
+  },
 };
 
 // --- Settings --------------------------------------------------------------

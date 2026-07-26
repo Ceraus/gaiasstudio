@@ -164,8 +164,30 @@ const api: GaiaTestApi = {
   },
 };
 
+export interface GaiaMaintenanceApi {
+  runRosaMaintenance: () => Promise<import('@/lib/maintenance').RosaMaintenanceResult>;
+  deactivateAllIngredients: () => Promise<number>;
+  restoreSeedRecipes: () => Promise<number>;
+}
+
+const maintenanceApi: GaiaMaintenanceApi = {
+  runRosaMaintenance: async () => {
+    const { runRosaMaintenance } = await import('@/lib/maintenance');
+    return runRosaMaintenance();
+  },
+  deactivateAllIngredients: async () => {
+    const { ingredientsRepo } = await import('@/db/repositories');
+    return ingredientsRepo.deactivateAll();
+  },
+  restoreSeedRecipes: async () => {
+    const { forceRestoreSeedRecipes } = await import('@/data/recipeSeed');
+    return forceRestoreSeedRecipes();
+  },
+};
+
 if (typeof window !== 'undefined') {
   (window as unknown as { gaiaTest: GaiaTestApi }).gaiaTest = api;
+  (window as unknown as { gaiaMaintenance: GaiaMaintenanceApi }).gaiaMaintenance = maintenanceApi;
   // The smoke test drives screen navigation and editor view toggles through the
   // same stores the UI uses, rather than reaching into React internals.
   (window as unknown as { gaiaTestStores: unknown }).gaiaTestStores = {

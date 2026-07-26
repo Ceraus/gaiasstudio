@@ -161,15 +161,47 @@ export async function buildMixedSheetPdf({
   return doc.save();
 }
 
-/** Persistent per-prefix sequence so files are named PREFIX___01.pdf, PREFIX___02.pdf … */
-export function peekExportName(prefix: string, ext = 'pdf'): string {
-  const key = `gaia:seq:${prefix}`;
-  const next = (Number(localStorage.getItem(key)) || 0) + 1;
-  return `${prefix}___${String(next).padStart(2, '0')}.${ext}`;
+/** Options for exported file names: `Gaia - Lavender Dream - v01.pdf` */
+export interface ExportNameOptions {
+  /** Brand segment — usually from Settings (defaults to "Gaia"). */
+  brand?: string;
+  /** Recipe or product name (middle segment). */
+  recipeName?: string;
+  /** Separate version counter per series (e.g. batch, variant). */
+  series?: string;
+  ext?: string;
 }
 
-export function bumpExportSeq(prefix: string) {
-  const key = `gaia:seq:${prefix}`;
+function formatBrand(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return 'Gaia';
+  return trimmed.replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+}
+
+function sanitizePart(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 48) || 'Label';
+}
+
+function seqStorageKey(opts: ExportNameOptions): string {
+  const brand = (opts.brand ?? 'Gaia').toLowerCase();
+  const recipe = sanitizePart(opts.recipeName ?? 'Label').toLowerCase();
+  const series = (opts.series ?? 'default').toLowerCase();
+  return `${brand}|${recipe}|${series}`;
+}
+
+/** Preview the next export file name without incrementing the counter. */
+export function peekExportName(opts: ExportNameOptions): string {
+  const ext = opts.ext ?? 'pdf';
+  const brand = formatBrand(opts.brand ?? 'Gaia');
+  const recipe = sanitizePart(opts.recipeName ?? 'Label');
+  const key = `gaia:seq:${seqStorageKey(opts)}`;
+  const next = (Number(localStorage.getItem(key)) || 0) + 1;
+  const version = `v${String(next).padStart(2, '0')}`;
+  return `${brand} - ${recipe} - ${version}.${ext}`;
+}
+
+export function bumpExportSeq(opts: ExportNameOptions) {
+  const key = `gaia:seq:${seqStorageKey(opts)}`;
   const next = (Number(localStorage.getItem(key)) || 0) + 1;
   localStorage.setItem(key, String(next));
 }

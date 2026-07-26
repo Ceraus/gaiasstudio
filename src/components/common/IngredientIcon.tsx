@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { IngredientCategory } from '@/types';
 import { getIngredientSpecificIcon, getIngredientColorfulIcon } from '@/data/ingredientIconPaths';
+import { getCategoryLabel, getIngredientDisplayName } from '@/lib/ingredientI18n';
 
 interface Props {
   category?: IngredientCategory;
@@ -232,8 +233,8 @@ export default function IngredientIcon({ category = 'other', name, className = '
   const { t } = useTranslation();
   const sizeCls = size === 'sm' ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-lg';
   const titleText = name
-    ? t(`ingredientNames.${name.toLowerCase().replace(/ /g, '_')}`, name)
-    : CATEGORY_LABELS[category];
+    ? getIngredientDisplayName(name, t)
+    : getCategoryLabel(category, t);
 
   // ── Colorful full-SVG override (new flat-design 40×40 icons) ──────────────
   const colorfulSvg = name ? getIngredientColorfulIcon(name) : undefined;

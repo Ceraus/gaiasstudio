@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, DollarSign, Eye, FlaskConical, Info, Loader2, Package, Plus, Sparkles, Trash2 } from 'lucide-react';
-import type { Ingredient, IngredientCategory, Recipe } from '@/types';
-import { ingredientsRepo, recipesRepo } from '@/db/repositories';
+import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, DollarSign, Eye, FlaskConical, Info, Loader2, Package, Plus, Sparkles, Trash2 } from 'lucide-react';
+import type { CustomMaterial, Ingredient, IngredientCategory, Recipe } from '@/types';
+import { customMaterialsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import {
   calculateProfitMargin,
   calculateRecipeMaterialCogs,
@@ -10,6 +10,7 @@ import {
   MARGIN_HEALTH_CLASSES,
 } from '@/lib/inventoryMath';
 import { suggestBenefitStatement } from '@/lib/localAi';
+import { getIngredientDisplayName } from '@/lib/ingredientI18n';
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import BenefitPicker from '@/components/screens/BenefitPicker';
@@ -142,6 +143,7 @@ export default function RecipesScreen() {
   const settings        = useAppStore((s) => s.settings);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [customMaterials, setCustomMaterials] = useState<CustomMaterial[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<RecipeForm>(emptyForm);
   const [savedToast, setSavedToast] = useState(false);
@@ -168,6 +170,7 @@ export default function RecipesScreen() {
   const reload = async () => {
     setRecipes(await recipesRepo.all());
     setIngredients(await ingredientsRepo.all());
+    setCustomMaterials(await customMaterialsRepo.active());
   };
   useEffect(() => {
     void reload();
@@ -307,9 +310,6 @@ export default function RecipesScreen() {
     setSuggestingBenefit(true);
     try {
       const result = await suggestBenefitStatement({
-        backend: settings.localAiBackend ?? 'bundled',
-        baseUrl: settings.localAiBaseUrl || 'http://localhost:11434',
-        model: settings.localAiModel || 'llama3.2:3b',
         recipeName: form.name,
         ingredients: selectedIngredientsForSuggest.map((i) => ({
           name: i.name,
@@ -345,8 +345,23 @@ export default function RecipesScreen() {
 
   const genCostId = () => `cc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  const handleAddCustomCost = async (item: { name: string; cost: number; unit?: string }) => {
-    const newItem = { ...item, id: genCostId() };
+  const handleAddCustomCost = async (
+    item: { name: string; cost: number; unit?: string; materialId?: string },
+    saveToLibrary?: boolean,
+  ) => {
+    let materialId = item.materialId;
+    if (saveToLibrary && !materialId) {
+      const created = await customMaterialsRepo.create({
+        name: item.name,
+        category: 'other',
+        cost: item.cost,
+        unit: item.unit,
+        active: true,
+      });
+      materialId = created.id;
+      setCustomMaterials(await customMaterialsRepo.active());
+    }
+    const newItem = { ...item, materialId, id: genCostId() };
     setForm((f) => {
       const updated = [...f.customCosts, newItem];
       if (editingId) void recipesRepo.update(editingId, { customCosts: updated });
@@ -374,22 +389,6 @@ export default function RecipesScreen() {
     };
     return calculateRecipeMaterialCogs(draft, ingredients);
   }, [ingredients, form.ingredientIds, form.ingredientAmounts, form.customCosts]);
-
-  const liveIngredientTotal = useMemo(() => {
-    let total = 0;
-    for (const id of form.ingredientIds) {
-      const ing = ingredients.find((i) => i.id === id);
-      if (!ing?.fractionalCost) continue;
-      const amt = parseFloat(form.ingredientAmounts[id] ?? '');
-      if (!isNaN(amt) && amt > 0) total += amt * ing.fractionalCost;
-    }
-    return total;
-  }, [ingredients, form.ingredientIds, form.ingredientAmounts]);
-
-  const liveCustomTotal = useMemo(
-    () => form.customCosts.reduce((s, c) => s + c.cost, 0),
-    [form.customCosts],
-  );
 
   const checklist = useMemo(() => {
     const selected = ingredients.filter((i) => form.ingredientIds.includes(i.id));
@@ -597,25 +596,23 @@ export default function RecipesScreen() {
                 </div>
               </div>
               <div>
-                <div className="flex items-center justify-between gap-2">
-                  <label className="label mb-0">{t('recipes.benefit')}</label>
-                  {settings.localAiEnabled && (
-                    <button
-                      type="button"
-                      className="mb-1 flex items-center gap-1 rounded-full bg-gaia-100 px-2.5 py-1 text-[11px] font-medium text-gaia-700 transition hover:bg-gaia-200 disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={() => void handleSuggestBenefit()}
-                      disabled={suggestingBenefit || selectedIngredientsForSuggest.length === 0}
-                      title={
-                        selectedIngredientsForSuggest.length === 0
-                          ? t('recipes.benefitSuggestNeedsIngredients', 'Add ingredients first so there is something to suggest from.')
-                          : t('recipes.benefitSuggestTooltip', 'Draft a benefit statement with local AI — you can edit or reject it.')
-                      }
-                    >
-                      {suggestingBenefit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                      {suggestingBenefit ? t('recipes.benefitSuggesting', 'Thinking…') : t('recipes.benefitSuggest', 'Suggest')}
-                    </button>
-                  )}
-                </div>
+                <label className="label">{t('recipes.benefit')}</label>
+                {settings.localAiEnabled && (
+                  <button
+                    type="button"
+                    className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-gaia-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-md ring-1 ring-gaia-500/30 transition hover:from-gaia-700 hover:to-violet-700 hover:shadow-lg disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:text-slate-500 disabled:shadow-none disabled:ring-slate-200"
+                    onClick={() => void handleSuggestBenefit()}
+                    disabled={suggestingBenefit || selectedIngredientsForSuggest.length === 0}
+                    title={
+                      selectedIngredientsForSuggest.length === 0
+                        ? t('recipes.benefitSuggestNeedsIngredients', 'Add ingredients first so there is something to suggest from.')
+                        : t('recipes.benefitSuggestTooltip', 'Draft a benefit statement with local AI — you can edit or reject it.')
+                    }
+                  >
+                    {suggestingBenefit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {suggestingBenefit ? t('recipes.benefitSuggesting', 'Drafting…') : t('recipes.benefitSuggest', 'AI Suggest')}
+                  </button>
+                )}
                 <BenefitPicker
                   value={form.benefit}
                   onChange={(val) => setForm({ ...form, benefit: val })}
@@ -760,36 +757,27 @@ export default function RecipesScreen() {
               </div>
             </div>
 
-            {/* Live Material Cost */}
-            <LiveCOGSCard
+            {/* Revenue, profit, and collapsible cost breakdown */}
+            <RevenueTrackerCard
+              materialCost={liveMaterialCogs}
+              retailPrice={form.retailPrice}
+              onRetailPriceChange={(val) => setForm((f) => ({ ...f, retailPrice: val }))}
               ingredients={ingredients}
               selectedIds={form.ingredientIds}
               amounts={form.ingredientAmounts}
               customCosts={form.customCosts}
             />
 
-            {/* Sticky Revenue & Profit */}
-            <RevenueTrackerCard
-              materialCost={liveMaterialCogs}
-              retailPrice={form.retailPrice}
-              onRetailPriceChange={(val) => setForm((f) => ({ ...f, retailPrice: val }))}
-            />
-
             {/* Custom Materials & Packaging */}
             <CustomMaterialsCard
               customCosts={form.customCosts}
+              library={customMaterials}
               onAdd={handleAddCustomCost}
               onRemove={handleRemoveCustomCost}
             />
 
             {/* Full Recipe Preview */}
             <RecipePreview form={form} ingredients={ingredients} />
-
-            {/* Batch Cost Calculator */}
-            <CostCalculatorCard
-              ingredientTotal={liveIngredientTotal}
-              customCostTotal={liveCustomTotal}
-            />
 
             <div className="flex items-center gap-3">
               <button className="btn-primary" onClick={save} disabled={!form.name.trim()}>
@@ -1012,8 +1000,7 @@ function IngredientPicker({
   const Row = ({ i }: { i: Ingredient }) => {
     const isSelected = selected.includes(i.id);
     const unit = i.measurementType === 'volume' ? t('inventory.drops', 'drops') : t('inventory.grams', 'g');
-    const ingKey = i.name.toLowerCase().replace(/ /g, '_');
-    const displayName = t(`ingredientNames.${ingKey}`, i.name);
+    const displayName = getIngredientDisplayName(i.name, t);
     return (
       <li>
         <div className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition ${isSelected ? 'bg-gaia-50' : 'hover:bg-slate-50'}`}>
@@ -1147,25 +1134,45 @@ function ChecklistRow({
 // ---------------------------------------------------------------------------
 function CustomMaterialsCard({
   customCosts,
+  library,
   onAdd,
   onRemove,
 }: {
-  customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
-  onAdd: (item: { name: string; cost: number; unit?: string }) => void;
+  customCosts: Array<{ id: string; name: string; cost: number; unit?: string; materialId?: string }>;
+  library: CustomMaterial[];
+  onAdd: (
+    item: { name: string; cost: number; unit?: string; materialId?: string },
+    saveToLibrary?: boolean,
+  ) => void;
   onRemove: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const [newName, setNewName] = useState('');
   const [newCost, setNewCost] = useState('');
   const [newUnit, setNewUnit] = useState('');
+  const [saveToLibrary, setSaveToLibrary] = useState(false);
+
+  const usedMaterialIds = useMemo(
+    () => new Set(customCosts.map((c) => c.materialId).filter(Boolean)),
+    [customCosts],
+  );
+  const availableLibraryItems = useMemo(
+    () => library.filter((m) => !usedMaterialIds.has(m.id)),
+    [library, usedMaterialIds],
+  );
+
+  const handlePickFromLibrary = (material: CustomMaterial) => {
+    onAdd({ name: material.name, cost: material.cost, unit: material.unit, materialId: material.id });
+  };
 
   const handleAdd = () => {
     const cost = parseFloat(newCost);
     if (!newName.trim() || isNaN(cost) || cost < 0) return;
-    onAdd({ name: newName.trim(), cost, unit: newUnit.trim() || undefined });
+    onAdd({ name: newName.trim(), cost, unit: newUnit.trim() || undefined }, saveToLibrary);
     setNewName('');
     setNewCost('');
     setNewUnit('');
+    setSaveToLibrary(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1178,6 +1185,26 @@ function CustomMaterialsCard({
         <Package className="h-4 w-4 shrink-0 text-violet-600" />
         <p className="label mb-0 flex-1">{t('recipes.customCosts', 'Custom Materials & Packaging')}</p>
       </div>
+
+      {availableLibraryItems.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-medium text-slate-500">
+            {t('materials.chooseFromLibrary', 'Add from your library')}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {availableLibraryItems.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => handlePickFromLibrary(m)}
+                className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700 transition hover:border-violet-400 hover:bg-violet-100"
+              >
+                {m.name} · ${m.cost.toFixed(2)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {customCosts.length === 0 ? (
         <p className="text-xs italic text-slate-400">
@@ -1254,32 +1281,85 @@ function CustomMaterialsCard({
           {t('recipes.addCustomCost', 'Add')}
         </button>
       </div>
+
+      <label className="flex items-center gap-2 text-xs text-slate-500">
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 accent-violet-600"
+          checked={saveToLibrary}
+          onChange={(e) => setSaveToLibrary(e.target.checked)}
+        />
+        {t('materials.saveToLibrary', 'Save to library for next time')}
+      </label>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Sticky Revenue & Profit widget — zero-math margin guidance
+// Revenue & Profit — total cost, retail price, margin, optional breakdown
 // ---------------------------------------------------------------------------
 function RevenueTrackerCard({
   materialCost,
   retailPrice,
   onRetailPriceChange,
+  ingredients,
+  selectedIds,
+  amounts,
+  customCosts,
 }: {
   materialCost: number;
   retailPrice: string;
   onRetailPriceChange: (val: string) => void;
+  ingredients: Ingredient[];
+  selectedIds: string[];
+  amounts: Record<string, string>;
+  customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
 }) {
   const { t } = useTranslation();
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+
   const retail = parseFloat(retailPrice);
   const hasRetail = !isNaN(retail) && retail > 0;
   const grossProfit = hasRetail ? retail - materialCost : undefined;
   const margin = hasRetail ? calculateProfitMargin(retail, materialCost) : undefined;
   const health = marginHealth(margin);
 
+  interface LineItem {
+    name: string;
+    category: Ingredient['category'];
+    amount: number;
+    lineCost: number;
+    unit: string;
+  }
+
+  const lines = useMemo<LineItem[]>(() => {
+    const result: LineItem[] = [];
+    for (const id of selectedIds) {
+      const ing = ingredients.find((i) => i.id === id);
+      if (!ing || ing.fractionalCost === undefined) continue;
+      const amt = parseFloat(amounts[id] ?? '');
+      if (isNaN(amt) || amt <= 0) continue;
+      result.push({
+        name: ing.name,
+        category: ing.category,
+        amount: amt,
+        lineCost: amt * ing.fractionalCost,
+        unit: ing.measurementType === 'volume' ? t('inventory.drops', 'drops') : t('inventory.grams', 'g'),
+      });
+    }
+    return result;
+  }, [ingredients, selectedIds, amounts, t]);
+
+  const hasBreakdown = lines.length > 0 || customCosts.length > 0;
+  const selectedWithPricing = useMemo(
+    () => selectedIds.filter((id) => ingredients.find((i) => i.id === id)?.fractionalCost !== undefined),
+    [selectedIds, ingredients],
+  );
+  const hasMissingPricing = selectedIds.length > 0 && selectedWithPricing.length < selectedIds.length;
+
   return (
-    <div className="sticky bottom-4 z-10 rounded-2xl bg-white p-4 shadow-lg ring-2 ring-gaia-200">
-      <div className="mb-3 flex items-center gap-2">
+    <div className="card space-y-3">
+      <div className="flex items-center gap-2">
         <DollarSign className="h-4 w-4 text-gaia-600" />
         <p className="text-sm font-semibold text-slate-800">{t('recipes.revenueTracker', 'Revenue & Profit')}</p>
       </div>
@@ -1310,7 +1390,7 @@ function RevenueTrackerCard({
       </div>
 
       {hasRetail && grossProfit !== undefined && margin !== undefined && (
-        <div className="mt-3 grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               {t('recipes.grossProfit', 'Gross Profit')}
@@ -1329,353 +1409,59 @@ function RevenueTrackerCard({
       )}
 
       {!hasRetail && (
-        <p className="mt-2 text-xs text-slate-400">
+        <p className="text-xs text-slate-400">
           {t('recipes.retailHint', 'Enter a retail price to see profit and margin.')}
         </p>
       )}
-    </div>
-  );
-}
 
-// ---------------------------------------------------------------------------
-// Live COGS — material cost calculated from ingredient prices + amounts
-// ---------------------------------------------------------------------------
-function LiveCOGSCard({
-  ingredients,
-  selectedIds,
-  amounts,
-  customCosts,
-}: {
-  ingredients: Ingredient[];
-  selectedIds: string[];
-  amounts: Record<string, string>;
-  customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
-
-  interface LineItem {
-    name: string;
-    category: Ingredient['category'];
-    amount: number;
-    fractionalCost: number;
-    lineCost: number;
-    unit: string;
-  }
-
-  const lines = useMemo<LineItem[]>(() => {
-    const result: LineItem[] = [];
-    for (const id of selectedIds) {
-      const ing = ingredients.find((i) => i.id === id);
-      if (!ing || ing.fractionalCost === undefined) continue;
-      const amt = parseFloat(amounts[id] ?? '');
-      if (isNaN(amt) || amt <= 0) continue;
-      result.push({
-        name: ing.name,
-        category: ing.category,
-        amount: amt,
-        fractionalCost: ing.fractionalCost,
-        lineCost: amt * ing.fractionalCost,
-        unit: ing.measurementType === 'volume' ? t('inventory.drops', 'drops') : t('inventory.grams', 'g'),
-      });
-    }
-    return result;
-  }, [ingredients, selectedIds, amounts, t]);
-
-  const ingredientTotal = useMemo(() => lines.reduce((s, l) => s + l.lineCost, 0), [lines]);
-  const customTotal = useMemo(() => customCosts.reduce((s, c) => s + c.cost, 0), [customCosts]);
-  const total = ingredientTotal + customTotal;
-
-  const selectedWithPricing = useMemo(() =>
-    selectedIds.filter((id) => ingredients.find((i) => i.id === id)?.fractionalCost !== undefined),
-    [selectedIds, ingredients],
-  );
-
-  const hasMissingPricing = selectedIds.length > 0 && selectedWithPricing.length < selectedIds.length;
-  const hasAnyContent = lines.length > 0 || customCosts.length > 0;
-
-  return (
-    <div className="card overflow-hidden">
-      <button
-        className="flex w-full items-center gap-2 text-left"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        <DollarSign className="h-4 w-4 shrink-0 text-emerald-600" />
-        <p className="label mb-0 flex-1">{t('recipes.liveCost', 'Live Material Cost')}</p>
-        {hasAnyContent && (
-          <span className="mr-2 font-bold text-emerald-700">${total.toFixed(4)}</span>
-        )}
-        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-      </button>
-
-      {open && (
-        <div className="mt-4 space-y-3">
-          {!hasAnyContent ? (
-            <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-700 ring-1 ring-amber-200">
-              <Info className="h-3.5 w-3.5 shrink-0" />
-              {t('recipes.liveCostHint', 'Add ingredient amounts above and set purchase prices in Inventory to see live costs.')}
-            </div>
-          ) : (
-            <>
-              {/* Ingredient lines */}
-              {lines.length > 0 && (
-                <div className="space-y-1">
-                  {lines.length > 0 && customCosts.length > 0 && (
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                      {t('recipes.ingredientSubtotal', 'Ingredients')}
-                    </p>
-                  )}
-                  {lines.map((line) => (
-                    <div key={line.name} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
-                      <span className="flex items-center gap-1.5 font-medium text-slate-700">
-                        <IngredientIcon category={line.category} name={line.name} size="sm" />
-                        {t(`ingredientNames.${line.name.toLowerCase().replace(/ /g, '_')}`, line.name)}
-                      </span>
-                      <span className="text-slate-500">{line.amount}{line.unit}</span>
-                      <span className="ml-4 font-semibold text-slate-800">${line.lineCost.toFixed(2)}</span>
-                    </div>
-                  ))}
-                  {customCosts.length > 0 && (
-                    <div className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-1.5 text-xs">
-                      <span className="font-medium text-slate-600">
-                        {t('recipes.ingredientSubtotal', 'Ingredients subtotal')}
-                      </span>
-                      <span className="font-semibold text-slate-700">${ingredientTotal.toFixed(4)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Custom cost lines */}
-              {customCosts.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-500">
-                    {t('recipes.customCosts', 'Custom Materials & Packaging')}
-                  </p>
-                  {customCosts.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between rounded-lg bg-violet-50 px-3 py-1.5 text-xs">
-                      <span className="flex items-center gap-1.5 font-medium text-slate-700">
-                        <Package className="h-3.5 w-3.5 text-violet-500" />
-                        {item.name}
-                      </span>
-                      <span className="text-slate-500">
-                        ${item.cost.toFixed(2)}{item.unit ? `/${item.unit}` : '/bar'}
-                      </span>
-                      <span className="ml-4 font-semibold text-violet-700">${item.cost.toFixed(4)}</span>
-                    </div>
-                  ))}
-                  {lines.length > 0 && (
-                    <div className="flex items-center justify-between rounded-lg bg-violet-100 px-3 py-1.5 text-xs">
-                      <span className="font-medium text-violet-700">
-                        {t('recipes.customMaterialsSubtotal', 'Custom materials subtotal')}
-                      </span>
-                      <span className="font-semibold text-violet-800">${customTotal.toFixed(4)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center justify-between rounded-xl bg-emerald-50 px-3 py-2.5">
-                <span className="text-sm font-semibold text-emerald-800">
-                  {t('recipes.totalMaterialCost', 'Total Raw Material Cost')}
-                </span>
-                <span className="text-lg font-bold text-emerald-700">${total.toFixed(4)}</span>
-              </div>
-            </>
-          )}
-
-          {hasMissingPricing && (
-            <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              {t('recipes.missingPricing', 'Some ingredients are missing purchase prices. Set them in the Inventory screen.')}
-            </p>
-          )}
+      {!hasBreakdown && selectedIds.length > 0 && (
+        <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-700 ring-1 ring-amber-200">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          {t('recipes.liveCostHint', 'Add ingredient amounts above and set purchase prices in Inventory to see live costs.')}
         </div>
       )}
-    </div>
-  );
-}
 
-// ---------------------------------------------------------------------------
-// Batch Cost Calculator
-// ---------------------------------------------------------------------------
-function CostCalculatorCard({
-  ingredientTotal = 0,
-  customCostTotal = 0,
-}: {
-  ingredientTotal?: number;
-  customCostTotal?: number;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [materialCost, setMaterialCost] = useState('');
-  const [numBars, setNumBars] = useState('');
-  const [overhead, setOverhead] = useState('25');
-  const [labor, setLabor] = useState('');
+      {hasMissingPricing && (
+        <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          {t('recipes.missingPricing', 'Some ingredients are missing purchase prices. Set them in the Inventory screen.')}
+        </p>
+      )}
 
-  const hasLiveCosts = ingredientTotal > 0 || customCostTotal > 0;
-  const bars = parseInt(numBars, 10);
-  const liveTotalBatch = hasLiveCosts && bars > 0
-    ? ingredientTotal + customCostTotal * bars
-    : null;
-  const liveCostPerBar = liveTotalBatch !== null && bars > 0
-    ? liveTotalBatch / bars
-    : null;
-
-  const results = useMemo(() => {
-    const mat = parseFloat(materialCost);
-    const b = parseInt(numBars, 10);
-    const ovh = parseFloat(overhead) / 100;
-    const lab = parseFloat(labor) || 0;
-    if (!mat || !b || b <= 0) return null;
-
-    const totalCost = mat + mat * ovh + lab;
-    const costPerBar = totalCost / b;
-    const retail3x = costPerBar * 3;
-    const retail4x = costPerBar * 4;
-    const margin3x = ((retail3x - costPerBar) / retail3x) * 100;
-
-    return { costPerBar, retail3x, retail4x, margin3x };
-  }, [materialCost, numBars, overhead, labor]);
-
-  const fmt = (n: number) => `$${n.toFixed(2)}`;
-
-  return (
-    <div className="card overflow-hidden">
-      <button
-        className="flex w-full items-center gap-2 text-left"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        <Calculator className="h-4 w-4 shrink-0 text-gaia-600" />
-        <p className="label mb-0 flex-1">{t('recipes.costCalc', 'Batch Cost Calculator')}</p>
-        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-      </button>
-
-      {open && (
-        <div className="mt-4 space-y-4">
-          {/* Live cost summary */}
-          {hasLiveCosts && (
-            <div className="rounded-xl bg-slate-50 ring-1 ring-slate-200 p-3 space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                {t('recipes.liveCostSummary', 'Live Cost Summary')}
-              </p>
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between text-slate-600">
-                  <span>{t('recipes.liveCostIngredients', 'Ingredient costs (batch)')}</span>
-                  <span className="font-medium">${ingredientTotal.toFixed(2)}</span>
+      {hasBreakdown && (
+        <div className="border-t border-slate-100 pt-3">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 text-left text-xs font-semibold text-slate-500 hover:text-slate-700"
+            onClick={() => setBreakdownOpen((o) => !o)}
+            aria-expanded={breakdownOpen}
+          >
+            {breakdownOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {t('recipes.costBreakdown', 'Cost breakdown')}
+          </button>
+          {breakdownOpen && (
+            <div className="mt-2 space-y-1">
+              {lines.map((line) => (
+                <div key={line.name} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
+                  <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                    <IngredientIcon category={line.category} name={line.name} size="sm" />
+                    {t(`ingredientNames.${line.name.toLowerCase().replace(/ /g, '_')}`, line.name)}
+                  </span>
+                  <span className="text-slate-500">{line.amount}{line.unit}</span>
+                  <span className="ml-4 font-semibold text-slate-800">${line.lineCost.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-violet-600">
-                  <span>{t('recipes.liveCostCustom', 'Custom materials (per bar)')}</span>
-                  <span className="font-medium">${customCostTotal.toFixed(2)}/bar</span>
+              ))}
+              {customCosts.map((item) => (
+                <div key={item.id} className="flex items-center justify-between rounded-lg bg-violet-50 px-3 py-1.5 text-xs">
+                  <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                    <Package className="h-3.5 w-3.5 text-violet-500" />
+                    {item.name}
+                  </span>
+                  <span className="font-semibold text-violet-700">${item.cost.toFixed(2)}</span>
                 </div>
-                {liveTotalBatch !== null && (
-                  <>
-                    <div className="flex justify-between border-t border-slate-200 pt-1 text-slate-700 font-semibold">
-                      <span>{t('recipes.liveCostTotalBatch', 'Total batch cost')} ({bars} bars)</span>
-                      <span>${liveTotalBatch.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-emerald-700 font-bold">
-                      <span>{t('recipes.liveCostPerBar', 'Cost per bar')}</span>
-                      <span>${liveCostPerBar!.toFixed(2)}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-              <button
-                className="mt-1 text-[11px] font-medium text-gaia-600 hover:underline"
-                onClick={() => setMaterialCost(
-                  bars > 0
-                    ? (ingredientTotal + customCostTotal * bars).toFixed(2)
-                    : (ingredientTotal + customCostTotal).toFixed(2)
-                )}
-              >
-                {t('recipes.useLiveCosts', 'Use live costs in calculator')} ↑
-              </button>
+              ))}
             </div>
           )}
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div>
-              <label className="label">{t('recipes.costMaterial', 'Materials ($)')}</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="input"
-                placeholder="e.g. 12.50"
-                value={materialCost}
-                onChange={(e) => setMaterialCost(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="label">{t('recipes.costBars', 'Number of Bars')}</label>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                className="input"
-                placeholder="e.g. 8"
-                value={numBars}
-                onChange={(e) => setNumBars(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="label">{t('recipes.costOverhead', 'Overhead %')}</label>
-              <input
-                type="number"
-                min={0}
-                max={200}
-                step={5}
-                className="input"
-                value={overhead}
-                onChange={(e) => setOverhead(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="label">{t('recipes.costLabor', 'Labor ($)')}</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="input"
-                placeholder="e.g. 5.00"
-                value={labor}
-                onChange={(e) => setLabor(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {results ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl bg-slate-50 p-3 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t('recipes.costPerBar', 'Cost / Bar')}</p>
-                <p className="mt-1 text-xl font-bold text-slate-800">{fmt(results.costPerBar)}</p>
-              </div>
-              <div className="rounded-xl bg-gaia-50 p-3 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-gaia-600">{t('recipes.retail3x', 'Retail (3×)')}</p>
-                <p className="mt-1 text-xl font-bold text-gaia-700">{fmt(results.retail3x)}</p>
-              </div>
-              <div className="rounded-xl bg-gaia-50 p-3 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-gaia-600">{t('recipes.retail4x', 'Retail (4×)')}</p>
-                <p className="mt-1 text-xl font-bold text-gaia-700">{fmt(results.retail4x)}</p>
-              </div>
-              <div className="rounded-xl bg-emerald-50 p-3 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600">{t('recipes.margin', 'Margin at 3×')}</p>
-                <p className="mt-1 text-xl font-bold text-emerald-700">{results.margin3x.toFixed(0)}%</p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-700 ring-1 ring-amber-200">
-              <Info className="h-3.5 w-3.5 shrink-0" />
-              {t('recipes.costHint', 'Enter batch details above to calculate cost per bar.')}
-            </div>
-          )}
-
-          <p className="text-xs text-slate-400">
-            {t('recipes.costNote', 'Overhead covers packaging, fragrances, colorants, labels, and supplies. Standard handmade soap retail is 3×–4× fully-loaded cost.')}
-          </p>
         </div>
       )}
     </div>
