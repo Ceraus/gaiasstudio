@@ -7,24 +7,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [2.0.34] - 2026-07-26
 
 ### Added
-- **Client Work Orders** — a new Orders screen for tracking client orders:
-  add line items from your recipes (pre-filled with retail price/bars-per-
-  batch), auto-compute ingredient usage against on-hand stock with shortfall
-  warnings, complete an order to deduct stock, and generate a PDF receipt
-  per order (Dexie v13: `clients`, `workOrders`, `workOrderItems`).
-- **Smart Pantry inventory redesign** — Inventory is now organized into
-  collapsible category shelves (Colorants, Essential & Fragrance Oils,
-  Carrier Oils & Butters, Botanicals & Additives, Soap Bases), an "in-use
-  only" toggle to hide anything not in a saved recipe, and "Quick Set" bulk
-  pricing per shelf.
-- **AI supplier URL importer** in Inventory — paste a supplier product
-  link and the app extracts total price + container size (local scraper
-  first, Gemini fallback) to prefill fractional-cost pricing.
-- **Stock-on-hand tracking** for ingredients — optional per-ingredient
-  stock levels that completed Work Orders deduct automatically.
-- **Multi-select layer grouping in the editor** — Ctrl/Cmd-click to toggle
-  layers into a multi-selection, Shift-click to select a range, then Group
-  them with one click; a single selected group can be Ungrouped again.
+- **Guided walkthroughs + Help hub** — a first-run "Show me around" tour and
+  five deeper tours (Design a label, Inventory & pricing, Orders & receipts,
+  Money & profit, Printing like a pro) that spotlight real UI elements,
+  navigate between screens, and fall back gracefully on empty states. All
+  replayable from a new **? Help hub** in the header, fully bilingual
+  (EN/ES). Snoozable **tip banners** on key screens: ✕ hides one for the
+  session, "Got it" turns it off for good, and the hub can bring them all
+  back. The first-run welcome card now hands off to the tour.
+- **Shopping List** on Inventory — tracked ingredients that are out or
+  running low collect themselves into one card, each with a **Buy** button
+  (opens the saved supplier page) and a **Restocked** button (+1 container).
+- **Per-client history & repeat orders** — filter the Orders list by client
+  (with order count and lifetime total), and a **Repeat** button that starts
+  a new order pre-filled with the same client and items.
+- **Order → labels bridge** — a **Print labels** button on each order queues
+  the newest saved design for every ordered recipe onto the mixed batch
+  sheet, quantities pre-filled to match the order.
+- **Profit dashboard** on Finances — revenue from completed Orders minus
+  logged receipts = real profit for This Month / This Year / All Time, plus
+  a 6-month sales-vs-spending breakdown (with a note keeping material COGS
+  from being double-counted).
+- **Lot codes on printed labels** — an optional batch code (pre-filled from
+  today's date) prints in tiny type inside the bottom edge of every label
+  for cure-date traceability; handles rotated ribbon templates too.
+- **Printer calibration page** — a downloadable test PDF (1-inch square,
+  0.5-inch margin frame, inch rulers) that diagnoses the classic "labels
+  print 2 mm off" scaling problem.
+- **Full backup & restore** — Settings → Data now exports the ENTIRE
+  database (every table, schema-agnostic, so future tables are included
+  automatically) as one JSON file, and can restore it atomically (one
+  transaction — a half-restored database is impossible; the app reloads
+  after). The old export only covered ingredients/recipes/assets and had no
+  restore. The desktop app additionally writes a **silent daily automatic
+  backup** on launch into `backups/` inside Gaia's Save System, pruned to
+  the newest 14 — Rosa never has to remember.
+- **Client Work Orders & automated sales receipts** (Dexie v13) — a new
+  Orders tab tracks what each client bought: type the client's name (existing
+  clients auto-suggest, no duplicates), pick the recipes sold + quantities
+  (unit prices pre-fill from each recipe's retail price), and mark the order
+  **Completed** — the app previews and deducts the exact fractional
+  ingredient usage (grams of base/oils, drops of EO) from tracked stock,
+  freezes a COGS snapshot, and silently saves a professional 8.5"×11" PDF
+  receipt to `work_orders/[Client_Name]_[ORD-xxx].pdf`. **Reopen** restores
+  exactly what was deducted. Complements the Finances screen (expenses) with
+  the sales side of the business.
+- **Supplier-link price importer** — a "Paste supplier link to auto-fill
+  pricing" field in the Inventory price modal. Three tiers: a local scraper
+  (JSON-LD → meta tags → regexes), the **bundled offline AI** with a
+  grammar-enforced JSON response (no key, nothing leaves the machine), and
+  Gemini via the stored Google AI Studio key as a last resort. Detected
+  price/size are confirmed before anything is saved; the link is remembered
+  per ingredient for re-checks.
+- **Stock on hand** (optional, per ingredient) with a "+1 container"
+  shortcut in the price modal and low/out-of-stock badges on the inventory
+  grid. Completed work orders deduct it automatically; untracked ingredients
+  are left alone.
+- **Bars per batch** on recipes (Revenue & Profit widget) — work orders
+  deduct `ingredient amounts ÷ bars per batch × quantity sold`.
+- **Strict 4-layer editor stack** — every canvas now spawns Base (white) →
+  Background slot (AI/photo art swaps in *in place*, order never shuffles) →
+  a template-shaped Legibility Overlay at 15% opacity → Foreground text/logo.
+  Auto-layouts preserve the structural stack and only regenerate content.
+- **Layers panel multi-select** — Ctrl/Cmd-click and Shift-click select
+  multiple layers, with Group/Ungroup buttons in a new action bar (alongside
+  the existing drag-to-reorder).
+- **`electron/schema.sql`** — the canonical better-sqlite3 DDL mirroring
+  Dexie v13 (all tables incl. clients / work_orders / work_order_items) for
+  the desktop persistence adapter.
 - **Custom Materials & Packaging library** — a reusable, shared list of
   packaging/materials costs (bags, boxes, labels) with categories, cost and
   unit, active/inactive states (Dexie v11). Managed from a new card on the
@@ -53,8 +103,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `electronAPI.openExternalUrl` bridge.
 
 ### Changed
+- **Bundled AI model upgraded: Qwen2.5-0.5B → Qwen3-4B-Instruct-2507**
+  (Q4_K_M, ~2.4 GB, Apache-2.0). One model now handles BOTH offline AI jobs:
+  noticeably better benefit-tagline suggestions (and real Spanish support),
+  plus reliable supplier-page extraction via node-llama-cpp's JSON-schema
+  grammar. Sized for CPU-only desktops (8-core, 64 GB target): taglines in a
+  few seconds, page extraction in tens of seconds. `npm run ai:fetch-model`
+  downloads the new file.
+- **Smoke suite hardening** — async page evaluations now stash results on a
+  window global and poll (fixes intermittent "Promise was collected" CDP
+  failures on modern Chrome), `puppeteer-core` bumped to ^25, and the stale
+  "25% larger by default" check now tests what the app actually does since
+  the 100%-default change: default 100%, and the Settings control really
+  scales to 125% and back. New checks cover the 4-layer stack and layers
+  multi-select → group → ungroup.
 - **Ollama support removed entirely** — the app now ships with the bundled,
-  fully offline local AI (Qwen2.5-0.5B) as the only AI backend. Settings no
+  fully offline local AI as the only AI backend. Settings no
   longer shows a backend toggle or Ollama URL/model fields, just an on/off
   toggle and "Test Connection" for the bundled model.
 - **AI Suggestions are more prominent** — the Recipe Builder's benefit

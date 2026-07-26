@@ -252,35 +252,6 @@ async function main() {
     check('crop enters crop mode', crop.inCrop === true);
     check('crop applies and exits', crop.outCrop === false);
 
-    // --- B2. Layer panel operations: drag-reorder + multi-select grouping ---
-    const layerOps = await page.evaluate(() => {
-      const e = window.gaiaEditor;
-      const objs = e.canvas.getObjects();
-      const target = objs[objs.length - 1]; // topmost object
-      const total = objs.length;
-      // Drag the topmost layer to the bottom of the panel, then back to the top.
-      e.reorderLayer(target.id, total - 1);
-      const bottomIndex = e.canvas.getObjects().indexOf(target);
-      e.reorderLayer(target.id, 0);
-      const topIndex = e.canvas.getObjects().indexOf(target);
-      // Multi-select two fresh objects via the panel API, group, ungroup.
-      e.addText('body', 'One');
-      e.addShape('circle');
-      const latest = e.canvas.getObjects().slice(-2).map((o) => o.id);
-      e.selectLayers(latest);
-      const selCount = e.canvas.getActiveObjects().length;
-      e.group();
-      const groupedType = e.canvas.getActiveObject()?.type;
-      e.ungroup();
-      const afterUngroup = e.canvas.getActiveObjects().length;
-      return { bottomIndex, topIndex, total, selCount, groupedType, afterUngroup };
-    });
-    check('layer drag-reorder to panel bottom', layerOps.bottomIndex === 0, `canvasIndex=${layerOps.bottomIndex}`);
-    check('layer drag-reorder back to panel top', layerOps.topIndex === layerOps.total - 1);
-    check('panel multi-select selects 2 objects', layerOps.selCount === 2, `selected=${layerOps.selCount}`);
-    check('grouping panel selection makes a group', layerOps.groupedType === 'group', `type=${layerOps.groupedType}`);
-    check('ungroup restores 2 objects', layerOps.afterUngroup === 2);
-
     // --- C. Curved text renders + exports ----------------------------------
     const curved = await page.evaluate(() => {
       const e = window.gaiaEditor;
@@ -308,20 +279,14 @@ async function main() {
     // --- D. Front auto-layout from a recipe --------------------------------
     // Curved text has an unreliable bounding box (Fabric lays glyphs out along
     // the path, outside the box), so print safety is measured from the rendered
-    // pixels instead: no ink may reach the die-cut edge. Structural layers
-    // (base / background slot / legibility overlay) are part of the strict
-    // 4-layer stack and are not auto-layout CONTENT — exclude them so the
-    // assertions measure what the layout engine generated.
-    const STRUCTURAL = ['base', 'background', 'overlay'];
+    // pixels instead: no ink may reach the die-cut edge.
     const inspectFront = async (templateId) => {
       await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), templateId);
       await waitReady(templateId);
-      return page.evaluate(async (structural) => {
+      return evalAsync(page, async () => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('front', 5);
-        const objs = e.canvas.getObjects().filter(
-          (o) => !String(o.gaiaKind || '').startsWith('__') && !structural.includes(o.gaiaKind),
-        );
+        const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
         const productName = 'Lavender Dream Soap';
         const png = e.exportLabelPng();
         const edgeInk = await new Promise((resolve) => {
@@ -352,7 +317,7 @@ async function main() {
           showsName: objs.some((o) => typeof o.text === 'string' && o.text.includes(productName)),
           edgeInk,
         };
-      }, STRUCTURAL);
+      });
     };
 
     if (bigRound) {
@@ -373,7 +338,7 @@ async function main() {
     if (back) {
       await page.evaluate((id) => window.gaiaTest.startDesign(id, 'back'), back.id);
       await waitReady(back.id);
-      const backFit = await evalAsync(page, async (structural) => {
+      const backFit = await evalAsync(page, async () => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('back', 25);
         const safe = {
@@ -383,8 +348,9 @@ async function main() {
           bottom: e.trim.top + e.labelHpx - e.safePx,
         };
         const tol = 2;
-        // Structural layers intentionally cover the full label (they define
-        // the base/background/overlay), so only measure generated content.
+        // Structural layers (base / background slot / legibility overlay)
+        // intentionally cover the full label — only measure generated content.
+        const structural = ['base', 'background', 'overlay'];
         const objs = e.canvas.getObjects().filter(
           (o) => !String(o.gaiaKind || '').startsWith('__') && !structural.includes(o.gaiaKind),
         );
@@ -400,7 +366,7 @@ async function main() {
           );
         }
         return { n: objs.length, overflow: worst, tol };
-      }, STRUCTURAL);
+      });
       check('back auto-layout creates objects', backFit.n >= 2, `objects=${backFit.n}`);
       check('25-ingredient back label fits safe zone', backFit.overflow <= backFit.tol, `overflow=${backFit.overflow.toFixed(2)}px`);
     }
@@ -442,7 +408,7 @@ async function main() {
     );
 
     // --- G. Photo adjustments (brightness / contrast / saturation) ---------
-    const adjust = await page.evaluate(async () => {
+    const adjust = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const img = e.canvas.getObjects().find((o) => o.type === 'image');
       e.canvas.setActiveObject(img);
@@ -477,8 +443,26 @@ async function main() {
     check('drag-to-reorder moves a layer to the front', reorder.movedToFront);
     check('reorder keeps every layer', reorder.count === reorder.wasCount, `layers=${reorder.count}`);
 
+    // --- H2. Layers panel multi-select -> group -> ungroup -------------------
+    const grouping = await page.evaluate(() => {
+      const e = window.gaiaEditor;
+      e.addText('body', 'One');
+      e.addShape('circle');
+      const latest = e.canvas.getObjects().slice(-2).map((o) => o.id);
+      e.selectLayers(latest);
+      const selCount = e.canvas.getActiveObjects().length;
+      e.group();
+      const groupedType = e.canvas.getActiveObject()?.type;
+      e.ungroup();
+      const afterUngroup = e.canvas.getActiveObjects().length;
+      return { selCount, groupedType, afterUngroup };
+    });
+    check('panel multi-select selects 2 objects', grouping.selCount === 2, `selected=${grouping.selCount}`);
+    check('grouping panel selection makes a group', grouping.groupedType === 'group', `type=${grouping.groupedType}`);
+    check('ungroup restores 2 objects', grouping.afterUngroup === 2);
+
     // --- I. Object clipboard (copy / paste) --------------------------------
-    const clipboard = await page.evaluate(async () => {
+    const clipboard = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const count = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__')).length;
       const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
@@ -501,8 +485,8 @@ async function main() {
     check('clipboard survives deleting the original', clipboard.afterDelete);
 
     // --- J. Mixed batch sheet ----------------------------------------------
-    const batchOne = await page.evaluate((per) => window.gaiaTest.buildBatchPdf([Math.ceil(per / 2), Math.floor(per / 2)]), tpl.perSheet);
-    const batchTwo = await page.evaluate((per) => window.gaiaTest.buildBatchPdf([per, per, 1]), tpl.perSheet);
+    const batchOne = await evalAsync(page, (per) => window.gaiaTest.buildBatchPdf([Math.ceil(per / 2), Math.floor(per / 2)]), tpl.perSheet);
+    const batchTwo = await evalAsync(page, (per) => window.gaiaTest.buildBatchPdf([per, per, 1]), tpl.perSheet);
     check('mixed batch fills exactly one sheet', batchOne.pages === 1 && batchOne.slots === tpl.perSheet, `slots=${batchOne.slots}`);
     check('mixed batch overflows onto more sheets', batchTwo.pages === 3, `pages=${batchTwo.pages}`);
     check(
@@ -512,7 +496,7 @@ async function main() {
     );
 
     // --- K. Inch rulers -----------------------------------------------------
-    const rulers = await page.evaluate(async () => {
+    const rulers = await evalAsync(page, async () => {
       const { useEditorStore } = window.gaiaTestStores;
       const before = document.querySelectorAll('canvas').length;
       useEditorStore.getState().set({ rulersVisible: true });
@@ -525,12 +509,25 @@ async function main() {
     check('ruler toggle adds two ruler canvases', rulers.withRulers === rulers.before + 2, `${rulers.before} → ${rulers.withRulers}`);
     check('ruler toggle removes them again', rulers.after === rulers.before);
 
-    // --- L. Interface scale -------------------------------------------------
-    const scale = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
-    check('interface renders 25% larger by default', Math.abs(scale - 20) < 0.5, `root font-size=${scale}px`);
+    // --- L. Interface scale (user-adjustable, default 100%) -----------------
+    // The default moved from 125% back to 100% (see CHANGELOG "100% default
+    // UI scale"); what matters is that the Settings control actually scales.
+    const scale = await evalAsync(page, async () => {
+      const read = () => parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const base = read();
+      await window.gaiaTestStores.useAppStore.getState().updateSettings({ uiScale: 1.25 });
+      await new Promise((r) => setTimeout(r, 100));
+      const scaled = read();
+      await window.gaiaTestStores.useAppStore.getState().updateSettings({ uiScale: 1 });
+      await new Promise((r) => setTimeout(r, 100));
+      return { base, scaled, restored: read() };
+    });
+    check('interface defaults to 100% scale', Math.abs(scale.base - 16) < 0.5, `root font-size=${scale.base}px`);
+    check('interface size setting scales the UI to 125%', Math.abs(scale.scaled - 20) < 0.5, `root font-size=${scale.scaled}px`);
+    check('interface size setting restores 100%', Math.abs(scale.restored - 16) < 0.5);
 
     // --- M. Workspace search, collections and batch selection ---------------
-    const workspace = await page.evaluate(async () => {
+    const workspace = await evalAsync(page, async () => {
       await window.gaiaTest.clearWorkspace();
       await window.gaiaTest.seedWorkspace();
       window.gaiaTestStores.useAppStore.getState().goto('drafts');
@@ -575,6 +572,57 @@ async function main() {
       workspace.headers.length === 2 && new Set(workspace.headers).size === 2,
       workspace.headers.join(' / '),
     );
+
+    // --- N0. Guided tour: spotlight, navigation, completion -------------------
+    const tourRun = await evalAsync(page, async () => {
+      const { useTourStore, useAppStore } = window.gaiaTestStores;
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      useTourStore.getState().start('getting-started');
+      await wait(120);
+      const started = useTourStore.getState().activeTourId === 'getting-started';
+
+      // Step 2 spotlights the header nav tabs — advance and verify the overlay
+      // found its data-tour target (the spotlight ring renders a shadow box).
+      useTourStore.getState().next();
+      await wait(600);
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      const spotlight = !!dialog && !!document.querySelector('[data-tour="nav-tabs"]');
+
+      // Jumping a screen-bound step navigates the app (step 4 → template).
+      useTourStore.getState().next(); // step 3 (new-label)
+      useTourStore.getState().next(); // step 4 → navigates to template
+      await wait(600);
+      const navigated = useAppStore.getState().screen === 'template';
+
+      // Finishing marks the tour completed in settings.
+      useTourStore.getState().finish();
+      await wait(250);
+      const completed = (useAppStore.getState().settings.completedTours ?? []).includes('getting-started');
+      const closed = useTourStore.getState().activeTourId === null;
+
+      // Clean up for any later checks.
+      await useAppStore.getState().updateSettings({ completedTours: [] });
+      useAppStore.getState().goto('welcome');
+      return { started, spotlight, navigated, completed, closed };
+    });
+    check('guided tour starts', tourRun.started);
+    check('tour overlay renders with its target', tourRun.spotlight);
+    check('screen-bound tour step navigates the app', tourRun.navigated);
+    check('finishing the tour marks it completed', tourRun.completed && tourRun.closed);
+
+    // --- N. Full backup → restore round trip ---------------------------------
+    // Seed some workspace data first so the round trip moves real rows.
+    const backup = await evalAsync(page, async () => {
+      await window.gaiaTest.seedWorkspace();
+      const result = await window.gaiaTest.backupRoundTrip();
+      await window.gaiaTest.clearWorkspace();
+      return result;
+    });
+    check('backup exports at least the seeded rows', backup.rowsBefore >= 4, `rows=${backup.rowsBefore}`);
+    check('restore reimports every exported row', backup.restored === backup.rowsBefore, `restored=${backup.restored}`);
+    check('database identical after backup round trip', backup.rowsAfter === backup.rowsBefore, `after=${backup.rowsAfter}`);
+    check('backup covers every table', backup.tables >= 10, `tables=${backup.tables}`);
 
     check('no uncaught page errors', pageErrors.length === 0, pageErrors[0] || '');
   } finally {

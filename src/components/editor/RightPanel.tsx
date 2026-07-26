@@ -172,6 +172,7 @@ export default function RightPanel() {
     <aside
       className="relative flex shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-white"
       style={{ width }}
+      data-tour="editor-window"
     >
       {/* Drag handle — left edge */}
       <div

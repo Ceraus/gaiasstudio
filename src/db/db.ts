@@ -36,8 +36,8 @@ export class GaiaDatabase extends Dexie {
   settings!: Table<AppSettings, string>;
   labelSets!: Table<LabelSet, string>;
   drafts!: Table<Draft, string>;
-  collections!: Table<Collection, string>;
   setPurchases!: Table<SetPurchase, string>;
+  collections!: Table<Collection, string>;
   customMaterials!: Table<CustomMaterial, string>;
   receipts!: Table<Receipt, string>;
   clients!: Table<Client, string>;
@@ -140,11 +140,11 @@ export class GaiaDatabase extends Dexie {
       receipts: 'id, vendor, date, category, createdAt',
     });
 
-    // Version 13 — Clients & Work Orders (the business-tracker pipeline).
-    // Items live in their own table so the shape maps 1:1 onto the
-    // better-sqlite3 schema in electron/schema.sql. New Ingredient fields
-    // (supplierUrl, stockOnHand) and Recipe fields (barsPerBatch) are
-    // optional non-indexed properties — no data migration required.
+    // Version 13 — Clients & Work Orders (the SALES side; Receipts above are
+    // the expense side). Items live in their own table so the shape maps 1:1
+    // onto the better-sqlite3 schema in electron/schema.sql. New Ingredient
+    // fields (supplierUrl, stockOnHand) and the Recipe field (barsPerBatch)
+    // are optional non-indexed properties — no data migration required.
     this.version(13).stores({
       clients: 'id, name, createdAt',
       workOrders: 'id, orderNumber, clientId, status, createdAt',

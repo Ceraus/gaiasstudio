@@ -25,6 +25,7 @@ import { useAppStore } from '@/store/useAppStore';
 import averyData from '@/data/averyTemplates.json';
 import Modal from '@/components/common/Modal';
 import CollectionsModal from './CollectionsModal';
+import TipBanner from '@/components/tour/TipBanner';
 import { readableTextOn, tint } from '@/data/collectionPalette';
 
 interface PdfEntry {
@@ -241,10 +242,14 @@ export default function DraftsScreen() {
         {/* Workspace tab */}
         {tab === 'workspace' && (
           <>
+            <TipBanner
+              id="workspace-batch-print"
+              textDefault="Tick several designs and press “Print together” to fill one Avery sheet with mixed labels — a part-used sheet never goes to waste."
+            />
             {drafts.length > 0 && (
               <div className="mb-4 space-y-3">
                 {/* Search */}
-                <div className="relative">
+                <div className="relative" data-tour="workspace-batch">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
                     className="input pl-9 pr-9"

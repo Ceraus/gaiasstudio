@@ -19,21 +19,23 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, ClipboardList,
-  DollarSign, FileDown, Loader2, Package, Plus, ReceiptText, RotateCcw,
-  Trash2, UserRound, X,
+  Copy, DollarSign, FileDown, Loader2, Package, Plus, Printer, ReceiptText,
+  RotateCcw, Trash2, UserRound, X,
 } from 'lucide-react';
 import type { Client, Ingredient, Recipe, WorkOrder, WorkOrderItem } from '@/types';
 import {
   clientsRepo,
   computeOrderUsage,
+  draftsRepo,
   ingredientsRepo,
   recipesRepo,
   workOrdersRepo,
   type NewWorkOrderItemInput,
   type OrderUsageComputation,
 } from '@/db/repositories';
-import { buildReceiptPdf, receiptFileName, saveReceiptPdf } from '@/lib/receiptPdf';
+import { buildReceiptPdf, receiptFileName, saveReceiptPdf } from '@/lib/orderReceiptPdf';
 import Modal from '@/components/common/Modal';
+import TipBanner from '@/components/tour/TipBanner';
 import { useAppStore } from '@/store/useAppStore';
 
 const fmtMoney = (n: number) =>
@@ -44,10 +46,18 @@ const fmtDate = (ts: number) => new Date(ts).toLocaleDateString();
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
+/** Seed used by "Repeat order" to pre-fill the New Order modal. */
+export interface RepeatSeed {
+  clientName: string;
+  notes?: string;
+  items: Array<{ recipeId: string; quantity: number; unitPrice: number }>;
+}
+
 export default function WorkOrdersScreen() {
   const { t } = useTranslation();
   const goto = useAppStore((s) => s.goto);
   const settings = useAppStore((s) => s.settings);
+  const setBatchDraftIds = useAppStore((s) => s.setBatchDraftIds);
 
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [itemsByOrder, setItemsByOrder] = useState<Map<string, WorkOrderItem[]>>(new Map());
@@ -56,6 +66,8 @@ export default function WorkOrdersScreen() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
 
   const [showNewOrder, setShowNewOrder] = useState(false);
+  const [repeatSeed, setRepeatSeed] = useState<RepeatSeed | null>(null);
+  const [clientFilter, setClientFilter] = useState<string>(''); // '' = all clients
   const [completeTarget, setCompleteTarget] = useState<WorkOrder | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
@@ -103,6 +115,31 @@ export default function WorkOrdersScreen() {
     const cogs = completed.reduce((s, o) => s + (o.materialCost ?? 0), 0);
     return { openCount: open.length, completedCount: completed.length, revenue, cogs };
   }, [orders]);
+
+  // ── Per-client history filter ──────────────────────────────────────────────
+  const visibleOrders = useMemo(
+    () => (clientFilter ? orders.filter((o) => o.clientId === clientFilter) : orders),
+    [orders, clientFilter],
+  );
+
+  /** Only clients that actually have orders show up in the filter. */
+  const clientsWithOrders = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const o of orders) counts.set(o.clientId, (counts.get(o.clientId) ?? 0) + 1);
+    return clients
+      .filter((c) => counts.has(c.id))
+      .map((c) => ({ ...c, orderCount: counts.get(c.id) ?? 0 }));
+  }, [clients, orders]);
+
+  const clientHistory = useMemo(() => {
+    if (!clientFilter) return null;
+    const completed = visibleOrders.filter((o) => o.status === 'completed');
+    return {
+      name: clients.find((c) => c.id === clientFilter)?.name ?? '',
+      orders: visibleOrders.length,
+      spent: completed.reduce((s, o) => s + o.total, 0),
+    };
+  }, [clientFilter, visibleOrders, clients]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -160,6 +197,49 @@ export default function WorkOrdersScreen() {
     await reload();
   };
 
+  /** Pre-fills the New Order modal with an existing order's client + items. */
+  const repeatOrder = (order: WorkOrder) => {
+    const items = (itemsByOrder.get(order.id) ?? [])
+      .filter((i) => recipes.some((r) => r.id === i.recipeId)) // deleted recipes can't be reordered
+      .map((i) => ({ recipeId: i.recipeId, quantity: i.quantity, unitPrice: i.unitPrice }));
+    setRepeatSeed({ clientName: order.clientName, notes: order.notes, items });
+    setShowNewOrder(true);
+  };
+
+  /**
+   * Order → Batch Print bridge: finds the newest saved design linked to each
+   * ordered recipe and opens the ink-saving batch sheet pre-filled with the
+   * ordered quantities.
+   */
+  const printLabels = async (order: WorkOrder) => {
+    const items = itemsByOrder.get(order.id) ?? [];
+    const drafts = await draftsRepo.all(); // newest first
+    const ids: string[] = [];
+    const quantities: Record<string, number> = {};
+    const missing: string[] = [];
+    for (const item of items) {
+      const draft = drafts.find((d) => d.recipeId === item.recipeId);
+      if (draft) {
+        if (!ids.includes(draft.id)) ids.push(draft.id);
+        quantities[draft.id] = (quantities[draft.id] ?? 0) + item.quantity;
+      } else {
+        missing.push(item.recipeName);
+      }
+    }
+    if (ids.length === 0) {
+      showToast(t('orders.noLinkedDesigns', 'No saved label designs are linked to these recipes yet. Design a label while the recipe is active — it links automatically.'));
+      return;
+    }
+    if (missing.length > 0) {
+      showToast(t('orders.someLinkedDesigns', 'Queued {{n}} design(s) — no design found for: {{missing}}', {
+        n: ids.length,
+        missing: missing.join(', '),
+      }));
+    }
+    setBatchDraftIds(ids, quantities);
+    goto('batch');
+  };
+
   const deletable = orders.find((o) => o.id === confirmDeleteId) ?? null;
 
   return (
@@ -178,11 +258,16 @@ export default function WorkOrdersScreen() {
                 {t('orders.subtitle', 'Track what each client ordered. Completing an order deducts your ingredient stock and creates a PDF receipt automatically.')}
               </p>
             </div>
-            <button className="btn-primary" onClick={() => setShowNewOrder(true)}>
+            <button className="btn-primary" onClick={() => setShowNewOrder(true)} data-tour="new-order">
               <Plus className="h-4 w-4" />
               {t('orders.newOrder', 'New Order')}
             </button>
           </div>
+
+          <TipBanner
+            id="orders-complete-deducts"
+            textDefault="Marking an order Completed deducts the exact ingredients from stock and saves the client's PDF receipt automatically — and Reopen undoes it."
+          />
 
           {/* Stats */}
           {orders.length > 0 && (
@@ -235,20 +320,53 @@ export default function WorkOrdersScreen() {
               )}
             </div>
           ) : (
-            <div className="mt-6 space-y-3">
-              {orders.map((order) => (
-                <OrderCard
-                  key={order.id}
-                  order={order}
-                  items={itemsByOrder.get(order.id) ?? []}
-                  busy={busyOrderId === order.id}
-                  onComplete={() => setCompleteTarget(order)}
-                  onReceipt={() => void generateReceipt(order)}
-                  onReopen={() => void reopenOrder(order)}
-                  onDelete={() => setConfirmDeleteId(order.id)}
-                />
-              ))}
-            </div>
+            <>
+              {/* ── Per-client history filter ─────────────────────────────── */}
+              {clientsWithOrders.length > 0 && (
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <select
+                    className="input w-auto min-w-[180px] text-sm"
+                    value={clientFilter}
+                    onChange={(e) => setClientFilter(e.target.value)}
+                    aria-label={t('orders.filterByClient', 'Filter by client')}
+                  >
+                    <option value="">{t('orders.allClients', 'All clients')}</option>
+                    {clientsWithOrders.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.orderCount})
+                      </option>
+                    ))}
+                  </select>
+                  {clientHistory && (
+                    <span className="flex items-center gap-2 rounded-xl bg-gaia-50 px-3 py-1.5 text-xs font-medium text-gaia-700 ring-1 ring-gaia-200">
+                      <UserRound className="h-3.5 w-3.5" />
+                      {t('orders.clientHistory', '{{name}}: {{orders}} order(s) · {{spent}} lifetime', {
+                        name: clientHistory.name,
+                        orders: clientHistory.orders,
+                        spent: fmtMoney(clientHistory.spent),
+                      })}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-4 space-y-3">
+                {visibleOrders.map((order) => (
+                  <OrderCard
+                    key={order.id}
+                    order={order}
+                    items={itemsByOrder.get(order.id) ?? []}
+                    busy={busyOrderId === order.id}
+                    onComplete={() => setCompleteTarget(order)}
+                    onReceipt={() => void generateReceipt(order)}
+                    onReopen={() => void reopenOrder(order)}
+                    onDelete={() => setConfirmDeleteId(order.id)}
+                    onRepeat={() => repeatOrder(order)}
+                    onPrintLabels={() => void printLabels(order)}
+                  />
+                ))}
+              </div>
+            </>
           )}
 
         </div>
@@ -257,11 +375,13 @@ export default function WorkOrdersScreen() {
       {/* ── New Order modal ─────────────────────────────────────────────────── */}
       <NewOrderModal
         open={showNewOrder}
-        onClose={() => setShowNewOrder(false)}
+        onClose={() => { setShowNewOrder(false); setRepeatSeed(null); }}
         clients={clients}
         recipes={recipes}
+        seed={repeatSeed}
         onCreated={async (orderNumber) => {
           setShowNewOrder(false);
+          setRepeatSeed(null);
           await reload();
           showToast(t('orders.created', '{{n}} saved. Mark it Completed when the soaps are handed over.', { n: orderNumber }));
         }}
@@ -331,9 +451,13 @@ interface OrderCardProps {
   onReceipt: () => void;
   onReopen: () => void;
   onDelete: () => void;
+  onRepeat: () => void;
+  onPrintLabels: () => void;
 }
 
-function OrderCard({ order, items, busy, onComplete, onReceipt, onReopen, onDelete }: OrderCardProps) {
+function OrderCard({
+  order, items, busy, onComplete, onReceipt, onReopen, onDelete, onRepeat, onPrintLabels,
+}: OrderCardProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const isCompleted = order.status === 'completed';
@@ -426,6 +550,24 @@ function OrderCard({ order, items, busy, onComplete, onReceipt, onReopen, onDele
           <ReceiptText className="h-3.5 w-3.5" />
           {t('orders.receiptPdf', 'Receipt PDF')}
         </button>
+        <button
+          className="btn-secondary px-3 py-1.5 text-xs"
+          disabled={busy}
+          onClick={onPrintLabels}
+          title={t('orders.printLabelsTitle', 'Queue the label designs for these soaps onto a batch print sheet')}
+        >
+          <Printer className="h-3.5 w-3.5" />
+          {t('orders.printLabels', 'Print labels')}
+        </button>
+        <button
+          className="btn-ghost px-3 py-1.5 text-xs"
+          disabled={busy}
+          onClick={onRepeat}
+          title={t('orders.repeatTitle', 'Start a new order with the same client and soaps')}
+        >
+          <Copy className="h-3.5 w-3.5" />
+          {t('orders.repeat', 'Repeat')}
+        </button>
         {isCompleted && (
           <button className="btn-ghost px-3 py-1.5 text-xs" disabled={busy} onClick={onReopen}>
             <RotateCcw className="h-3.5 w-3.5" />
@@ -470,22 +612,35 @@ interface NewOrderModalProps {
   onClose: () => void;
   clients: Client[];
   recipes: Recipe[];
+  /** Pre-fill from "Repeat order" (client + items at their original prices). */
+  seed?: RepeatSeed | null;
   onCreated: (orderNumber: string) => void | Promise<void>;
 }
 
-function NewOrderModal({ open, onClose, clients, recipes, onCreated }: NewOrderModalProps) {
+function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: NewOrderModalProps) {
   const { t } = useTranslation();
   const [clientName, setClientName] = useState('');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Reset the form each time the modal opens.
+  // Reset the form each time the modal opens (seeded by "Repeat order" when set).
   useEffect(() => {
     if (open) {
-      setClientName('');
-      setNotes('');
-      setItems([{ key: newItemKey(), recipeId: recipes[0]?.id ?? '', quantity: '1', unitPrice: priceOf(recipes[0]) }]);
+      if (seed && seed.items.length > 0) {
+        setClientName(seed.clientName);
+        setNotes(seed.notes ?? '');
+        setItems(seed.items.map((i) => ({
+          key: newItemKey(),
+          recipeId: i.recipeId,
+          quantity: String(i.quantity),
+          unitPrice: String(i.unitPrice),
+        })));
+      } else {
+        setClientName(seed?.clientName ?? '');
+        setNotes('');
+        setItems([{ key: newItemKey(), recipeId: recipes[0]?.id ?? '', quantity: '1', unitPrice: priceOf(recipes[0]) }]);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);

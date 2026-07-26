@@ -100,12 +100,11 @@ interface RecipeForm {
   ingredientIds: string[];
   /** Usage amounts by ingredient ID. Weight → grams. Volume → drops. */
   ingredientAmounts: Record<string, string>;
-  /** Retail price per bar (USD) — pre-fills work-order line items. */
-  retailPrice: string;
-  /** How many bars one batch of the amounts above yields (blank = 1). */
-  barsPerBatch: string;
   color?: string;
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
+  retailPrice: string;
+  /** How many bars one batch of the amounts yields (blank = 1). Work orders divide by this. */
+  barsPerBatch: string;
 }
 
 /** Max recipe rows shown per page in "Your Recipes" — chosen so the list's
@@ -132,10 +131,10 @@ const emptyForm: RecipeForm = {
   footer: '',
   ingredientIds: [],
   ingredientAmounts: {},
-  retailPrice: '',
-  barsPerBatch: '',
   color: undefined,
   customCosts: [],
+  retailPrice: '',
+  barsPerBatch: '',
 };
 
 export default function RecipesScreen() {
@@ -210,10 +209,10 @@ export default function RecipesScreen() {
       footer: r.footer ?? '',
       ingredientIds: r.ingredientIds,
       ingredientAmounts: amounts,
-      retailPrice: r.retailPrice !== undefined ? String(r.retailPrice) : '',
-      barsPerBatch: r.barsPerBatch !== undefined ? String(r.barsPerBatch) : '',
       color: r.color,
       customCosts: r.customCosts ?? [],
+      retailPrice: r.retailPrice !== undefined ? String(r.retailPrice) : '',
+      barsPerBatch: r.barsPerBatch !== undefined ? String(r.barsPerBatch) : '',
     });
     setHighlightMissing(false);
     setBenefitSuggestion(null);
@@ -245,13 +244,25 @@ export default function RecipesScreen() {
       const n = parseFloat(v);
       if (!isNaN(n) && n > 0) ingredientAmounts[k] = n;
     }
-    const retailPrice = parseFloat(form.retailPrice);
-    const barsPerBatch = parseFloat(form.barsPerBatch);
     const payload = {
-      ...form,
+      name: form.name,
+      benefit: form.benefit,
+      netWeight: form.netWeight,
+      directions: form.directions,
+      warnings: form.warnings,
+      footer: form.footer,
+      ingredientIds: form.ingredientIds,
       ingredientAmounts,
-      retailPrice: !isNaN(retailPrice) && retailPrice > 0 ? retailPrice : undefined,
-      barsPerBatch: !isNaN(barsPerBatch) && barsPerBatch > 0 ? barsPerBatch : undefined,
+      color: form.color,
+      customCosts: form.customCosts,
+      retailPrice: (() => {
+        const n = parseFloat(form.retailPrice);
+        return !isNaN(n) && n > 0 ? n : undefined;
+      })(),
+      barsPerBatch: (() => {
+        const n = parseFloat(form.barsPerBatch);
+        return !isNaN(n) && n > 0 ? n : undefined;
+      })(),
     };
     if (editingId) await recipesRepo.update(editingId, payload);
     else {
@@ -455,7 +466,7 @@ export default function RecipesScreen() {
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="mt-2 grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
           {/* Recipe list */}
-          <div className="space-y-2">
+          <div className="space-y-2" data-tour="recipe-list">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               {t('recipes.yourRecipes', 'Your Recipes')}
             </p>
@@ -590,42 +601,6 @@ export default function RecipesScreen() {
                     value={form.netWeight}
                     onChange={(e) => setForm({ ...form, netWeight: e.target.value })}
                   />
-                </div>
-              </div>
-              {/* Business fields — power the Work Orders pipeline */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="label">{t('recipes.retailPrice', 'Retail price per bar ($)')}</label>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      className="input pl-7"
-                      placeholder={t('recipes.retailPricePlaceholder', 'e.g. 8.00')}
-                      value={form.retailPrice}
-                      onChange={(e) => setForm({ ...form, retailPrice: e.target.value })}
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {t('recipes.retailPriceHint', 'Pre-fills new Work Order items.')}
-                  </p>
-                </div>
-                <div>
-                  <label className="label">{t('recipes.barsPerBatch', 'Bars per batch')}</label>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    className="input"
-                    placeholder={t('recipes.barsPerBatchPlaceholder', 'e.g. 8 (blank = 1)')}
-                    value={form.barsPerBatch}
-                    onChange={(e) => setForm({ ...form, barsPerBatch: e.target.value })}
-                  />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {t('recipes.barsPerBatchHint', 'Completed orders deduct ingredient amounts ÷ this, × quantity sold.')}
-                  </p>
                 </div>
               </div>
               <div>
@@ -795,6 +770,8 @@ export default function RecipesScreen() {
               materialCost={liveMaterialCogs}
               retailPrice={form.retailPrice}
               onRetailPriceChange={(val) => setForm((f) => ({ ...f, retailPrice: val }))}
+              barsPerBatch={form.barsPerBatch}
+              onBarsPerBatchChange={(val) => setForm((f) => ({ ...f, barsPerBatch: val }))}
               ingredients={ingredients}
               selectedIds={form.ingredientIds}
               amounts={form.ingredientAmounts}
@@ -1339,6 +1316,8 @@ function RevenueTrackerCard({
   selectedIds,
   amounts,
   customCosts,
+  barsPerBatch,
+  onBarsPerBatchChange,
 }: {
   materialCost: number;
   retailPrice: string;
@@ -1347,6 +1326,8 @@ function RevenueTrackerCard({
   selectedIds: string[];
   amounts: Record<string, string>;
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
+  barsPerBatch: string;
+  onBarsPerBatchChange: (val: string) => void;
 }) {
   const { t } = useTranslation();
   const [breakdownOpen, setBreakdownOpen] = useState(false);
@@ -1420,6 +1401,23 @@ function RevenueTrackerCard({
             />
           </div>
         </div>
+      </div>
+
+      {/* Bars per batch — powers Work Order stock deduction (amounts ÷ this × qty sold) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="label mb-0 text-[11px]">{t('recipes.barsPerBatch', 'Bars per batch')}</label>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          className="input w-24"
+          placeholder="1"
+          value={barsPerBatch}
+          onChange={(e) => onBarsPerBatchChange(e.target.value)}
+        />
+        <span className="text-[11px] text-slate-400">
+          {t('recipes.barsPerBatchHint', 'How many bars the ingredient amounts above make. Orders deduct amounts ÷ this per bar sold.')}
+        </span>
       </div>
 
       {hasRetail && grossProfit !== undefined && margin !== undefined && (

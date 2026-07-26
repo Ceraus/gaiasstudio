@@ -11,6 +11,7 @@
 import type { AveryDataset, Ingredient, LabelContext, Recipe } from '@/types';
 import { useAppStore } from '@/store/useAppStore';
 import { useEditorStore } from '@/store/useEditorStore';
+import { useTourStore } from '@/store/useTourStore';
 import dataset from '@/data/averyTemplates.json';
 
 interface GaiaEditorLike {
@@ -39,6 +40,13 @@ export interface GaiaTestApi {
   /** Writes a deterministic set of collections + drafts for Workspace UI tests. */
   seedWorkspace: () => Promise<{ collections: number; drafts: number }>;
   clearWorkspace: () => Promise<void>;
+  /** Full backup → restore → re-export round trip over the live database. */
+  backupRoundTrip: () => Promise<{
+    tables: number;
+    rowsBefore: number;
+    restored: number;
+    rowsAfter: number;
+  }>;
 }
 
 const data = dataset as unknown as AveryDataset;
@@ -162,6 +170,23 @@ const api: GaiaTestApi = {
     const { db } = await import('@/db/db');
     await Promise.all([db.drafts.clear(), db.collections.clear()]);
   },
+
+  backupRoundTrip: async () => {
+    const { buildBackup, restoreBackup } = await import('@/lib/backup');
+    const countRows = (tables: Record<string, unknown[]>) =>
+      Object.values(tables).reduce((sum, rows) => sum + rows.length, 0);
+
+    const before = await buildBackup();
+    const rowsBefore = countRows(before.tables);
+    const summary = await restoreBackup(JSON.stringify(before));
+    const after = await buildBackup();
+    return {
+      tables: summary.tables,
+      rowsBefore,
+      restored: summary.rows,
+      rowsAfter: countRows(after.tables),
+    };
+  },
 };
 
 export interface GaiaMaintenanceApi {
@@ -193,5 +218,6 @@ if (typeof window !== 'undefined') {
   (window as unknown as { gaiaTestStores: unknown }).gaiaTestStores = {
     useAppStore,
     useEditorStore,
+    useTourStore,
   };
 }

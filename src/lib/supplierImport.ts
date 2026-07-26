@@ -1,20 +1,24 @@
 // ---------------------------------------------------------------------------
 // Supplier URL importer — "Paste supplier link to auto-fill pricing."
 //
-// Pipeline (all local-first, AI only as a fallback):
+// Pipeline (local-first, cloud last):
 //   1. Fetch the product page.
 //        • Electron: main-process fetch via the gaia:fetch-url IPC (no CORS).
 //        • Browser:  direct fetch — many shops block this with CORS, in which
 //          case we throw a friendly error and the manual fields remain.
-//   2. Lightweight local scrape (no network): JSON-LD Product schema,
-//      OpenGraph/meta price tags, then price/size regexes over page text.
-//   3. If the local scrape is incomplete AND a Google AI Studio key is stored
-//      in Settings, ask Gemini to extract { price, size, unit } from the page
-//      text (strict JSON response schema).
+//   2. Lightweight local scrape (no AI, no extra network): JSON-LD Product
+//      schema, OpenGraph/meta price tags, then price/size regexes.
+//   3. BUNDLED LOCAL AI (desktop only, 100% offline inference): the in-app
+//      Qwen3-4B model reads the page text and returns grammar-enforced JSON
+//      — no API key, nothing leaves the machine.
+//   4. Gemini cloud fallback, only if a Google AI Studio key is stored in
+//      Settings and the earlier tiers came back incomplete.
 //
 // The caller shows the detected values for confirmation before anything is
 // written to the database — the importer never silently overwrites pricing.
 // ---------------------------------------------------------------------------
+
+import { extractSupplierProduct, type LocalAiSettingsSlice } from '@/lib/localAi';
 
 export interface SupplierParseResult {
   /** Total price of the container in USD. */
@@ -25,7 +29,11 @@ export interface SupplierParseResult {
   /** Product title, when detected — helps the user confirm the right page. */
   productName?: string;
   /** Which stage produced the result. */
-  source: 'structured' | 'heuristic' | 'ai';
+  source: 'structured' | 'heuristic' | 'local-ai' | 'gemini';
+}
+
+export interface SupplierImportSettings extends LocalAiSettingsSlice {
+  googleAiApiKey?: string;
 }
 
 /** Preload-bridge surface used by this module (present only inside Electron). */
@@ -78,7 +86,10 @@ const UNIT_PATTERN =
   '(fl\\.?\\s*oz|ounces?|oz|pounds?|lbs?|lb|milliliters?|millilitres?|ml|liters?|litres?|l|kilograms?|kg|grams?|gr|g)';
 
 /** Normalizes a raw unit word to the app's units, converting kg/l to g/ml. */
-function normalizeUnit(rawUnit: string, rawSize: number): { size: number; unit: 'oz' | 'lbs' | 'ml' | 'g' } | null {
+function normalizeUnit(
+  rawUnit: string,
+  rawSize: number,
+): { size: number; unit: 'oz' | 'lbs' | 'ml' | 'g' } | null {
   const u = rawUnit.toLowerCase().replace(/[.\s]/g, '');
   if (u === 'floz' || u === 'oz' || u.startsWith('ounce')) return { size: rawSize, unit: 'oz' };
   if (u === 'lb' || u === 'lbs' || u.startsWith('pound')) return { size: rawSize, unit: 'lbs' };
@@ -191,8 +202,16 @@ export function parseSupplierHtml(html: string): SupplierParseResult {
   return result;
 }
 
+/** Strips script/style noise and returns readable page text for the AI tiers. */
+function htmlToText(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script,style,noscript,svg').forEach((el) => el.remove());
+  const title = doc.title ? `PAGE TITLE: ${doc.title}\n` : '';
+  return (title + (doc.body?.textContent ?? '')).replace(/\s+/g, ' ');
+}
+
 // ---------------------------------------------------------------------------
-// 3. Gemini fallback (uses the Google AI Studio key stored in Settings)
+// 4. Gemini cloud fallback (uses the Google AI Studio key stored in Settings)
 // ---------------------------------------------------------------------------
 
 /** Tried in order so the importer keeps working across Gemini API generations. */
@@ -253,7 +272,7 @@ export async function extractWithGemini(
       if (!text) continue;
       const parsed = JSON.parse(text) as GeminiExtraction;
 
-      const out: SupplierParseResult = { source: 'ai' };
+      const out: SupplierParseResult = { source: 'gemini' };
       if (typeof parsed.price === 'number' && parsed.price > 0) out.price = parsed.price;
       if (typeof parsed.size === 'number' && parsed.size > 0 && parsed.unit) {
         const normalized = normalizeUnit(parsed.unit, parsed.size);
@@ -274,43 +293,55 @@ export async function extractWithGemini(
 }
 
 // ---------------------------------------------------------------------------
-// 4. Orchestrator
+// 5. Orchestrator
 // ---------------------------------------------------------------------------
 
 /**
  * Fetches a supplier product page and extracts { price, size, unit }.
- * Local structured/heuristic scraping runs first; Gemini fills the gaps when
- * an API key is provided. Throws with a user-readable message when nothing
- * could be detected (the manual fields are the fallback).
+ * Tier order: local structured/heuristic scrape → bundled offline AI
+ * (desktop, when enabled) → Gemini (when a key is stored). Each tier only
+ * fills the gaps the previous one left. Throws with a user-readable message
+ * when nothing could be detected (the manual fields are the fallback).
  */
 export async function importFromSupplierUrl(
   url: string,
-  googleAiApiKey?: string,
+  settings: SupplierImportSettings,
 ): Promise<SupplierParseResult> {
   const html = await fetchSupplierPage(url);
-  const local = parseSupplierHtml(html);
+  let result = parseSupplierHtml(html);
+  if (result.price !== undefined && result.size !== undefined) return result;
 
-  if (local.price !== undefined && local.size !== undefined) return local;
+  // Page text is shared by both AI tiers; computed lazily only when needed.
+  const pageText = htmlToText(html);
 
-  if (googleAiApiKey?.trim()) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    // Drop script/style noise so the model sees mostly product copy.
-    doc.querySelectorAll('script,style,noscript,svg').forEach((el) => el.remove());
-    const pageText = (doc.body?.textContent ?? '').replace(/\s+/g, ' ');
-    const ai = await extractWithGemini(googleAiApiKey.trim(), url, pageText);
+  // -- Tier 3: bundled offline model (no key, nothing leaves the machine) ----
+  const local = await extractSupplierProduct(pageText, settings);
+  if (local) {
+    result = {
+      source: 'local-ai',
+      price: result.price ?? local.price,
+      size: result.size ?? local.size,
+      unit: result.unit ?? local.unit,
+      productName: result.productName ?? local.productName,
+    };
+    if (result.price !== undefined && result.size !== undefined) return result;
+  }
+
+  // -- Tier 4: Gemini cloud fallback ------------------------------------------
+  if (settings.googleAiApiKey?.trim()) {
+    const ai = await extractWithGemini(settings.googleAiApiKey.trim(), url, pageText);
     if (ai) {
-      // Merge: keep whatever the local scrape already found, let AI fill gaps.
-      return {
-        source: ai.source,
-        price: local.price ?? ai.price,
-        size: local.size ?? ai.size,
-        unit: local.unit ?? ai.unit,
-        productName: local.productName ?? ai.productName,
+      result = {
+        source: 'gemini',
+        price: result.price ?? ai.price,
+        size: result.size ?? ai.size,
+        unit: result.unit ?? ai.unit,
+        productName: result.productName ?? ai.productName,
       };
     }
   }
 
-  if (local.price !== undefined || local.size !== undefined) return local;
+  if (result.price !== undefined || result.size !== undefined) return result;
   throw new Error(
     'No price or container size found on that page. Type them manually below — it only takes a second.',
   );

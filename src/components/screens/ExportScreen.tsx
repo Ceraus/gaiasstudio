@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Download, FileImage, Layers, Loader2, Maximize2, Minus, Plus, Printer, X, Zap } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Download, FileImage, Layers, Loader2, Maximize2, Minus, Plus, Printer, Ruler, X, Zap } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import { editor, parseTextObjectsFromJson } from '@/lib/fabric/editorController';
 import { recipesRepo, ingredientsRepo, draftsRepo } from '@/db/repositories';
 import type { Ingredient, Recipe } from '@/types';
 import {
+  buildCalibrationPdf,
   bumpExportSeq,
   buildLabelSheetPdf,
   downloadBytes,
   downloadDataUrl,
   peekExportName,
   planSheets,
+  suggestLotCode,
   type ExportNameOptions,
 } from '@/lib/pdfExport';
 import { footprintHeightIn, footprintWidthIn, slotPositionIn } from '@/lib/units';
@@ -67,6 +69,9 @@ export default function ExportScreen() {
 
   const [quantity, setQuantity] = useState(() => template?.perSheet ?? 12);
   const [fillSheet, setFillSheet] = useState(false);
+  // Lot/batch code stamped in tiny type inside the bottom edge of every label.
+  // Prefilled from today's date; clear the field to print without one.
+  const [lotCode, setLotCode] = useState(() => suggestLotCode());
   const [busy, setBusy] = useState(false);
   const [doneName, setDoneName] = useState('');
   const [exportError, setExportError] = useState('');
@@ -100,6 +105,7 @@ export default function ExportScreen() {
         pngDataUrl: labelPng,
         quantity,
         fillSheet,
+        lotCode: lotCode.trim() || undefined,
       });
       const opts = buildExportOpts(settings.filenamePrefix, recipeName);
       const name = peekExportName(opts);
@@ -165,12 +171,26 @@ export default function ExportScreen() {
                   {t('export.sheetsNeeded', { sheets: plan.sheets, perSheet: plan.perSheet })}
                 </p>
               )}
+              {/* Lot / batch code — traceability + cure-date tracking */}
+              <div data-tour="lot-code">
+                <label className="label">{t('export.lotCode', 'Lot code (optional)')}</label>
+                <input
+                  className="input font-mono"
+                  placeholder={t('export.lotCodePlaceholder', 'e.g. L260726 — clear to skip')}
+                  value={lotCode}
+                  maxLength={24}
+                  onChange={(e) => setLotCode(e.target.value)}
+                />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {t('export.lotCodeHint', 'Printed in tiny type inside the bottom edge of every label — know which batch (and cure date) each bar came from.')}
+                </p>
+              </div>
               <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
                 {t('export.filename')}: <span className="font-mono text-slate-700">{pdfName}</span>
               </div>
             </div>
 
-            <button className="btn-primary w-full py-3" disabled={busy} onClick={exportPdf}>
+            <button className="btn-primary w-full py-3" disabled={busy} onClick={exportPdf} data-tour="export-pdf">
               {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
               {busy ? t('export.exporting') : t('export.exportPdf')}
             </button>
@@ -228,6 +248,17 @@ export default function ExportScreen() {
 
             {/* FDA Label Checker */}
             <FdaCheckerCard settings={settings} />
+
+            {/* Printer calibration — diagnoses "labels print 2 mm off" */}
+            <button
+              className="btn-secondary w-full"
+              data-tour="calibration"
+              onClick={() => void buildCalibrationPdf().then((bytes) =>
+                downloadBytes(bytes, 'Gaia - Printer Calibration.pdf'))}
+              title={t('export.calibrationTitle', 'A test page with a 1-inch square and margin frame — print it to verify your printer is at 100% scale.')}
+            >
+              <Ruler className="h-4 w-4" /> {t('export.calibration', 'Printer calibration page')}
+            </button>
 
             <p className="text-xs text-slate-400">{t('export.tip')}</p>
           </div>

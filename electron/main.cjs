@@ -394,11 +394,73 @@ app.whenReady().then(() => {
     return true;
   });
 
-  // Bundled local AI (copywriting assist) — runs entirely in this process via
-  // node-llama-cpp against the model shipped in resources/models. Zero setup,
-  // 100% offline. See electron/bundledAi.cjs.
+  // Bundled local AI — runs entirely in this process via node-llama-cpp
+  // against the model shipped in resources/models. Zero setup, 100% offline.
+  // `generate` powers the copywriting assist; `extract` is the supplier-link
+  // price importer's grammar-constrained JSON tier. See electron/bundledAi.cjs.
   ipcMain.handle('gaia:bundled-ai-status', () => bundledAi.getBundledAiStatus());
   ipcMain.handle('gaia:bundled-ai-generate', (_event, prompt) => bundledAi.generateBundledAi(String(prompt || '')));
+  ipcMain.handle('gaia:bundled-ai-extract', (_event, pageText) => bundledAi.extractBundledAi(String(pageText || '')));
+
+  // Supplier price importer — fetch a product page from the main process so
+  // the renderer is never blocked by shop CORS policies. Read-only GET.
+  ipcMain.handle('gaia:fetch-url', async (_event, url) => {
+    try {
+      const parsed = new URL(String(url));
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { ok: false, status: 0, text: '' };
+      }
+      const res = await net.fetch(parsed.toString(), {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      const text = await res.text();
+      return { ok: res.ok, status: res.status, text };
+    } catch (err) {
+      console.error('[Gaia] gaia:fetch-url failed:', err);
+      return { ok: false, status: 0, text: '' };
+    }
+  });
+
+  // Full-database backup — writes the JSON into the portable save system's
+  // backups/ folder and prunes to the newest 14 files, so daily auto-backups
+  // never eat the disk. Returns the absolute path for the success message.
+  ipcMain.handle('gaia:save-backup', async (_event, { json, filename }) => {
+    const dir = path.join(saveSystemDir, 'backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeName = safeBasename(filename || `Gaia_Backup_${Date.now()}.json`);
+    const filePath = path.join(dir, safeName.toLowerCase().endsWith('.json') ? safeName : `${safeName}.json`);
+    await fs.promises.writeFile(filePath, String(json), 'utf8');
+    try {
+      const files = (await fs.promises.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.json'));
+      const stats = await Promise.all(
+        files.map(async (f) => ({ f, m: (await fs.promises.stat(path.join(dir, f))).mtimeMs })),
+      );
+      stats.sort((a, b) => b.m - a.m);
+      for (const old of stats.slice(14)) {
+        await fs.promises.unlink(path.join(dir, old.f)).catch(() => {});
+      }
+    } catch { /* pruning is best-effort */ }
+    return { path: filePath };
+  });
+
+  // Silent PDF save — writes base64 PDF bytes into a sub-folder of the
+  // portable save system (e.g. work_orders/Maria_Lopez_ORD-003.pdf) without
+  // any "Save As" dialog. Returns the absolute path for the success toast.
+  ipcMain.handle('gaia:save-pdf', async (_event, { base64, folder, filename }) => {
+    // Never allow path traversal out of the save system.
+    const safeFolder = String(folder || 'exports').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = safeBasename(filename || 'document.pdf');
+    const dir = path.join(saveSystemDir, safeFolder);
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, safeName.toLowerCase().endsWith('.pdf') ? safeName : `${safeName}.pdf`);
+    await fs.promises.writeFile(filePath, Buffer.from(String(base64), 'base64'));
+    return { path: filePath };
+  });
 
   createWindow();
 

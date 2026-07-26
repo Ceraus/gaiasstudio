@@ -1,17 +1,16 @@
 -- ============================================================================
--- Gaia's Label Studio — better-sqlite3 schema
+-- Gaia's Label Studio — better-sqlite3 schema (mirrors Dexie v13)
 -- ============================================================================
--- This is the canonical SQLite DDL for the desktop build. The running app
--- persists through Dexie/IndexedDB with IDENTICAL table shapes (src/db/db.ts,
--- version 9); swapping the persistence adapter in src/db/repositories.ts for a
--- better-sqlite3 layer requires no application-code changes.
+-- The running app persists through Dexie/IndexedDB with IDENTICAL table shapes
+-- (src/db/db.ts); swapping the persistence adapter in src/db/repositories.ts
+-- for a better-sqlite3 layer requires no application-code changes.
 --
 -- Conventions
 --   • ids are UUID strings (crypto.randomUUID()).
---   • *_at columns are Unix epoch **milliseconds** (Date.now()).
+--   • *_at and date columns are Unix epoch **milliseconds** (Date.now()).
 --   • Money is REAL in USD; fractional costs are $/gram or $/drop.
 --   • JSON columns hold arrays/objects that never need relational queries
---     (canvas JSON, string arrays, usage snapshots).
+--     (canvas JSON, string arrays, usage snapshots, receipt line items).
 --
 -- Usage (main process):
 --   const db = require('better-sqlite3')(path.join(saveSystemDir, 'gaia.db'));
@@ -22,7 +21,7 @@
 PRAGMA foreign_keys = ON;
 
 -- ----------------------------------------------------------------------------
--- Ingredients — the Smart Pantry. One row per raw material.
+-- Ingredients — the pantry. One row per raw material.
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ingredients (
   id               TEXT PRIMARY KEY,
@@ -42,7 +41,7 @@ CREATE TABLE IF NOT EXISTS ingredients (
   purchase_unit    TEXT,                          -- 'oz' | 'lbs' | 'ml' | 'g'
   purchase_price   REAL,                          -- what was paid for the container (USD)
   fractional_cost  REAL,                          -- AUTO: $/gram (weight) or $/drop (volume)
-  supplier_url     TEXT,                          -- product page for the AI price importer
+  supplier_url     TEXT,                          -- product page for the price importer
   stock_on_hand    REAL,                          -- current stock in base units (g or drops);
                                                   -- NULL = not tracked (work orders skip it)
 
@@ -54,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_ingredients_active   ON ingredients(active);
 CREATE INDEX IF NOT EXISTS idx_ingredients_category ON ingredients(category);
 
 -- ----------------------------------------------------------------------------
--- Recipes — a product (soap) definition.
+-- Recipes — a product (soap) definition, including revenue/COGS reporting.
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS recipes (
   id                 TEXT PRIMARY KEY,
@@ -64,19 +63,79 @@ CREATE TABLE IF NOT EXISTS recipes (
   ingredient_amounts TEXT NOT NULL DEFAULT '{}',  -- JSON { [ingredientId]: grams|drops } PER BATCH
   bars_per_batch     REAL,                        -- units one batch yields; NULL/0 → 1
   retail_price       REAL,                        -- USD per bar; pre-fills work-order items
+  cogs_total         REAL,                        -- AUTO: raw material COGS at last save
+  profit_margin      REAL,                        -- AUTO: gross margin % when retail price is set
   net_weight         TEXT,
   directions         TEXT,
   warnings           TEXT,
   footer             TEXT,
   color              TEXT,                        -- optional Tailwind color key
-  custom_costs       TEXT NOT NULL DEFAULT '[]',  -- JSON [{id,name,cost,unit?}] per-bar packaging costs
+  custom_costs       TEXT NOT NULL DEFAULT '[]',  -- JSON [{id,name,cost,unit?,materialId?}] per-bar costs
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_recipes_name ON recipes(name);
+CREATE INDEX IF NOT EXISTS idx_recipes_name   ON recipes(name);
+CREATE INDEX IF NOT EXISTS idx_recipes_cogs   ON recipes(cogs_total);
+CREATE INDEX IF NOT EXISTS idx_recipes_retail ON recipes(retail_price);
 
 -- ----------------------------------------------------------------------------
--- Clients — one row per customer (Phase 2: Work Orders).
+-- Collections — colour-coded product lines used to organise saved designs.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS collections (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  color      TEXT NOT NULL,                       -- '#rrggbb'
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name);
+
+-- ----------------------------------------------------------------------------
+-- Custom Materials & Packaging — reusable packaging costs shared between
+-- Inventory and the Recipe Builder (active/inactive like ingredients).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS custom_materials (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  category   TEXT NOT NULL DEFAULT 'packaging'    -- 'packaging'|'label'|'bag'|'box'|'container'|'other'
+             CHECK (category IN ('packaging','label','bag','box','container','other')),
+  cost       REAL NOT NULL DEFAULT 0,
+  unit       TEXT,                                -- free text, e.g. 'per bar' (default 'per item')
+  active     INTEGER NOT NULL DEFAULT 1,          -- boolean
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_materials_name     ON custom_materials(name);
+CREATE INDEX IF NOT EXISTS idx_custom_materials_category ON custom_materials(category);
+CREATE INDEX IF NOT EXISTS idx_custom_materials_active   ON custom_materials(active);
+
+-- ----------------------------------------------------------------------------
+-- Receipts — the EXPENSE ledger (money spent at suppliers). Line items are a
+-- JSON column to stay 1:1 with the Dexie record shape; each line can link to
+-- an ingredient or custom material and optionally sync its price back.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS receipts (
+  id         TEXT PRIMARY KEY,
+  vendor     TEXT NOT NULL,
+  date       INTEGER NOT NULL,                    -- purchase date (epoch ms)
+  category   TEXT NOT NULL DEFAULT 'other'        -- 'ingredients'|'packaging'|'shipping'|'equipment'|'other'
+             CHECK (category IN ('ingredients','packaging','shipping','equipment','other')),
+  line_items TEXT NOT NULL DEFAULT '[]',          -- JSON ReceiptLineItem[]:
+                                                  --   {id,description,ingredientId?,materialId?,
+                                                  --    quantity,unitCost,lineTotal,syncPrice}
+  tax        REAL,
+  subtotal   REAL NOT NULL DEFAULT 0,             -- AUTO: sum of lineTotal
+  total      REAL NOT NULL DEFAULT 0,             -- AUTO: subtotal + tax
+  notes      TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_receipts_vendor   ON receipts(vendor);
+CREATE INDEX IF NOT EXISTS idx_receipts_date     ON receipts(date);
+CREATE INDEX IF NOT EXISTS idx_receipts_category ON receipts(category);
+
+-- ----------------------------------------------------------------------------
+-- Clients — one row per customer (the SALES side).
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS clients (
   id         TEXT PRIMARY KEY,
@@ -92,6 +151,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(name);
 -- ----------------------------------------------------------------------------
 -- Work Orders — a sale to a client. Completing an order deducts tracked
 -- ingredient stock and freezes a usage/COGS snapshot for reversibility.
+-- (Distinct from `receipts`, which record money Rosa SPENDS.)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS work_orders (
   id             TEXT PRIMARY KEY,
@@ -200,17 +260,21 @@ CREATE TABLE IF NOT EXISTS label_sets (
 -- Drafts — the Workspace scratchpad (auto-saved work in progress).
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS drafts (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
-  design_json TEXT NOT NULL,
-  template_id TEXT NOT NULL,
-  context     TEXT NOT NULL,
-  thumb       TEXT,
-  notes       TEXT,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  design_json   TEXT NOT NULL,
+  template_id   TEXT NOT NULL,
+  context       TEXT NOT NULL,
+  thumb         TEXT,
+  notes         TEXT,
+  collection_id TEXT REFERENCES collections(id),  -- product line → card colour
+  recipe_id     TEXT,                             -- soft reference for workspace search
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_drafts_updated ON drafts(updated_at);
+CREATE INDEX IF NOT EXISTS idx_drafts_updated    ON drafts(updated_at);
+CREATE INDEX IF NOT EXISTS idx_drafts_collection ON drafts(collection_id);
+CREATE INDEX IF NOT EXISTS idx_drafts_recipe     ON drafts(recipe_id);
 
 -- ----------------------------------------------------------------------------
 -- Settings — single-row app configuration (id is always 'app').
@@ -219,7 +283,7 @@ CREATE INDEX IF NOT EXISTS idx_drafts_updated ON drafts(updated_at);
 CREATE TABLE IF NOT EXISTS settings (
   id                TEXT PRIMARY KEY CHECK (id = 'app'),
   language          TEXT NOT NULL DEFAULT 'en',
-  filename_prefix   TEXT NOT NULL DEFAULT 'ROSA',
+  filename_prefix   TEXT NOT NULL DEFAULT 'Gaia',
   google_ai_api_key TEXT,
   unsplash_key      TEXT,
   pixabay_key       TEXT,
@@ -230,6 +294,8 @@ CREATE TABLE IF NOT EXISTS settings (
   business_name     TEXT,
   business_address  TEXT,
   contact           TEXT,
+  ui_scale          REAL NOT NULL DEFAULT 1,      -- interface zoom (1 = 100%, up to 1.25)
+  local_ai_enabled  INTEGER NOT NULL DEFAULT 1,   -- bundled offline model on/off
   debug_mode        INTEGER NOT NULL DEFAULT 0,
   show_label_sets   INTEGER NOT NULL DEFAULT 0
 );

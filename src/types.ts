@@ -98,7 +98,7 @@ export interface Ingredient {
    * Weight mode: cost per gram. Volume mode: cost per drop.
    */
   fractionalCost?: number;
-  /** Supplier product page URL — used by the AI price importer to re-check pricing. */
+  /** Supplier product page URL — used by the price importer to re-check pricing. */
   supplierUrl?: string;
   /**
    * Current stock on hand, in the ingredient's base unit
@@ -140,18 +140,18 @@ export interface Recipe {
   color?: string;
   /** Per-bar packaging / materials costs added by the user (e.g. bags, boxes, labels). */
   customCosts?: Array<{ id: string; name: string; cost: number; unit?: string; materialId?: string }>;
+  /** Planned retail price per bar (USD). */
+  retailPrice?: number;
+  /** Auto-calculated total raw material COGS when the recipe is saved. */
+  cogsTotal?: number;
+  /** Auto-calculated gross profit margin % when retail price is set. */
+  profitMargin?: number;
   /**
    * How many bars/units one batch of `ingredientAmounts` yields.
    * Work orders divide the batch amounts by this to deduct per-unit usage.
    * Undefined/0 is treated as 1 (amounts are per single unit).
    */
   barsPerBatch?: number;
-  /** Planned/retail price per bar or unit (USD) — pre-fills work-order line items. */
-  retailPrice?: number;
-  /** Auto-calculated total raw material COGS when the recipe is saved. */
-  cogsTotal?: number;
-  /** Auto-calculated gross profit margin % when retail price is set. */
-  profitMargin?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -223,6 +223,12 @@ export interface AppSettings {
    * backend). The user can turn it off here; it never calls out to the cloud.
    */
   localAiEnabled?: boolean;
+
+  // ── Guided tours & tips ───────────────────────────────────────────────────
+  /** Tour ids the user finished (or skipped) — they stop auto-suggesting. */
+  completedTours?: string[];
+  /** Tip banner ids permanently dismissed with "Got it". */
+  dismissedTips?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -341,11 +347,13 @@ export interface Receipt {
 }
 
 // ---------------------------------------------------------------------------
-// Clients & Work Orders — the business-tracker side of the app.
+// Clients & Work Orders — the SALES side of the business tracker.
 //
-// Mirrors the better-sqlite3 tables `clients`, `work_orders` and
-// `work_order_items` (see electron/schema.sql). Items live in their own table
-// (not embedded) so the mapping to SQLite stays 1:1.
+// Note the split: `Receipt` (above) is the EXPENSE ledger (money Rosa spends
+// at suppliers); a `WorkOrder` is money a client pays her. Completing a work
+// order deducts tracked ingredient stock and produces a client-facing PDF
+// receipt. Items live in their own table so the mapping to better-sqlite3
+// stays 1:1 (see electron/schema.sql).
 // ---------------------------------------------------------------------------
 
 export interface Client {

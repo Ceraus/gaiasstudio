@@ -1,13 +1,16 @@
 // ---------------------------------------------------------------------------
 // Local AI client — bundled offline model only, never cloud:
 //
-//   A small model shipped inside the desktop app, run in-process by the
-//   Electron main process via node-llama-cpp (see electron/bundledAi.cjs).
-//   Zero setup — works out of the box via window.electronAPI IPC.
+//   A model shipped inside the desktop app (Qwen3-4B-Instruct, Apache-2.0),
+//   run in-process by the Electron main process via node-llama-cpp
+//   (see electron/bundledAi.cjs). Zero setup — works via window.electronAPI.
 //
 // Scope (deliberately narrow):
 //   - Copywriting assist for the recipe "benefit statement" — a creative
 //     marketing tagline the user can accept/edit/reject. Never authoritative.
+//   - Supplier product-page extraction for the price importer — pulls
+//     { productName, price, size, unit } out of messy page text with a
+//     grammar-enforced JSON response. The user always confirms before saving.
 //
 // Every exported function fails softly and returns a typed result — nothing
 // throws past this module, and nothing here ever blocks the UI.
@@ -24,6 +27,11 @@ export interface LocalAiStatus {
 interface BundledAiApi {
   bundledAiStatus(): Promise<{ state: LocalAiState; message?: string }>;
   bundledAiGenerate(prompt: string): Promise<{ ok: boolean; text?: string; error?: string }>;
+  bundledAiExtract?(pageText: string): Promise<{
+    ok: boolean;
+    result?: { productName: string; price: number; size: number; unit: string };
+    error?: string;
+  }>;
 }
 
 function getBundledAiApi(): BundledAiApi | null {
@@ -143,4 +151,54 @@ export async function suggestBenefitStatement(
   }
 
   return { ok: true, suggestion };
+}
+
+// ---------------------------------------------------------------------------
+// Supplier product-page extraction (the price importer's offline AI tier)
+// ---------------------------------------------------------------------------
+
+export interface LocalExtractionResult {
+  productName?: string;
+  /** Total price in USD. */
+  price?: number;
+  /** Container size, paired with `unit`. */
+  size?: number;
+  unit?: 'oz' | 'lbs' | 'ml' | 'g';
+}
+
+/** True when the desktop bridge exposes the extraction endpoint. */
+export function isLocalExtractionAvailable(): boolean {
+  return typeof getBundledAiApi()?.bundledAiExtract === 'function';
+}
+
+/**
+ * Asks the bundled local model to extract product info from supplier page
+ * text. Returns null when the bundled AI is unavailable, disabled, or found
+ * nothing usable — callers fall through to their next tier. Never throws.
+ */
+export async function extractSupplierProduct(
+  pageText: string,
+  settings: LocalAiSettingsSlice,
+): Promise<LocalExtractionResult | null> {
+  if (!settings.localAiEnabled) return null;
+  const api = getBundledAiApi();
+  if (!api?.bundledAiExtract) return null;
+
+  try {
+    const res = await api.bundledAiExtract(pageText);
+    if (!res.ok || !res.result) return null;
+
+    // The grammar guarantees the shape; sentinel values mean "not found".
+    const { productName, price, size, unit } = res.result;
+    const out: LocalExtractionResult = {};
+    if (productName?.trim()) out.productName = productName.trim().slice(0, 120);
+    if (price > 0) out.price = price;
+    if (size > 0 && (unit === 'oz' || unit === 'lbs' || unit === 'ml' || unit === 'g')) {
+      out.size = size;
+      out.unit = unit;
+    }
+    return out.price !== undefined || out.size !== undefined ? out : null;
+  } catch {
+    return null;
+  }
 }

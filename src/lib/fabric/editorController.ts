@@ -34,6 +34,13 @@ type Gaia = fabric.FabricObject & {
   gaiaPlaceholder?: boolean;
 };
 
+/**
+ * Structural layer kinds created by the strict 4-layer context initialization.
+ * These survive auto-layouts (only foreground content is regenerated) and are
+ * excluded from safe-zone fit checks.
+ */
+export const STRUCTURAL_KINDS = ['base', 'background', 'overlay'] as const;
+
 /** Non-destructive image adjustments. All amounts are Fabric's -1…1 range. */
 export interface ImageAdjust {
   brightness: number;
@@ -42,13 +49,6 @@ export interface ImageAdjust {
 }
 
 export const NEUTRAL_ADJUST: ImageAdjust = { brightness: 0, contrast: 0, saturation: 0 };
-
-/**
- * Structural layer kinds created by the strict 4-layer context initialization.
- * These survive auto-layouts (only foreground content is regenerated) and are
- * excluded from safe-zone fit checks.
- */
-export const STRUCTURAL_KINDS = ['base', 'background', 'overlay'] as const;
 
 export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
 

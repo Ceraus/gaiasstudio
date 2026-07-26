@@ -405,7 +405,7 @@ export default function LeftRail() {
 
   // ── Normal (docked) mode ───────────────────────────────────────────────────
   return (
-    <aside className="flex shrink-0 flex-row">
+    <aside className="flex shrink-0 flex-row" data-tour="editor-rail">
 
       {/* ── 80px icon strip ──────────────────────────────────────────────────── */}
       <div className="relative flex w-20 shrink-0 flex-col overflow-y-auto bg-gray-900 py-1.5">

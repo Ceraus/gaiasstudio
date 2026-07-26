@@ -37,10 +37,11 @@ function inciList(recipe: Recipe, ingredients: Ingredient[]): string {
     .join(', ');
 }
 
+/** Removes prior text/shape but keeps the user's background & logo images. */
 /**
- * Removes prior text/shape content but keeps the user's background & logo
- * images AND the structural 4-layer stack (white base + legibility overlay),
- * so auto-layout only regenerates the foreground.
+ * Kinds that survive an auto-layout: the user's background & logo images AND
+ * the structural 4-layer stack (white base + legibility overlay), so layout
+ * runs only regenerate the foreground content.
  */
 const LAYOUT_KEEP_KINDS = ['background', 'logo', 'base', 'overlay'];
 
@@ -178,29 +179,23 @@ function layoutFront(
   const cx = s.cx;
   const cy = s.cy;
 
-  // Sage-green base — shows through when no background image is loaded
+  // Sage-green base — shows through when no background image is loaded.
+  // The strict 4-layer stack keeps a structural white Base rect above the
+  // canvas background, so tint that layer too (when there's no real
+  // background image covering it); legacy designs without one still get the
+  // canvas backgroundColor.
   canvas.backgroundColor = '#c8d4c0';
-
-  // ── Curved product name (round/oval labels) ──────────────────────────────
-  // The signature look: the recipe name arched along the top of the circle.
-  const isRoundLabel =
-    editor.template?.shape === 'circle' || editor.template?.shape === 'oval';
-  if (isRoundLabel) {
-    const namePt = clamp((editor.template?.labelWidthIn ?? 2) * 7, 10, 20);
-    const nameText = new fabric.Textbox(recipe.name?.trim() || str.productName, {
-      width: editor.labelWpx * 0.78,
-      fontFamily: HEADING_FONT,
-      fontSize: ptToPx(namePt),
-      fill: INK,
-      textAlign: 'center',
-      originX: 'center',
-      originY: 'center',
-      left: cx,
-      top: s.top + s.height * 0.15,
+  const structuralBase = canvas
+    .getObjects()
+    .find((o) => (o as { gaiaKind?: string }).gaiaKind === 'base');
+  const hasBgImage = canvas
+    .getObjects()
+    .some((o) => {
+      const g = o as { gaiaKind?: string; gaiaPlaceholder?: boolean };
+      return g.gaiaKind === 'background' && !g.gaiaPlaceholder;
     });
-    applyCurveToText(nameText, 55); // gentle upward arch
-    loadFont(HEADING_FONT);
-    editor.addCustom(nameText, 'text', 'Product name');
+  if (structuralBase && !hasBgImage) {
+    structuralBase.set('fill', '#c8d4c0');
   }
 
   // ── Legibility circle ────────────────────────────────────────────────────
