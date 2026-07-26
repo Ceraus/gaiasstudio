@@ -68,6 +68,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Fetches a URL from the main process (bypasses renderer CORS).
+   * Used by the supplier price importer.
+   * @param {string} url
+   * @returns {Promise<{ok: boolean, status: number, text: string}>}
+   */
+  fetchUrl(url) {
+    return ipcRenderer.invoke('gaia:fetch-url', url);
+  },
+
+  /**
+   * Silently saves a PDF (base64 bytes) into a sub-folder of the portable
+   * save system, e.g. savePdf(b64, 'work_orders', 'Maria_ORD-003.pdf').
+   * @param {string} base64
+   * @param {string} folder
+   * @param {string} filename
+   * @returns {Promise<{path: string}>}
+   */
+  savePdf(base64, folder, filename) {
+    return ipcRenderer.invoke('gaia:save-pdf', { base64, folder, filename });
+  },
+
+  /**
    * Register a callback for PDFs that were successfully saved to the exports
    * folder by the download interceptor.
    * @param {function({ filename: string }): void} cb
