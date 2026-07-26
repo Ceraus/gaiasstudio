@@ -26,9 +26,11 @@ Outputs in `gaia-label-studio/release/`:
 
 | File | What it is |
 | --- | --- |
-| `Gaia's Label Studio-1.0.0-Portable.exe` | Single portable exe — no install, double-click to run |
-| `Gaia's Label Studio-1.0.0-Setup.exe` | NSIS installer with optional install folder |
-| `win-unpacked/Gaia's Label Studio.exe` | Unpacked dev build (~190 MB folder) |
+| `Gaia's Label Studio-<version>-win.zip` | Zipped app folder — unzip and double-click `Gaia's Label Studio.exe` inside, no install |
+| `win-unpacked/Gaia's Label Studio.exe` | Unpacked dev build (same contents as the zip, run in place) |
+
+Packaging uses a plain zip rather than an NSIS installer/portable exe because
+the bundled AI model (~2.4 GB) exceeds NSIS's ~2 GB 32-bit mmap limit.
 
 Everything stays local (IndexedDB, same as the browser app). External links (AI generator, etc.) open in your default browser.
 

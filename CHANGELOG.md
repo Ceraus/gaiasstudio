@@ -4,7 +4,15 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.0.34] - 2026-07-26
+## [2.0.35] - 2026-07-26
+
+### Changed
+- **Windows packaging switched from an NSIS portable `.exe` to a plain zip**
+  — the bundled AI model upgrade (Qwen2.5-0.5B → Qwen3-4B-Instruct-2507,
+  ~2.4 GB) pushed the installer payload past NSIS's ~2 GB 32-bit mmap
+  limit (`makensis` aborted with "failed creating mmap"). `npm run
+  dist:win` now produces `Gaia's Label Studio-<version>-win.zip`; unzip
+  and run `Gaia's Label Studio.exe` inside.
 
 ### Added
 - **Guided walkthroughs + Help hub** — a first-run "Show me around" tour and
