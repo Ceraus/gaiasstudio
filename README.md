@@ -39,12 +39,30 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
 - **Pick a shape & size visually.** 49 print-verified templates covering circles,
   ovals, squares, rectangles and rounded stickers — including real Avery products
   (22807 2″ round, 6871 back label, and many more). No pixels, no coordinates.
+- **A strict 4-layer canvas.** Every design spawns with the same stack — solid
+  white **Base** → **Background** slot (AI/photo art drops in without reshuffling
+  anything) → a template-shaped, 15%-opacity **Legibility Overlay** → the
+  **Foreground** text & logo — so type stays readable over busy AI art.
 - **A real editor.** Move / resize / rotate / crop / group, a full **layers panel**
-  (reorder, hide, lock, rename, delete), **smart snapping guides** (magenta lines
+  (**drag-and-drop reordering**, Ctrl/Shift **multi-select → group/ungroup**,
+  hide, lock, rename, delete), **smart snapping guides** (magenta lines
   when things line up or center — on move *and* resize, plus equal-spacing guides),
   **visual bleed masks** (a dimmed ring + cut line + safe zone), rich **typography**
   with elegant Google Fonts, **curved text** on round/oval labels, opacity & blend
   modes, undo/redo, and a **movable properties window**.
+- **Smart Pantry inventory.** Ingredients grouped into collapsible shelves
+  (Colorants / Essential & Fragrance Oils / Carrier Oils & Butters / Botanicals &
+  Additives / Soap Bases) with an **In-Use Only** toggle, per-shelf **Quick Set**
+  bulk pricing for everything still missing a price, an **AI supplier-link
+  importer** (paste a product URL → total price + container size are extracted
+  locally, with Gemini as fallback via your Google AI Studio key → cost per
+  gram/drop auto-calculates), and optional **stock-on-hand** tracking.
+- **Client work orders & receipts.** Create an order per client (existing names
+  auto-suggest), pick the recipes sold + quantities, and mark it **Completed** —
+  the app deducts the exact fractional ingredient usage (grams of base/oils,
+  drops of EO) from tracked stock, freezes a COGS snapshot, and generates a
+  professional 8.5″×11″ **PDF receipt** (saved silently to `work_orders/` in the
+  desktop app). Reopen restores exactly what was deducted.
 - **Precise, zero-math properties.** Size & position are shown in **inches** with a
   **lock-proportions** toggle and a **center-on-label** button. Arrow keys nudge
   (Shift = larger), plus `Ctrl/Cmd+Z/Y/D/G`, `[`/`]` stacking, and `Del`/`Esc` —
@@ -98,10 +116,18 @@ npm run avery:scrape     # pull Avery's full live catalog and merge (see note)
 ## Architecture notes
 
 - `src/lib/fabric/editorController.ts` — the imperative core: canvas lifecycle,
-  object factory, alignment/stacking/group/crop, layers, undo/redo, debounced
+  the strict 4-layer stack, object factory, alignment/stacking/group/crop,
+  layers (incl. drag-reorder + panel multi-select), undo/redo, debounced
   autosave, and selection sync into the Zustand store.
 - `src/lib/fabric/overlay.ts` — the visual bleed mask / cut line / safe zone,
   drawn in the canvas `after:render` pass (identity space).
+- `src/lib/supplierImport.ts` — the supplier-link price importer: main-process
+  fetch (Electron, no CORS) or browser fetch, JSON-LD / meta / regex scraping,
+  and the Gemini structured-extraction fallback.
+- `src/lib/receiptPdf.ts` — the 8.5″×11″ pdf-lib client receipt (brand band,
+  itemized table, totals, footer) + silent save into `work_orders/`.
+- `src/db/repositories.ts` — repo layer incl. clients/work-orders, the exact
+  fractional usage math (`computeOrderUsage`) and reversible stock deduction.
 - `src/lib/fabric/snapping.ts` — smart alignment guides + snap-to-center.
 - `src/lib/layoutEngine.ts` — context-specific Front/Back/Side auto-layouts.
 - `src/lib/pdfExport.ts` — exact Avery-grid PDF stamping (handles rotated ribbons).
@@ -127,4 +153,14 @@ testable, while mapping 1:1 onto the desktop stack if you later wrap it:
 | `<webview>` + `will-download` | AI tab opens a generator; import the result | Add a `<webview>` + `session.on('will-download')` |
 
 The table shapes in `src/db/db.ts` (ingredients, recipes, assets, versions,
-settings) already match a SQLite schema, so only the persistence adapter changes.
+settings, clients, work orders + items) already match a SQLite schema, so only
+the persistence adapter changes. The canonical better-sqlite3 DDL — including
+the Work Orders pipeline and the updated inventory fields (`supplier_url`,
+`stock_on_hand`, `bars_per_batch`, `retail_price`) — lives in
+**`electron/schema.sql`**.
+
+The desktop shell (`electron/main.cjs`) additionally provides: silent PDF
+saving into the portable save system (`gaia:save-pdf`), CORS-free supplier
+page fetching for the price importer (`gaia:fetch-url`), the AI-image
+`will-download` interceptor, and a 25% accessibility zoom
+(`zoomFactor: 1.25`) with no horizontal scrolling.
