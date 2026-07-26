@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, Check, ChevronDown, ChevronUp, Database, DollarSign,
-  Link as LinkIcon, Loader2, MinusCircle, Package, PackageCheck, PackagePlus,
-  Pin, Plus, ShoppingBag, Sparkles, Trash2, X,
+  ExternalLink, Link as LinkIcon, Loader2, MinusCircle, Package, PackageCheck,
+  PackagePlus, Pin, Plus, ShoppingBag, ShoppingCart, Sparkles, Trash2, X,
 } from 'lucide-react';
 import type { CustomMaterial, Ingredient, IngredientCategory, MaterialCategory, Recipe, SetPurchase } from '@/types';
 import { customMaterialsRepo, ingredientsRepo, recipesRepo, setPurchasesRepo } from '@/db/repositories';
@@ -19,6 +19,7 @@ import { importFromSupplierUrl, type SupplierParseResult } from '@/lib/supplierI
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
 import { getCategoryLabel, getIngredientDisplayName } from '@/lib/ingredientI18n';
 import Modal from '@/components/common/Modal';
+import TipBanner from '@/components/tour/TipBanner';
 import { useAppStore } from '@/store/useAppStore';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +167,11 @@ export default function InventoryScreen() {
             </div>
           </div>
 
+          <TipBanner
+            id="inventory-supplier-link"
+            textDefault="Tap any ingredient, then paste the shop link you bought it from — the price and bottle size fill themselves in."
+          />
+
           {activeIngredients.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-3">
               <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
@@ -183,6 +189,8 @@ export default function InventoryScreen() {
               </div>
             </div>
           )}
+
+          <ShoppingListCard ingredients={allIngredients} onChanged={reload} />
 
           <div className="mt-6">
             <SetPurchasesCard ingredients={allIngredients} setPurchases={setPurchases} onChanged={reload} />
@@ -213,7 +221,7 @@ export default function InventoryScreen() {
             </div>
           ) : (
             <>
-              <div className="mt-6 flex flex-wrap gap-2">
+              <div className="mt-6 flex flex-wrap gap-2" data-tour="inventory-tabs">
                 {INVENTORY_TABS.map((tab) => {
                   const count = activeIngredients.filter((i) => inventoryTabFor(i) === tab.id).length;
                   const active = activeTab === tab.id;
@@ -271,6 +279,130 @@ export default function InventoryScreen() {
           onClose={() => setEditingIngredient(null)}
           onSaved={() => { void reload(); setEditingIngredient(null); }}
         />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shopping List — tracked ingredients that are out or running low, with the
+// stored supplier link one click away and a "+1 container" restock action.
+// Everything it needs (stockOnHand, containerBaseUnits, supplierUrl) already
+// lives on the ingredient — this card just closes the reorder loop.
+// ---------------------------------------------------------------------------
+
+function ShoppingListCard({
+  ingredients,
+  onChanged,
+}: {
+  ingredients: Ingredient[];
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(true);
+  const [restockingId, setRestockingId] = useState<string | null>(null);
+
+  const entries = useMemo(() => {
+    return ingredients
+      .filter((ing) => ing.stockOnHand !== undefined)
+      .map((ing) => {
+        const container = containerBaseUnits(ing);
+        const out = (ing.stockOnHand ?? 0) <= 0;
+        const low = !out && container !== null && (ing.stockOnHand ?? 0) < container * 0.2;
+        return { ing, container, out, low };
+      })
+      .filter((e) => e.out || e.low)
+      .sort((a, b) => Number(b.out) - Number(a.out) || a.ing.name.localeCompare(b.ing.name));
+  }, [ingredients]);
+
+  if (entries.length === 0) return null;
+
+  const restock = async (ing: Ingredient, container: number) => {
+    setRestockingId(ing.id);
+    try {
+      const next = Math.round(((ing.stockOnHand ?? 0) + container) * 10) / 10;
+      await ingredientsRepo.update(ing.id, { stockOnHand: next });
+      onChanged();
+    } finally {
+      setRestockingId(null);
+    }
+  };
+
+  return (
+    <div className="mt-6 overflow-hidden rounded-2xl bg-white ring-2 ring-amber-300" data-tour="shopping-list">
+      <button
+        className="flex w-full items-center gap-3 px-5 py-4 text-left"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <ShoppingCart className="h-5 w-5 shrink-0 text-amber-600" />
+        <div className="flex-1">
+          <p className="font-semibold text-slate-800">{t('inventory.shoppingList', 'Shopping List')}</p>
+          <p className="text-xs text-slate-400">
+            {t('inventory.shoppingListSubtitle', 'Tracked ingredients that are out or running low — reorder before the next batch.')}
+          </p>
+        </div>
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+          {entries.length}
+        </span>
+        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+
+      {open && (
+        <div className="space-y-1.5 border-t border-slate-100 px-4 pb-4 pt-3">
+          {entries.map(({ ing, container, out }) => {
+            const unit = baseUnitOf(ing);
+            return (
+              <div key={ing.id} className="flex items-center gap-2.5 rounded-xl bg-amber-50/60 px-3 py-2">
+                <IngredientIcon category={ing.category} name={ing.name} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-700">
+                    {getIngredientDisplayName(ing.name, t)}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    {t('inventory.shoppingListStock', '{{n}} {{unit}} left', {
+                      n: Math.round((ing.stockOnHand ?? 0) * 10) / 10,
+                      unit,
+                    })}
+                    {container !== null && ` · ${t('inventory.shoppingListContainer', 'container = {{n}} {{unit}}', { n: Math.round(container), unit })}`}
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${
+                  out
+                    ? 'bg-rose-50 text-rose-700 ring-rose-200'
+                    : 'bg-amber-50 text-amber-700 ring-amber-200'
+                }`}>
+                  {out ? t('inventory.outOfStock', 'out of stock') : t('inventory.lowStock', 'running low')}
+                </span>
+                {ing.supplierUrl && (
+                  <a
+                    href={ing.supplierUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-secondary shrink-0 px-2.5 py-1 text-xs"
+                    title={t('inventory.openSupplier', 'Open the saved supplier page')}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {t('inventory.buy', 'Buy')}
+                  </a>
+                )}
+                {container !== null && (
+                  <button
+                    className="btn-secondary shrink-0 px-2.5 py-1 text-xs"
+                    disabled={restockingId === ing.id}
+                    onClick={() => void restock(ing, container)}
+                    title={t('inventory.restockTitle', 'I bought one — add a full container to stock')}
+                  >
+                    {restockingId === ing.id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <PackagePlus className="h-3.5 w-3.5" />}
+                    {t('inventory.restock', 'Restocked')}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -445,7 +577,7 @@ function CategoryQuickSetCard({
   };
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200" data-tour="quick-set">
       <button
         className="flex w-full items-center gap-3 px-5 py-4 text-left"
         onClick={() => setOpen((o) => !o)}
