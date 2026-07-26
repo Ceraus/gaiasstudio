@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Full backup & restore** — Settings → Data now exports the ENTIRE
+  database (every table, schema-agnostic, so future tables are included
+  automatically) as one JSON file, and can restore it atomically (one
+  transaction — a half-restored database is impossible; the app reloads
+  after). The old export only covered ingredients/recipes/assets and had no
+  restore. The desktop app additionally writes a **silent daily automatic
+  backup** on launch into `backups/` inside Gaia's Save System, pruned to
+  the newest 14 — Rosa never has to remember.
 - **Client Work Orders & automated sales receipts** (Dexie v13) — a new
   Orders tab tracks what each client bought: type the client's name (existing
   clients auto-suggest, no duplicates), pick the recipes sold + quantities

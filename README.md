@@ -99,6 +99,9 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
   scaling (default 100%) so every control and label can be as large as needed.
 - **Non-destructive history.** A 2000 ms debounced autosave writes snapshots you
   can restore from the History tab.
+- **Foolproof backups.** One-click full-database export and atomic restore in
+  Settings, plus a silent **daily automatic backup** in the desktop app
+  (newest 14 kept in `backups/` inside Gaia's Save System).
 
 ## Tech stack
 

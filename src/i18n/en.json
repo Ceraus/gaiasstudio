@@ -588,7 +588,14 @@
     "localAiBundledHint": "Uses a small model built into the desktop app — nothing to install. In the browser dev preview, AI stays offline until you run the packaged app.",
     "localAiBundledConnected": "Built-in model is ready.",
     "localAiBundledUnreachable": "Couldn't reach the built-in model.",
-    "localAiTest": "Test Connection"
+    "localAiTest": "Test Connection",
+    "importData": "Restore from backup…",
+    "backupSaved": "Backup saved: {{path}}",
+    "backupDownloaded": "Backup \"{{name}}\" downloaded — keep it somewhere safe (USB stick, cloud drive).",
+    "restoreConfirm": "Restoring a backup REPLACES everything currently in the app (recipes, ingredients, designs, orders, finances) with the backup contents. Continue?",
+    "restoreDone": "Restored {{rows}} records across {{tables}} tables — reloading…",
+    "restoreFailed": "Restore failed: {{msg}}",
+    "autoBackupHint": "The desktop app also keeps a daily automatic backup (newest 14) in the backups folder inside Gaia's Save System."
   },
   "sets": {
     "title": "Label Sets",

@@ -573,6 +573,19 @@ async function main() {
       workspace.headers.join(' / '),
     );
 
+    // --- N. Full backup → restore round trip ---------------------------------
+    // Seed some workspace data first so the round trip moves real rows.
+    const backup = await evalAsync(page, async () => {
+      await window.gaiaTest.seedWorkspace();
+      const result = await window.gaiaTest.backupRoundTrip();
+      await window.gaiaTest.clearWorkspace();
+      return result;
+    });
+    check('backup exports at least the seeded rows', backup.rowsBefore >= 4, `rows=${backup.rowsBefore}`);
+    check('restore reimports every exported row', backup.restored === backup.rowsBefore, `restored=${backup.restored}`);
+    check('database identical after backup round trip', backup.rowsAfter === backup.rowsBefore, `after=${backup.rowsAfter}`);
+    check('backup covers every table', backup.tables >= 10, `tables=${backup.tables}`);
+
     check('no uncaught page errors', pageErrors.length === 0, pageErrors[0] || '');
   } finally {
     if (browser) await browser.close();

@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Trash2, WifiOff, X, ZoomIn } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
-import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { checkBundledAiStatus, type LocalAiStatus } from '@/lib/localAi';
+import { exportBackup, restoreBackup } from '@/lib/backup';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -28,21 +28,54 @@ export default function SettingsScreen() {
   const loadSettings = useAppStore((s) => s.loadSettings);
   const loadLibrary = useLibraryStore((s) => s.load);
 
-  const exportBackup = async () => {
-    const backup = {
-      exportedAt: new Date().toISOString(),
-      ingredients: await ingredientsRepo.all(),
-      recipes: await recipesRepo.all(),
-      assets: await assetsRepo.all(),
-      settings,
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `gaia-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  // ── Backup & Restore ───────────────────────────────────────────────────────
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportBackup = async () => {
+    setBackupBusy(true);
+    setBackupMessage(null);
+    try {
+      const { savedPath, filename } = await exportBackup();
+      setBackupMessage(
+        savedPath
+          ? t('settings.backupSaved', 'Backup saved: {{path}}', { path: savedPath })
+          : t('settings.backupDownloaded', 'Backup "{{name}}" downloaded — keep it somewhere safe (USB stick, cloud drive).', { name: filename }),
+      );
+    } catch (err) {
+      setBackupMessage(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleRestoreFile = async (file: File) => {
+    if (!window.confirm(t('settings.restoreConfirm',
+      'Restoring a backup REPLACES everything currently in the app (recipes, ingredients, designs, orders, finances) with the backup contents. Continue?'))) {
+      return;
+    }
+    setBackupBusy(true);
+    setBackupMessage(null);
+    try {
+      const json = await file.text();
+      const summary = await restoreBackup(json);
+      setBackupMessage(
+        t('settings.restoreDone', 'Restored {{rows}} records across {{tables}} tables — reloading…', {
+          rows: summary.rows,
+          tables: summary.tables,
+        }),
+      );
+      // Reload so every store and screen re-reads the restored database.
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      setBackupMessage(
+        t('settings.restoreFailed', 'Restore failed: {{msg}}', {
+          msg: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      setBackupBusy(false);
+    }
   };
 
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
@@ -347,9 +380,28 @@ export default function SettingsScreen() {
               </span>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button className="btn-secondary" onClick={() => void exportBackup()}>
-                <Download className="h-4 w-4" /> {t('settings.exportData')}
+              <button className="btn-secondary" disabled={backupBusy} onClick={() => void handleExportBackup()}>
+                {backupBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {t('settings.exportData')}
               </button>
+              <button
+                className="btn-secondary"
+                disabled={backupBusy}
+                onClick={() => restoreInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" /> {t('settings.importData', 'Restore from backup…')}
+              </button>
+              <input
+                ref={restoreInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = ''; // allow picking the same file again
+                  if (file) void handleRestoreFile(file);
+                }}
+              />
               <button
                 className="btn-secondary"
                 disabled={maintenanceBusy}
@@ -364,6 +416,12 @@ export default function SettingsScreen() {
                 <Trash2 className="h-4 w-4" /> {t('settings.clearData')}
               </button>
             </div>
+            {backupMessage && (
+              <p className="mt-3 break-all text-xs text-slate-500">{backupMessage}</p>
+            )}
+            <p className="mt-3 text-[11px] text-slate-400">
+              {t('settings.autoBackupHint', "The desktop app also keeps a daily automatic backup (newest 14) in the backups folder inside Gaia's Save System.")}
+            </p>
             {maintenanceResult && (
               <p className="mt-3 text-xs text-slate-500">{maintenanceResult}</p>
             )}

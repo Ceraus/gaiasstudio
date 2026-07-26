@@ -589,7 +589,14 @@
     "localAiBundledHint": "Usa un modelo pequeño integrado en la app de escritorio — no hay nada que instalar. En la vista previa del navegador, la IA permanece desconectada hasta ejecutar la app empaquetada.",
     "localAiBundledConnected": "El modelo integrado está listo.",
     "localAiBundledUnreachable": "No se pudo conectar con el modelo integrado.",
-    "localAiTest": "Probar conexión"
+    "localAiTest": "Probar conexión",
+    "importData": "Restaurar desde copia…",
+    "backupSaved": "Copia guardada: {{path}}",
+    "backupDownloaded": "Copia \"{{name}}\" descargada — guárdala en un lugar seguro (USB, nube).",
+    "restoreConfirm": "Restaurar una copia REEMPLAZA todo lo que hay en la app (recetas, ingredientes, diseños, pedidos, finanzas) con el contenido de la copia. ¿Continuar?",
+    "restoreDone": "Se restauraron {{rows}} registros en {{tables}} tablas — recargando…",
+    "restoreFailed": "La restauración falló: {{msg}}",
+    "autoBackupHint": "La app de escritorio también guarda una copia automática diaria (las 14 más recientes) en la carpeta backups dentro de Gaia’s Save System."
   },
   "sets": {
     "title": "Conjuntos de etiquetas",

@@ -137,4 +137,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   savePdf(base64, folder, filename) {
     return ipcRenderer.invoke('gaia:save-pdf', { base64, folder, filename });
   },
+
+  /**
+   * Writes a full-database backup (JSON string) into the save system's
+   * backups/ folder; the main process prunes to the newest 14 files.
+   * @param {string} json
+   * @param {string} filename
+   * @returns {Promise<{path: string}>}
+   */
+  saveBackup(json, filename) {
+    return ipcRenderer.invoke('gaia:save-backup', { json, filename });
+  },
 });

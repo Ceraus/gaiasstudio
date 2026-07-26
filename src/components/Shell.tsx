@@ -19,6 +19,7 @@ import OnboardingCoach from '@/components/OnboardingCoach';
 import WorkflowStepper from '@/components/WorkflowStepper';
 import DebugPanel from '@/components/debug/DebugPanel';
 import { startAutoImport, onAutoImportToast } from '@/lib/autoImport';
+import { maybeRunAutoBackup } from '@/lib/backup';
 import { seedRecipes } from '@/data/recipeSeed';
 import LocalAiStatusBadge from '@/components/LocalAiStatusBadge';
 
@@ -70,6 +71,8 @@ export default function Shell() {
   useEffect(() => {
     const cleanup = startAutoImport();
     void seedRecipes();
+    // Desktop-only daily safety net; no-op in the browser build.
+    void maybeRunAutoBackup();
     return cleanup;
   }, []);
 

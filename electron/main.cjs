@@ -380,6 +380,28 @@ app.whenReady().then(() => {
     }
   });
 
+  // Full-database backup — writes the JSON into the portable save system's
+  // backups/ folder and prunes to the newest 14 files, so daily auto-backups
+  // never eat the disk. Returns the absolute path for the success message.
+  ipcMain.handle('gaia:save-backup', async (_event, { json, filename }) => {
+    const dir = path.join(saveSystemDir, 'backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeName = safeBasename(filename || `Gaia_Backup_${Date.now()}.json`);
+    const filePath = path.join(dir, safeName.toLowerCase().endsWith('.json') ? safeName : `${safeName}.json`);
+    await fs.promises.writeFile(filePath, String(json), 'utf8');
+    try {
+      const files = (await fs.promises.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.json'));
+      const stats = await Promise.all(
+        files.map(async (f) => ({ f, m: (await fs.promises.stat(path.join(dir, f))).mtimeMs })),
+      );
+      stats.sort((a, b) => b.m - a.m);
+      for (const old of stats.slice(14)) {
+        await fs.promises.unlink(path.join(dir, old.f)).catch(() => {});
+      }
+    } catch { /* pruning is best-effort */ }
+    return { path: filePath };
+  });
+
   // Silent PDF save — writes base64 PDF bytes into a sub-folder of the
   // portable save system (e.g. work_orders/Maria_Lopez_ORD-003.pdf) without
   // any "Save As" dialog. Returns the absolute path for the success toast.
