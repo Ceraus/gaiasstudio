@@ -4,6 +4,13 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.38] - 2026-07-26
+
+### Changed
+- Default Contact Info now also includes a support email
+  (`customercare@gaiasessences.com`) alongside Rosa's name and the shop
+  website.
+
 ## [2.0.36] - 2026-07-26
 
 ### Added
