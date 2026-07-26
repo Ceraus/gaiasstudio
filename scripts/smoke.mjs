@@ -75,6 +75,47 @@ function waitForServer(timeoutMs = 20000) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Robust async evaluation.
+//
+// Awaiting a page promise over CDP (`Runtime.callFunctionOn` + awaitPromise)
+// intermittently fails with "ProtocolError: Promise was collected" on modern
+// Chrome: under heavy canvas/GC load the pending promise is only weakly
+// retained by the inspector and gets garbage-collected before it settles.
+// Instead of awaiting across the protocol, we run the async function in the
+// page, stash its outcome on a window global (strongly retained), poll for
+// completion with cheap synchronous evaluations, then read the result.
+// ---------------------------------------------------------------------------
+let evalSeq = 0;
+async function evalAsync(page, fn, ...args) {
+  const key = `__gaiaSmoke${evalSeq++}`;
+  await page.evaluate(
+    (k, fnSrc, fnArgs) => {
+      // Reconstruct the function inside the page so closures aren't needed.
+      // eslint-disable-next-line no-eval
+      const f = (0, eval)(`(${fnSrc})`);
+      window[k] = { done: false };
+      Promise.resolve()
+        .then(() => f(...fnArgs))
+        .then(
+          (value) => { window[k] = { done: true, value }; },
+          (err) => { window[k] = { done: true, error: String((err && err.stack) || err) }; },
+        );
+    },
+    key,
+    fn.toString(),
+    args,
+  );
+  await page.waitForFunction((k) => window[k] && window[k].done, { timeout: 60000, polling: 120 }, key);
+  const outcome = await page.evaluate((k) => {
+    const r = window[k];
+    delete window[k];
+    return r;
+  }, key);
+  if (outcome.error) throw new Error(`evalAsync failed: ${outcome.error}`);
+  return outcome.value;
+}
+
 async function main() {
   const executablePath = findBrowser();
   if (!executablePath) {
@@ -93,7 +134,7 @@ async function main() {
     await waitForServer();
     browser = await puppeteer.launch({
       executablePath,
-      headless: 'new',
+      headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
     });
     const page = await browser.newPage();
@@ -139,11 +180,21 @@ async function main() {
         id,
       );
 
-    // --- A. Core editing ---------------------------------------------------
+    // --- A0. Strict 4-layer context stack -----------------------------------
     await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), anyTpl.id);
     await waitReady(anyTpl.id);
 
-    const core = await page.evaluate(async () => {
+    const stack = await page.evaluate(() =>
+      window.gaiaEditor.canvas.getObjects().map((o) => o.gaiaKind),
+    );
+    check(
+      'spawns with the strict 4-layer stack',
+      JSON.stringify(stack) === JSON.stringify(['base', 'background', 'overlay', 'text']),
+      stack.join(' → '),
+    );
+
+    // --- A. Core editing ---------------------------------------------------
+    const core = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const count = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__')).length;
       e.addText('heading', 'Hello');
@@ -181,7 +232,7 @@ async function main() {
     check('flip toggles horizontally', core.flipped);
 
     // --- B. Crop -----------------------------------------------------------
-    const crop = await page.evaluate(async () => {
+    const crop = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const c = document.createElement('canvas');
       c.width = 200;
@@ -232,7 +283,7 @@ async function main() {
     const inspectFront = async (templateId) => {
       await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), templateId);
       await waitReady(templateId);
-      return page.evaluate(async () => {
+      return evalAsync(page, async () => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('front', 5);
         const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
@@ -287,7 +338,7 @@ async function main() {
     if (back) {
       await page.evaluate((id) => window.gaiaTest.startDesign(id, 'back'), back.id);
       await waitReady(back.id);
-      const backFit = await page.evaluate(async () => {
+      const backFit = await evalAsync(page, async () => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('back', 25);
         const safe = {
@@ -297,7 +348,12 @@ async function main() {
           bottom: e.trim.top + e.labelHpx - e.safePx,
         };
         const tol = 2;
-        const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
+        // Structural layers (base / background slot / legibility overlay)
+        // intentionally cover the full label — only measure generated content.
+        const structural = ['base', 'background', 'overlay'];
+        const objs = e.canvas.getObjects().filter(
+          (o) => !String(o.gaiaKind || '').startsWith('__') && !structural.includes(o.gaiaKind),
+        );
         let worst = 0;
         for (const o of objs) {
           const b = o.getBoundingRect();
@@ -319,7 +375,7 @@ async function main() {
     const tpl = anyTpl;
     await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), tpl.id);
     await waitReady(tpl.id);
-    const logoAndPdf = await page.evaluate(async () => {
+    const logoAndPdf = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       // transparent PNG: a filled circle on a transparent background
       const c = document.createElement('canvas');
@@ -341,8 +397,8 @@ async function main() {
     check('transparent logo added as logo layer', logoAndPdf.hasLogo);
     check('exported label is a PNG (alpha-capable)', logoAndPdf.pngIsPng);
 
-    const pdf1 = await page.evaluate((per) => window.gaiaTest.buildPdf(per, false), tpl.perSheet);
-    const pdf3 = await page.evaluate((per) => window.gaiaTest.buildPdf(per * 3, false), tpl.perSheet);
+    const pdf1 = await evalAsync(page, (per) => window.gaiaTest.buildPdf(per, false), tpl.perSheet);
+    const pdf3 = await evalAsync(page, (per) => window.gaiaTest.buildPdf(per * 3, false), tpl.perSheet);
     check(`PDF ${tpl.perSheet} labels → 1 page`, pdf1.pages === 1, `pages=${pdf1.pages}`);
     check(`PDF ${tpl.perSheet * 3} labels → 3 pages`, pdf3.pages === 3, `pages=${pdf3.pages}`);
     check(
@@ -352,7 +408,7 @@ async function main() {
     );
 
     // --- G. Photo adjustments (brightness / contrast / saturation) ---------
-    const adjust = await page.evaluate(async () => {
+    const adjust = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const img = e.canvas.getObjects().find((o) => o.type === 'image');
       e.canvas.setActiveObject(img);
@@ -387,8 +443,26 @@ async function main() {
     check('drag-to-reorder moves a layer to the front', reorder.movedToFront);
     check('reorder keeps every layer', reorder.count === reorder.wasCount, `layers=${reorder.count}`);
 
+    // --- H2. Layers panel multi-select -> group -> ungroup -------------------
+    const grouping = await page.evaluate(() => {
+      const e = window.gaiaEditor;
+      e.addText('body', 'One');
+      e.addShape('circle');
+      const latest = e.canvas.getObjects().slice(-2).map((o) => o.id);
+      e.selectLayers(latest);
+      const selCount = e.canvas.getActiveObjects().length;
+      e.group();
+      const groupedType = e.canvas.getActiveObject()?.type;
+      e.ungroup();
+      const afterUngroup = e.canvas.getActiveObjects().length;
+      return { selCount, groupedType, afterUngroup };
+    });
+    check('panel multi-select selects 2 objects', grouping.selCount === 2, `selected=${grouping.selCount}`);
+    check('grouping panel selection makes a group', grouping.groupedType === 'group', `type=${grouping.groupedType}`);
+    check('ungroup restores 2 objects', grouping.afterUngroup === 2);
+
     // --- I. Object clipboard (copy / paste) --------------------------------
-    const clipboard = await page.evaluate(async () => {
+    const clipboard = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const count = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__')).length;
       const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
@@ -411,8 +485,8 @@ async function main() {
     check('clipboard survives deleting the original', clipboard.afterDelete);
 
     // --- J. Mixed batch sheet ----------------------------------------------
-    const batchOne = await page.evaluate((per) => window.gaiaTest.buildBatchPdf([Math.ceil(per / 2), Math.floor(per / 2)]), tpl.perSheet);
-    const batchTwo = await page.evaluate((per) => window.gaiaTest.buildBatchPdf([per, per, 1]), tpl.perSheet);
+    const batchOne = await evalAsync(page, (per) => window.gaiaTest.buildBatchPdf([Math.ceil(per / 2), Math.floor(per / 2)]), tpl.perSheet);
+    const batchTwo = await evalAsync(page, (per) => window.gaiaTest.buildBatchPdf([per, per, 1]), tpl.perSheet);
     check('mixed batch fills exactly one sheet', batchOne.pages === 1 && batchOne.slots === tpl.perSheet, `slots=${batchOne.slots}`);
     check('mixed batch overflows onto more sheets', batchTwo.pages === 3, `pages=${batchTwo.pages}`);
     check(
@@ -422,7 +496,7 @@ async function main() {
     );
 
     // --- K. Inch rulers -----------------------------------------------------
-    const rulers = await page.evaluate(async () => {
+    const rulers = await evalAsync(page, async () => {
       const { useEditorStore } = window.gaiaTestStores;
       const before = document.querySelectorAll('canvas').length;
       useEditorStore.getState().set({ rulersVisible: true });
@@ -435,12 +509,25 @@ async function main() {
     check('ruler toggle adds two ruler canvases', rulers.withRulers === rulers.before + 2, `${rulers.before} → ${rulers.withRulers}`);
     check('ruler toggle removes them again', rulers.after === rulers.before);
 
-    // --- L. Interface scale -------------------------------------------------
-    const scale = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
-    check('interface renders 25% larger by default', Math.abs(scale - 20) < 0.5, `root font-size=${scale}px`);
+    // --- L. Interface scale (user-adjustable, default 100%) -----------------
+    // The default moved from 125% back to 100% (see CHANGELOG "100% default
+    // UI scale"); what matters is that the Settings control actually scales.
+    const scale = await evalAsync(page, async () => {
+      const read = () => parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const base = read();
+      await window.gaiaTestStores.useAppStore.getState().updateSettings({ uiScale: 1.25 });
+      await new Promise((r) => setTimeout(r, 100));
+      const scaled = read();
+      await window.gaiaTestStores.useAppStore.getState().updateSettings({ uiScale: 1 });
+      await new Promise((r) => setTimeout(r, 100));
+      return { base, scaled, restored: read() };
+    });
+    check('interface defaults to 100% scale', Math.abs(scale.base - 16) < 0.5, `root font-size=${scale.base}px`);
+    check('interface size setting scales the UI to 125%', Math.abs(scale.scaled - 20) < 0.5, `root font-size=${scale.scaled}px`);
+    check('interface size setting restores 100%', Math.abs(scale.restored - 16) < 0.5);
 
     // --- M. Workspace search, collections and batch selection ---------------
-    const workspace = await page.evaluate(async () => {
+    const workspace = await evalAsync(page, async () => {
       await window.gaiaTest.clearWorkspace();
       await window.gaiaTest.seedWorkspace();
       window.gaiaTestStores.useAppStore.getState().goto('drafts');
