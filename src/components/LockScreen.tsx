@@ -1,53 +1,156 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Lock } from 'lucide-react';
 import logo from '@/assets/logo.png';
-
-/**
- * Basic app lock — a simple local password gate, not real security. It just
- * keeps the studio from opening to a casual glance; the password lives only
- * in this file and the "unlocked" flag is per-session (re-prompts on every
- * fresh launch of the app).
- */
-const APP_PASSWORD = 'Purplepenguin11';
-const UNLOCK_KEY = 'gaia:unlocked';
+import { db } from '@/db/db';
+import { settingsRepo } from '@/db/repositories';
+import {
+  clearFailedAttempts,
+  getLockoutRemainingMs,
+  hasPinConfigured,
+  hashPin,
+  isE2EBypass,
+  isLockoutActive,
+  isSessionUnlocked,
+  recordFailedAttempt,
+  setSessionUnlocked,
+  verifyPin,
+  type LockPinRecord,
+} from '@/lib/appLock';
+import { activateVaultFromPin } from '@/lib/secretVault';
 
 export function isUnlocked(): boolean {
-  try {
-    // Lets the headless smoke test (scripts/smoke.mjs) drive the real UI
-    // without needing to know the password.
-    if (new URLSearchParams(window.location.search).get('e2e') === '1') return true;
-    return sessionStorage.getItem(UNLOCK_KEY) === '1';
-  } catch {
-    return false;
-  }
+  return isSessionUnlocked();
 }
 
-export default function LockScreen({ onUnlock }: { onUnlock: () => void }) {
+interface LockScreenProps {
+  onUnlock: () => void;
+}
+
+export default function LockScreen({ onUnlock }: LockScreenProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [wrong, setWrong] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [pinRecord, setPinRecord] = useState<LockPinRecord | null>(null);
+  const [lockoutMs, setLockoutMs] = useState(0);
 
-  const submit = () => {
-    if (value === APP_PASSWORD) {
-      try {
-        sessionStorage.setItem(UNLOCK_KEY, '1');
-      } catch {
-        // ignore — sessionStorage unavailable, unlock still proceeds for this render
-      }
-      onUnlock();
-    } else {
+  const isSetup = pinRecord !== null && !hasPinConfigured(pinRecord);
+
+  useEffect(() => {
+    void db.settings.get('app').then((s) => {
+      setPinRecord({
+        lockPinHash: s?.lockPinHash,
+        lockPinSalt: s?.lockPinSalt,
+        lockPinIterations: s?.lockPinIterations,
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    const tick = () => setLockoutMs(getLockoutRemainingMs());
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [wrong]);
+
+  const finishUnlock = async (pin: string, record: LockPinRecord) => {
+    const ok = await activateVaultFromPin(pin, record);
+    if (!ok && hasPinConfigured(record)) {
       setWrong(true);
+      return;
+    }
+    clearFailedAttempts();
+    setSessionUnlocked();
+    onUnlock();
+  };
+
+  const submitSetup = async () => {
+    if (value.length < 4) {
+      setWrong(true);
+      return;
+    }
+    if (value !== confirm) {
+      setWrong(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const { hash, salt, iterations } = await hashPin(value);
+      await settingsRepo.update({
+        lockPinHash: hash,
+        lockPinSalt: salt,
+        lockPinIterations: iterations,
+      });
+      await activateVaultFromPin(value, { lockPinSalt: salt, lockPinIterations: iterations });
+      const refreshed = await settingsRepo.get();
+      await settingsRepo.update({
+        googleAiApiKey: refreshed.googleAiApiKey,
+        unsplashKey: refreshed.unsplashKey,
+        pixabayKey: refreshed.pixabayKey,
+        etsyShop: refreshed.etsyShop,
+      });
+      clearFailedAttempts();
+      setSessionUnlocked();
+      onUnlock();
+    } catch {
+      setWrong(true);
+    } finally {
+      setBusy(false);
       setValue('');
+      setConfirm('');
     }
   };
+
+  const submitUnlock = async () => {
+    if (!pinRecord || !hasPinConfigured(pinRecord)) return;
+    if (isLockoutActive()) {
+      setWrong(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const ok = await verifyPin(value, pinRecord);
+      if (!ok) {
+        recordFailedAttempt();
+        setWrong(true);
+        setValue('');
+        return;
+      }
+      await finishUnlock(value, pinRecord);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = () => {
+    if (isSetup) void submitSetup();
+    else void submitUnlock();
+  };
+
+  if (pinRecord === null) {
+    return (
+      <div className="flex h-full items-center justify-center bg-gaia-50">
+        <p className="text-sm text-slate-500">{t('common.loading')}</p>
+      </div>
+    );
+  }
+
+  const lockedOut = lockoutMs > 0;
+  const lockoutMinutes = Math.ceil(lockoutMs / 60_000);
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 bg-gaia-50 px-6 text-center">
       <img src={logo} alt="Gaia's Essences" className="h-32 w-auto select-none object-contain" draggable={false} />
       <div>
         <h1 className="text-xl font-semibold text-gaia-900">{t('lock.title')}</h1>
-        <p className="mt-1 text-sm text-slate-500">{t('lock.subtitle')}</p>
+        <p className="mt-1 text-sm text-slate-500">
+          {isSetup ? t('lock.setupSubtitle') : t('lock.subtitle')}
+        </p>
+        {isE2EBypass() && (
+          <p className="mt-1 text-[10px] text-amber-600">{t('lock.devBypass')}</p>
+        )}
       </div>
       <div className="w-full max-w-xs">
         <div className="relative">
@@ -55,22 +158,60 @@ export default function LockScreen({ onUnlock }: { onUnlock: () => void }) {
           <input
             type="password"
             autoFocus
+            autoComplete={isSetup ? 'new-password' : 'current-password'}
             className="input w-full pl-9 text-center"
-            placeholder={t('lock.placeholder')}
+            placeholder={isSetup ? t('lock.setupPlaceholder') : t('lock.placeholder')}
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
               setWrong(false);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
+              if (e.key === 'Enter' && !isSetup) submit();
             }}
+            disabled={busy || lockedOut}
           />
         </div>
-        {wrong && <p className="mt-2 text-xs font-medium text-rose-600">{t('lock.wrong')}</p>}
-        <button className="btn btn-primary mt-4 w-full justify-center" onClick={submit} disabled={!value}>
-          {t('lock.unlock')}
+        {isSetup && (
+          <div className="relative mt-3">
+            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="input w-full pl-9 text-center"
+              placeholder={t('lock.confirmPlaceholder')}
+              value={confirm}
+              onChange={(e) => {
+                setConfirm(e.target.value);
+                setWrong(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+              }}
+              disabled={busy}
+            />
+          </div>
+        )}
+        {lockedOut && (
+          <p className="mt-2 text-xs font-medium text-amber-700">
+            {t('lock.lockout', { minutes: lockoutMinutes })}
+          </p>
+        )}
+        {wrong && !lockedOut && (
+          <p className="mt-2 text-xs font-medium text-rose-600">
+            {isSetup ? t('lock.setupWrong') : t('lock.wrong')}
+          </p>
+        )}
+        <button
+          className="btn btn-primary mt-4 w-full justify-center"
+          onClick={submit}
+          disabled={busy || lockedOut || !value || (isSetup && !confirm)}
+        >
+          {isSetup ? t('lock.createPin') : t('lock.unlock')}
         </button>
+        {isSetup && (
+          <p className="mt-3 text-[11px] text-slate-400">{t('lock.setupHint')}</p>
+        )}
       </div>
     </div>
   );

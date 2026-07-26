@@ -42,8 +42,10 @@ function installLogIntercept() {
   console.error = wrap('error', console.error.bind(console));
 }
 
-// Install before any renders so early logs are captured
-installLogIntercept();
+// Install in dev or when debug panel is opened — avoids patching console in production.
+if (import.meta.env.DEV) {
+  installLogIntercept();
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

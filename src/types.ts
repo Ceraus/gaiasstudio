@@ -245,6 +245,15 @@ export interface AppSettings {
   instagramHandle?: string;
   /** TikTok username without @. */
   tiktokHandle?: string;
+
+  // ── App lock (local PIN) ─────────────────────────────────────────────────
+  /** PBKDF2 hash of the user's PIN (base64). */
+  lockPinHash?: string;
+  /** PBKDF2 salt (base64). */
+  lockPinSalt?: string;
+  lockPinIterations?: number;
+  /** AES-GCM encrypted blob of API keys & OAuth tokens. */
+  secretsEnc?: string;
 }
 
 // ---------------------------------------------------------------------------

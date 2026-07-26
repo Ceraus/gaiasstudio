@@ -8,16 +8,12 @@ import type { EtsyListing, EtsyShopConfig, EtsySyncLog, Recipe } from '@/types';
 import { db } from '@/db/db';
 import { recipesRepo, workOrdersRepo } from '@/db/repositories';
 import { getOAuthRedirectUri } from '@/lib/pwa';
+import { uid } from '@/lib/id';
 
 const ETSY_API = 'https://openapi.etsy.com/v3/application';
 const ETSY_TOKEN = 'https://api.etsy.com/v3/public/oauth/token';
 /** Bar soap taxonomy — handmade cosmetics. */
 const SOAP_TAXONOMY_ID = 499;
-
-const uid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const PKCE_VERIFIER_KEY = 'gaia-etsy-pkce-verifier';
 const PKCE_STATE_KEY = 'gaia-etsy-oauth-state';

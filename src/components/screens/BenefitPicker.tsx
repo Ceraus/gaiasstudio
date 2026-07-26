@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, Lightbulb, Search, Sparkles, X } from 'lucide-react';
-import { BENEFIT_CATEGORIES, MODULAR_BENEFITS } from '@/data/benefits';
+import { BENEFIT_CATEGORIES, MODULAR_BENEFITS, type BenefitEntry } from '@/data/benefits';
+import {
+  allBenefitLabelVariants,
+  displayStoredBenefitLabel,
+  getBenefitCategoryLabel,
+  getBenefitLabel,
+  isBenefitSelected,
+} from '@/lib/benefitI18n';
 import type { IngredientCategory } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +51,7 @@ export interface BenefitPickerProps {
 // BenefitPicker
 // ---------------------------------------------------------------------------
 export default function BenefitPicker({ value, onChange, ingredientCategories = [] }: BenefitPickerProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -60,8 +67,9 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
   // Commit current selection back to parent
   const commit = (labels: string[]) => onChange(labels.join(JOINER));
 
-  const addBenefit = (label: string) => {
-    if (selected.includes(label)) return;
+  const addBenefit = (b: BenefitEntry) => {
+    const label = getBenefitLabel(b, t);
+    if (isBenefitSelected(b, selected)) return;
     if (selected.length >= MAX_SELECTED) {
       commit([...selected.slice(1), label]);
     } else {
@@ -69,7 +77,17 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
     }
   };
 
-  const removeBenefit = (label: string) => commit(selected.filter((l) => l !== label));
+  const removeBenefit = (b: BenefitEntry) => {
+    const variants = new Set(allBenefitLabelVariants(b));
+    commit(selected.filter((l) => !variants.has(l)));
+  };
+
+  const toggleBenefit = (b: BenefitEntry) => {
+    if (isBenefitSelected(b, selected)) removeBenefit(b);
+    else addBenefit(b);
+  };
+
+  const removeStoredLabel = (stored: string) => commit(selected.filter((l) => l !== stored));
   const clearAll = () => onChange('');
 
   // Close on outside click
@@ -101,9 +119,7 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
     // Shuffle-ish: sort by how many ingredient categories match, take top 5
     const scored = candidates.map((b) => ({
       b,
-      score: (CATEGORY_MAP as Record<string, string[]>)[b.category]
-        ? ingredientCategories.filter((ic) => (CATEGORY_MAP[ic] ?? []).includes(b.category)).length
-        : 0,
+      score: ingredientCategories.filter((ic) => (CATEGORY_MAP[ic] ?? []).includes(b.category)).length,
     }));
     scored.sort((a, b_) => b_.score - a.score);
     return scored.slice(0, 5).map((s) => s.b);
@@ -115,12 +131,19 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
     if (activeCategory) list = list.filter((b) => b.category === activeCategory);
     if (search.trim()) {
       const q = search.toLowerCase();
-      list = list.filter(
-        (b) => b.label.toLowerCase().includes(q) || b.category.toLowerCase().includes(q),
-      );
+      list = list.filter((b) => {
+        const label = getBenefitLabel(b, t).toLowerCase();
+        const category = getBenefitCategoryLabel(b.category, t).toLowerCase();
+        return (
+          label.includes(q)
+          || category.includes(q)
+          || b.label.toLowerCase().includes(q)
+          || b.category.toLowerCase().includes(q)
+        );
+      });
     }
     return list;
-  }, [activeCategory, search]);
+  }, [activeCategory, search, t, i18n.language]);
 
   const hasSuggestions = suggestions.length > 0 && !search && !activeCategory;
 
@@ -139,16 +162,16 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
         {selected.length === 0 ? (
           <span className="flex-1 text-slate-400">{t('benefitPicker.placeholder')}</span>
         ) : (
-          selected.map((label) => (
+          selected.map((stored) => (
             <span
-              key={label}
+              key={stored}
               className="flex items-center gap-1 rounded-full bg-gaia-100 px-2.5 py-0.5 text-xs font-medium text-gaia-800"
             >
-              {label}
+              {displayStoredBenefitLabel(stored, t)}
               <button
                 type="button"
                 className="ml-0.5 rounded-full text-gaia-500 hover:text-gaia-800"
-                onClick={(e) => { e.stopPropagation(); removeBenefit(label); }}
+                onClick={(e) => { e.stopPropagation(); removeStoredLabel(stored); }}
                 aria-label={t('benefitPicker.removeBenefit')}
               >
                 <X className="h-3 w-3" />
@@ -222,7 +245,7 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {cat}
+                {getBenefitCategoryLabel(cat, t)}
               </button>
             ))}
           </div>
@@ -237,19 +260,16 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
                   {t('benefitPicker.suggestions')}
                 </p>
                 <ul className="space-y-0.5">
-                  {suggestions.map((b) => {
-                    const isSelected = selected.includes(b.label);
-                    return (
-                      <BenefitRow
-                        key={b.id}
-                        label={b.label}
-                        category={b.category}
-                        isSelected={isSelected}
-                        isSuggestion
-                        onClick={() => isSelected ? removeBenefit(b.label) : addBenefit(b.label)}
-                      />
-                    );
-                  })}
+                  {suggestions.map((b) => (
+                    <BenefitRow
+                      key={b.id}
+                      label={getBenefitLabel(b, t)}
+                      category={getBenefitCategoryLabel(b.category, t)}
+                      isSelected={isBenefitSelected(b, selected)}
+                      isSuggestion
+                      onClick={() => toggleBenefit(b)}
+                    />
+                  ))}
                 </ul>
               </div>
             )}
@@ -261,18 +281,15 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
               </p>
             ) : (
               <ul className="divide-y divide-slate-50 py-1">
-                {filtered.map((b) => {
-                  const isSelected = selected.includes(b.label);
-                  return (
-                    <BenefitRow
-                      key={b.id}
-                      label={b.label}
-                      category={b.category}
-                      isSelected={isSelected}
-                      onClick={() => isSelected ? removeBenefit(b.label) : addBenefit(b.label)}
-                    />
-                  );
-                })}
+                {filtered.map((b) => (
+                  <BenefitRow
+                    key={b.id}
+                    label={getBenefitLabel(b, t)}
+                    category={getBenefitCategoryLabel(b.category, t)}
+                    isSelected={isBenefitSelected(b, selected)}
+                    onClick={() => toggleBenefit(b)}
+                  />
+                ))}
               </ul>
             )}
           </div>

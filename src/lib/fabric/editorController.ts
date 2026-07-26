@@ -21,11 +21,7 @@ import {
   type Guide,
   type TrimBox,
 } from './snapping';
-
-const uid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `o-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+import { uid } from '@/lib/id';
 
 type Gaia = fabric.FabricObject & {
   id?: string;

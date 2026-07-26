@@ -4696,11 +4696,11 @@ export const INGREDIENT_ICON_MAP: Record<string, SpecificIcon> = {
  * Matching: normalize to lowercase, then check if any key is contained
  * in the ingredient name. Longer keys take priority.
  */
+const SORTED_INGREDIENT_ICON_KEYS = Object.keys(INGREDIENT_ICON_MAP).sort((a, b) => b.length - a.length);
+
 export function getIngredientSpecificIcon(name: string): SpecificIcon | undefined {
   const lower = name.toLowerCase().trim();
-  // Sort keys by descending length so more-specific keys match first
-  const keys = Object.keys(INGREDIENT_ICON_MAP).sort((a, b) => b.length - a.length);
-  for (const key of keys) {
+  for (const key of SORTED_INGREDIENT_ICON_KEYS) {
     if (lower.includes(key)) return INGREDIENT_ICON_MAP[key];
   }
   return undefined;
@@ -6243,10 +6243,11 @@ export const COLORFUL_INGREDIENT_ICON_MAP: Record<string, JSX.Element> = {
  * Matching: normalize to lowercase, check if any map key is contained
  * in the ingredient name. Longer (more specific) keys take priority.
  */
+const SORTED_COLORFUL_ICON_KEYS = Object.keys(COLORFUL_INGREDIENT_ICON_MAP).sort((a, b) => b.length - a.length);
+
 export function getIngredientColorfulIcon(name: string): JSX.Element | undefined {
   const lower = name.toLowerCase().trim();
-  const keys = Object.keys(COLORFUL_INGREDIENT_ICON_MAP).sort((a, b) => b.length - a.length);
-  for (const key of keys) {
+  for (const key of SORTED_COLORFUL_ICON_KEYS) {
     if (lower.includes(key)) return COLORFUL_INGREDIENT_ICON_MAP[key];
   }
   return undefined;

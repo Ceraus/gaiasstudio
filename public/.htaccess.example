@@ -1,0 +1,32 @@
+# Hostinger static deploy + optional HTTP Basic Auth
+#
+# 1. Build: npm run build
+# 2. Upload everything inside dist/ to public_html/studio/ (or your subfolder)
+# 3. Copy this file to public_html/studio/.htaccess and configure auth below
+#
+# Generate password file (run locally):
+#   htpasswd -c .htpasswd rosa
+#
+# Upload .htpasswd OUTSIDE public_html if possible, or into a non-web path Hostinger allows.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
+
+# Uncomment for an extra login wall before the app PIN (recommended for Hostinger):
+# AuthType Basic
+# AuthName "Gaia Studio"
+# AuthUserFile /home/USER/.htpasswd
+# Require valid-user
+
+# Security headers (if mod_headers is enabled)
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  Header set X-Frame-Options "SAMEORIGIN"
+</IfModule>

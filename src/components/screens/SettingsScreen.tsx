@@ -12,6 +12,13 @@ import {
   type EtsyConnectionStatus,
 } from '@/lib/etsyApi';
 import { getOAuthRedirectUri } from '@/lib/pwa';
+import {
+  clearSessionUnlock,
+  hashPin,
+  verifyPin,
+  hasPinConfigured,
+} from '@/lib/appLock';
+import { activateVaultFromPin, clearVaultKey } from '@/lib/secretVault';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -110,16 +117,19 @@ export default function SettingsScreen() {
 
   const clearAll = async () => {
     if (!window.confirm(t('settings.clearConfirm'))) return;
-    await Promise.all([
-      db.ingredients.clear(),
-      db.recipes.clear(),
-      db.assets.clear(),
-      db.versions.clear(),
-      db.drafts.clear(),
-      db.labelSets.clear(),
-    ]);
-    await loadLibrary();
-    await loadSettings();
+    try {
+      await db.transaction('rw', db.tables, async () => {
+        await Promise.all(db.tables.map((table) => table.clear()));
+      });
+      await loadLibrary();
+      await loadSettings();
+    } catch (err) {
+      window.alert(
+        t('settings.clearFailed', 'Could not clear all data: {{msg}}', {
+          msg: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   };
 
   return (
@@ -245,6 +255,7 @@ export default function SettingsScreen() {
           </section>
 
           <LocalAiSection />
+          <AppLockSection />
 
           <EtsySection />
 
@@ -651,6 +662,110 @@ function LocalAiSection() {
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+function AppLockSection() {
+  const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const [current, setCurrent] = useState('');
+  const [nextPin, setNextPin] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const lockNow = () => {
+    clearSessionUnlock();
+    clearVaultKey();
+    window.location.reload();
+  };
+
+  const changePin = async () => {
+    if (!hasPinConfigured(settings)) return;
+    if (nextPin.length < 4 || nextPin !== confirm) {
+      setMessage(t('settings.pinChangeMismatch', 'New PINs must match and be at least 4 characters.'));
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const ok = await verifyPin(current, settings);
+      if (!ok) {
+        setMessage(t('settings.pinChangeWrong', 'Current PIN is incorrect.'));
+        return;
+      }
+      const { hash, salt, iterations } = await hashPin(nextPin);
+      await activateVaultFromPin(current, settings);
+      const decrypted = { ...settings };
+      await updateSettings({
+        lockPinHash: hash,
+        lockPinSalt: salt,
+        lockPinIterations: iterations,
+        googleAiApiKey: decrypted.googleAiApiKey,
+        unsplashKey: decrypted.unsplashKey,
+        pixabayKey: decrypted.pixabayKey,
+        etsyShop: decrypted.etsyShop,
+      });
+      await activateVaultFromPin(nextPin, { lockPinSalt: salt, lockPinIterations: iterations });
+      setMessage(t('settings.pinChangeDone', 'PIN updated. API keys re-encrypted.'));
+      setCurrent('');
+      setNextPin('');
+      setConfirm('');
+    } catch (err) {
+      setMessage(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <p className="label flex items-center gap-2">
+        <KeyRound className="h-4 w-4" /> {t('settings.appLock', 'App lock & encryption')}
+      </p>
+      <p className="mb-3 text-xs text-slate-400">{t('settings.appLockHint')}</p>
+      {hasPinConfigured(settings) && (
+        <div className="mb-4 space-y-2">
+          <input
+            type="password"
+            className="input w-full"
+            placeholder={t('settings.currentPin', 'Current PIN')}
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            autoComplete="current-password"
+          />
+          <input
+            type="password"
+            className="input w-full"
+            placeholder={t('settings.newPin', 'New PIN')}
+            value={nextPin}
+            onChange={(e) => setNextPin(e.target.value)}
+            autoComplete="new-password"
+          />
+          <input
+            type="password"
+            className="input w-full"
+            placeholder={t('settings.confirmPin', 'Confirm new PIN')}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            className="btn btn-secondary text-sm"
+            disabled={busy || !current || !nextPin || !confirm}
+            onClick={() => void changePin()}
+          >
+            {t('settings.changePin', 'Change PIN')}
+          </button>
+        </div>
+      )}
+      <button type="button" className="btn btn-secondary text-sm" onClick={lockNow}>
+        {t('settings.lockApp', 'Lock studio now')}
+      </button>
+      {message && <p className="mt-2 text-xs text-slate-600">{message}</p>}
     </section>
   );
 }

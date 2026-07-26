@@ -9,6 +9,7 @@
  */
 
 import { db } from '@/db/db';
+import { uid } from '@/lib/id';
 import { INGREDIENT_SEED } from './ingredientSeed';
 import type { Ingredient } from '@/types';
 
@@ -173,11 +174,6 @@ const RECIPE_SEED: RecipeDef[] = [
 // ---------------------------------------------------------------------------
 // Runtime helper
 // ---------------------------------------------------------------------------
-
-const uid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `recipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 /** Shared seeding logic — optionally replaces the entire recipe table first. */
 async function populateSeedRecipes(replaceExisting: boolean): Promise<number> {

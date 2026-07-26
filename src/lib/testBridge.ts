@@ -210,7 +210,7 @@ const maintenanceApi: GaiaMaintenanceApi = {
   },
 };
 
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && (import.meta.env.DEV || import.meta.env.VITE_E2E === 'true')) {
   (window as unknown as { gaiaTest: GaiaTestApi }).gaiaTest = api;
   (window as unknown as { gaiaMaintenance: GaiaMaintenanceApi }).gaiaMaintenance = maintenanceApi;
   // The smoke test drives screen navigation and editor view toggles through the

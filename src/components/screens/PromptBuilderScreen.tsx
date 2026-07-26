@@ -26,6 +26,8 @@ import { useAppStore } from '@/store/useAppStore';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { db } from '@/db/db';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
+import RecipePicker from '@/components/common/RecipePicker';
+import { getRecipeColor } from '@/lib/recipeColors';
 import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
 import type { AssetRecord, Ingredient, IngredientCategory, Recipe } from '@/types';
 
@@ -300,6 +302,10 @@ function buildPrompt(
 
 const AI_STUDIO_URL = 'https://aistudio.google.com/app/prompts/new_chat';
 const GEMINI_URL    = 'https://gemini.google.com/app';
+/** Named popup so reopening focuses the same companion window beside Studio. */
+const AI_COMPANION_WINDOW = 'gaia-ai-companion';
+const AI_WINDOW_FEATURES =
+  'popup=yes,width=1280,height=900,menubar=no,toolbar=yes,location=yes,status=no,resizable=yes,scrollbars=yes';
 
 type AiTarget = 'aistudio' | 'gemini';
 
@@ -311,6 +317,23 @@ function aiTargetFromUrl(url: string): AiTarget | null {
   if (url.includes('gemini.google.com')) return 'gemini';
   if (url.includes('aistudio.google.com')) return 'aistudio';
   return null;
+}
+
+/** Open AI Studio / Gemini in a reusable companion window (browser/PWA). */
+function openAiCompanionWindow(target: AiTarget, existing: Window | null): Window | null {
+  const url = urlForAiTarget(target);
+  if (existing && !existing.closed) {
+    try {
+      existing.location.href = url;
+    } catch {
+      return window.open(url, AI_COMPANION_WINDOW, AI_WINDOW_FEATURES);
+    }
+    existing.focus();
+    return existing;
+  }
+  const win = window.open(url, AI_COMPANION_WINDOW, AI_WINDOW_FEATURES);
+  win?.focus();
+  return win;
 }
 
 /** Open in the OS default browser (Electron) or a new tab (web). */
@@ -394,8 +417,37 @@ export default function PromptBuilderScreen({
   const webviewRef = useRef<any>(null);
   const [urlBarValue, setUrlBarValue] = useState(AI_STUDIO_URL);
   const [aiTarget, setAiTarget] = useState<AiTarget>('aistudio');
+  const [companionOpen, setCompanionOpen] = useState(false);
+  const aiCompanionRef = useRef<Window | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+
+  const openCompanion = (target: AiTarget = aiTarget) => {
+    setAiTarget(target);
+    setUrlBarValue(urlForAiTarget(target));
+    if (isElectron) {
+      webviewRef.current?.loadURL(urlForAiTarget(target));
+      return;
+    }
+    aiCompanionRef.current = openAiCompanionWindow(target, aiCompanionRef.current);
+    setCompanionOpen(!!aiCompanionRef.current && !aiCompanionRef.current.closed);
+  };
+
+  const switchAiTarget = (target: AiTarget) => {
+    openCompanion(target);
+  };
+
+  // Track whether the companion popup is still open
+  useEffect(() => {
+    if (isElectron) return;
+    const tick = () => {
+      const open = !!aiCompanionRef.current && !aiCompanionRef.current.closed;
+      setCompanionOpen(open);
+    };
+    tick();
+    const id = window.setInterval(tick, 800);
+    return () => window.clearInterval(id);
+  }, [isElectron]);
 
   // ── Add ingredient form ────────────────────────────────────────────────────
   const [newIngName,     setNewIngName]     = useState('');
@@ -577,15 +629,17 @@ export default function PromptBuilderScreen({
   };
 
   const copyAndOpen = () => {
-    const url = urlForAiTarget(aiTarget);
-    // Open synchronously on click so popup blockers don't intercept it.
-    openInDefaultBrowser(url);
     void copyTextToClipboard(prompt).then((ok) => {
       if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }
     });
+    if (isElectron) {
+      openInDefaultBrowser(urlForAiTarget(aiTarget));
+    } else {
+      openCompanion(aiTarget);
+    }
   };
 
   // ── Token lists for checklist sections ─────────────────────────────────────
@@ -666,39 +720,45 @@ export default function PromptBuilderScreen({
 
         {/* ── Recipe switcher dropdown ───────────────────────────────────── */}
         <div className="mt-4 flex items-center gap-2">
-          <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Recipe:</span>
+          <span className="whitespace-nowrap text-xs font-medium text-gray-500">Recipe:</span>
           {recipes.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">
+            <p className="text-xs italic text-slate-400">
               {t('promptBuilder.noRecipesHint', 'No recipes yet — create one in Recipes')}
             </p>
           ) : (
-            <select
-              value={activeRecipeId ?? ''}
-              onChange={(e) => setActiveRecipeId(e.target.value || null)}
-              className="flex-1 text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="">— Choose a recipe —</option>
-              {recipes.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
+            <RecipePicker
+              className="flex-1"
+              recipes={recipes}
+              ingredients={allDbIngredients}
+              value={activeRecipeId}
+              onChange={setActiveRecipeId}
+              placeholder={t('promptBuilder.chooseRecipe', '— Choose a recipe —')}
+            />
           )}
         </div>
 
         {/* ── Recipe banner ──────────────────────────────────────────────── */}
-        <div className={`mt-3 rounded-xl p-3 ring-1 ${activeRecipe ? 'bg-gaia-50 ring-gaia-200' : 'bg-amber-50 ring-amber-200'}`}>
+        {(() => {
+          const bannerTheme = activeRecipe
+            ? getRecipeColor(activeRecipe, allDbIngredients)
+            : null;
+          return (
+        <div className={`mt-3 rounded-xl p-3 ring-1 ${activeRecipe && bannerTheme ? `${bannerTheme.bg} ${bannerTheme.activeBorder}` : activeRecipe ? 'bg-gaia-50 ring-gaia-200' : 'bg-amber-50 ring-amber-200'}`}>
           {activeRecipe ? (
             <>
               <div className="flex items-start justify-between gap-2">
-                <p className="text-xs font-semibold text-gaia-800">
-                  🌿 {t('promptBuilder.recipeLoaded', 'Using recipe:')} {activeRecipe.name}
+                <p className={`flex items-center gap-2 text-xs font-semibold ${bannerTheme?.text ?? 'text-gaia-800'}`}>
+                  {bannerTheme && (
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${bannerTheme.dot}`} />
+                  )}
+                  {t('promptBuilder.recipeLoaded', 'Using recipe:')} {activeRecipe.name}
                 </p>
                 <button onClick={() => goto('recipes')} className="shrink-0 text-xs text-gaia-600 hover:underline">
                   {t('promptBuilder.changeRecipe', 'Change Recipe')}
                 </button>
               </div>
               {recipeIngredientNames.length > 0 && (
-                <p className="mt-1 text-xs text-gaia-700">
+                <p className={`mt-1 text-xs ${bannerTheme?.text ?? 'text-gaia-700'}`}>
                   <span className="font-medium">{t('promptBuilder.recipeKeyIngredients', 'Key ingredients:')}</span>{' '}
                   {recipeIngredientNames.slice(0, 5).join(', ')}
                   {recipeIngredientNames.length > 5 && (
@@ -707,7 +767,7 @@ export default function PromptBuilderScreen({
                 </p>
               )}
               {activeRecipe.benefit && (
-                <p className="mt-1 text-xs italic text-gaia-600">{activeRecipe.benefit}</p>
+                <p className={`mt-1 text-xs italic opacity-80 ${bannerTheme?.text ?? 'text-gaia-600'}`}>{activeRecipe.benefit}</p>
               )}
             </>
           ) : (
@@ -721,6 +781,8 @@ export default function PromptBuilderScreen({
             </div>
           )}
         </div>
+          );
+        })()}
 
         <div className="mt-5 space-y-4">
 
@@ -1069,7 +1131,7 @@ export default function PromptBuilderScreen({
               <select
                 className="input h-8 w-[7.5rem] shrink-0 py-0 text-xs"
                 value={aiTarget}
-                onChange={(e) => setAiTarget(e.target.value as AiTarget)}
+                onChange={(e) => switchAiTarget(e.target.value as AiTarget)}
                 aria-label={t('promptBuilder.aiDestination', 'Open in')}
               >
                 <option value="aistudio">{t('promptBuilder.openAiStudio', 'AI Studio')}</option>
@@ -1099,55 +1161,71 @@ export default function PromptBuilderScreen({
           </p>
         </div>
 
-        {/* AI browser panel (webview in Electron, fallback buttons otherwise) */}
-        {isElectron ? (
-          <div className="flex flex-1 flex-col overflow-hidden">
-            {/* Toolbar */}
-            <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-2 py-1.5">
-              <button
-                onClick={() => webviewRef.current?.goBack()}
-                className="shrink-0 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
-                title="Go back"
-              >
-                ← Back
-              </button>
-              <button
-                onClick={() => webviewRef.current?.reload()}
-                className="shrink-0 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
-                title="Reload"
-              >
-                ⟳
-              </button>
-              <input
-                className="input h-7 min-w-0 flex-1 font-mono text-xs"
-                value={urlBarValue}
-                onChange={(e) => setUrlBarValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') webviewRef.current?.loadURL(urlBarValue);
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setAiTarget('aistudio');
-                  webviewRef.current?.loadURL(AI_STUDIO_URL);
-                }}
-                className="shrink-0 rounded px-2 py-1 text-xs font-medium text-gaia-600 hover:bg-gaia-50"
-              >
-                AI Studio
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAiTarget('gemini');
-                  webviewRef.current?.loadURL(GEMINI_URL);
-                }}
-                className="shrink-0 rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
-              >
-                Gemini
-              </button>
-            </div>
-            {/* Embedded webview */}
+        {/* AI browser panel — webview in Electron, iframe in browser/PWA */}
+        <div className="flex min-h-[520px] flex-1 flex-col overflow-hidden">
+          <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-2 py-1.5">
+            {isElectron && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => webviewRef.current?.goBack()}
+                  className="shrink-0 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
+                  title="Go back"
+                >
+                  ← Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => webviewRef.current?.reload()}
+                  className="shrink-0 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
+                  title="Reload"
+                >
+                  ⟳
+                </button>
+                <input
+                  className="input h-7 min-w-0 flex-1 font-mono text-xs"
+                  value={urlBarValue}
+                  onChange={(e) => setUrlBarValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') webviewRef.current?.loadURL(urlBarValue);
+                  }}
+                />
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => switchAiTarget('aistudio')}
+              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition ${
+                aiTarget === 'aistudio'
+                  ? 'bg-gaia-100 text-gaia-700 ring-1 ring-gaia-200'
+                  : 'text-gaia-600 hover:bg-gaia-50'
+              }`}
+            >
+              {t('promptBuilder.openAiStudio', 'AI Studio')}
+            </button>
+            <button
+              type="button"
+              onClick={() => switchAiTarget('gemini')}
+              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition ${
+                aiTarget === 'gemini'
+                  ? 'bg-slate-200 text-slate-800 ring-1 ring-slate-300'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              {t('promptBuilder.openGemini', 'Gemini')}
+            </button>
+            <button
+              type="button"
+              onClick={() => openInDefaultBrowser(urlForAiTarget(aiTarget))}
+              className="ml-auto flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              title={t('promptBuilder.openInTab', 'Open in a new browser tab')}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t('promptBuilder.openInTab', 'Open in tab')}</span>
+            </button>
+          </div>
+
+          {isElectron ? (
             <webview
               ref={webviewRef}
               src={AI_STUDIO_URL}
@@ -1155,82 +1233,113 @@ export default function PromptBuilderScreen({
               useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
               allowpopups
               webpreferences="contextIsolation=yes, nodeIntegration=no, javascript=yes"
-              style={{ flex: 1, width: '100%', minHeight: '500px' }}
+              style={{ flex: 1, width: '100%', minHeight: '480px' }}
             />
-          </div>
-        ) : (
-          /* Fallback: launch buttons + recent imports for non-Electron */
-          <div className="flex flex-1 flex-col items-center justify-start gap-8 overflow-y-auto p-8">
-
-            {/* Launch buttons */}
-            <div className="w-full max-w-md space-y-4">
-              <div className="text-center">
-                <Sparkles className="mx-auto mb-2 h-8 w-8 text-gaia-400" />
-                <p className="text-sm text-slate-500">
-                  {t('promptBuilder.browserNote', 'Opens in a full browser with Google sign-in support')}
+          ) : (
+            <div className="flex min-h-[480px] flex-1 flex-col items-center justify-center gap-6 bg-gradient-to-b from-slate-50 to-white p-8">
+              <div className="w-full max-w-lg text-center">
+                <Sparkles className="mx-auto mb-3 h-10 w-10 text-gaia-500" />
+                <h3 className="text-lg font-semibold text-slate-800">
+                  {aiTarget === 'gemini'
+                    ? t('promptBuilder.companionGeminiTitle', 'Gemini companion window')
+                    : t('promptBuilder.companionStudioTitle', 'AI Studio companion window')}
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                  {t(
+                    'promptBuilder.companionNote',
+                    'Google blocks embedding their sign-in pages inside other sites. Studio opens AI Studio or Gemini in a separate window beside this app — arrange both windows side by side on your screen.',
+                  )}
                 </p>
+                {companionOpen && (
+                  <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    {t('promptBuilder.companionOpen', 'Companion window is open')}
+                  </p>
+                )}
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setAiTarget('aistudio');
-                  openInDefaultBrowser(AI_STUDIO_URL);
-                }}
-                className="flex w-full items-center justify-center gap-3 rounded-xl bg-gaia-600 px-6 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-gaia-700 active:scale-[0.98]"
-              >
-                <ExternalLink className="h-5 w-5 shrink-0" />
-                {t('promptBuilder.openAiStudio', 'Open AI Studio')}
-              </button>
+              <div className="flex w-full max-w-md flex-col gap-3">
+                <button
+                  type="button"
+                  onClick={() => openCompanion('aistudio')}
+                  className={`flex w-full items-center justify-center gap-3 rounded-xl px-6 py-4 text-base font-semibold shadow-sm transition active:scale-[0.98] ${
+                    aiTarget === 'aistudio'
+                      ? 'bg-gaia-600 text-white hover:bg-gaia-700'
+                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <ExternalLink className="h-5 w-5 shrink-0" />
+                  {companionOpen && aiTarget === 'aistudio'
+                    ? t('promptBuilder.focusAiStudio', 'Focus AI Studio window')
+                    : t('promptBuilder.openAiStudio', 'Open AI Studio')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCompanion('gemini')}
+                  className={`flex w-full items-center justify-center gap-3 rounded-xl px-6 py-4 text-base font-semibold shadow-sm transition active:scale-[0.98] ${
+                    aiTarget === 'gemini'
+                      ? 'bg-slate-800 text-white hover:bg-slate-900'
+                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <ExternalLink className="h-5 w-5 shrink-0" />
+                  {companionOpen && aiTarget === 'gemini'
+                    ? t('promptBuilder.focusGemini', 'Focus Gemini window')
+                    : t('promptBuilder.openGemini', 'Open Gemini')}
+                </button>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setAiTarget('gemini');
-                  openInDefaultBrowser(GEMINI_URL);
-                }}
-                className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-6 py-4 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98]"
-              >
-                <ExternalLink className="h-5 w-5 shrink-0 text-gaia-500" />
-                {t('promptBuilder.openGemini', 'Open Gemini')}
-              </button>
+              <ol className="w-full max-w-md space-y-2 text-left text-xs text-slate-600">
+                <li className="flex gap-2">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-[10px] font-bold text-gaia-700">1</span>
+                  {t('promptBuilder.companionStep1', 'Click Copy & Open — your prompt is copied automatically.')}
+                </li>
+                <li className="flex gap-2">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-[10px] font-bold text-gaia-700">2</span>
+                  {t('promptBuilder.companionStep2', 'Paste into the companion window and generate your background.')}
+                </li>
+                <li className="flex gap-2">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-[10px] font-bold text-gaia-700">3</span>
+                  {t('promptBuilder.companionStep3', 'Download the image, then upload it under My Photos in this step.')}
+                </li>
+              </ol>
+            </div>
+          )}
 
-              <div className="rounded-xl bg-gaia-50 p-4 ring-1 ring-gaia-100">
-                <p className="text-xs font-semibold text-gaia-700">{t('promptBuilder.tipsTitle', 'Tips')}</p>
-                <ul className="mt-2 space-y-1 text-xs text-gaia-800">
-                  <li>• {t('promptBuilder.tip1', 'Select 4–8 ingredients for the most balanced composition.')}</li>
-                  <li>• {t('promptBuilder.tip2', 'Try "linen weave" or "veined marble" for a clean, elegant look.')}</li>
-                  <li>• {t('promptBuilder.tip3', 'Use "Copy & Open" to launch AI Studio with the prompt ready to paste.')}</li>
-                </ul>
+          {!isElectron && (
+            <p className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+              {t(
+                'promptBuilder.companionFooter',
+                'Tip: On desktop, snap Gaia\'s Studio and the AI window side-by-side. The desktop app embeds AI Studio directly without a separate window.',
+              )}
+            </p>
+          )}
+
+          {recentAiAssets.length > 0 && (
+            <div className="border-t border-slate-200 bg-white px-3 py-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                {t('promptBuilder.recentImports', 'Recently Imported')}
+              </p>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                {recentAiAssets.map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    className="aspect-video overflow-hidden rounded-lg ring-1 ring-slate-200 transition hover:ring-gaia-400"
+                    title={asset.name}
+                    onClick={() => embedded && onBackgroundSelect?.(asset.dataUrl)}
+                  >
+                    <img
+                      src={asset.dataUrl}
+                      alt={asset.name}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                ))}
               </div>
             </div>
-
-            {/* Recently auto-imported AI images */}
-            {recentAiAssets.length > 0 && (
-              <div className="w-full max-w-md">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  {t('promptBuilder.recentImports', 'Recently Imported')}
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {recentAiAssets.map((asset) => (
-                    <div
-                      key={asset.id}
-                      className="aspect-video overflow-hidden rounded-lg ring-1 ring-slate-200"
-                      title={asset.name}
-                    >
-                      <img
-                        src={asset.dataUrl}
-                        alt={asset.name}
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

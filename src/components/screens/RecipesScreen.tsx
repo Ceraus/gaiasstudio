@@ -17,78 +17,7 @@ import BenefitPicker from '@/components/screens/BenefitPicker';
 import IngredientIcon from '@/components/common/IngredientIcon';
 import Modal from '@/components/common/Modal';
 import { getRecipeHeroIcon } from '@/data/recipeHeroIcons';
-
-// ---------------------------------------------------------------------------
-// Recipe color theming
-// ---------------------------------------------------------------------------
-
-export interface RecipeColorTheme {
-  bg: string;
-  border: string;
-  text: string;
-  dot: string;
-  activeBg: string;
-  activeBorder: string;
-  key: string;
-}
-
-const COLOR_THEMES: Record<string, RecipeColorTheme> = {
-  fragrance:      { key: 'fragrance',     bg: 'bg-pink-50',   border: 'border-pink-200',   text: 'text-pink-800',   dot: 'bg-pink-400',    activeBg: 'bg-pink-100',   activeBorder: 'border-pink-400' },
-  'essential-oil':{ key: 'essential-oil', bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800', dot: 'bg-purple-400',  activeBg: 'bg-purple-100', activeBorder: 'border-purple-400' },
-  botanical:      { key: 'botanical',     bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-800',  dot: 'bg-green-400',   activeBg: 'bg-green-100',  activeBorder: 'border-green-400' },
-  butter:         { key: 'butter',        bg: 'bg-amber-50',  border: 'border-amber-200',  text: 'text-amber-800',  dot: 'bg-amber-400',   activeBg: 'bg-amber-100',  activeBorder: 'border-amber-400' },
-  'carrier-oil':  { key: 'carrier-oil',   bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800', dot: 'bg-yellow-400',  activeBg: 'bg-yellow-100', activeBorder: 'border-yellow-400' },
-  oil:            { key: 'oil',           bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800', dot: 'bg-yellow-400',  activeBg: 'bg-yellow-100', activeBorder: 'border-yellow-400' },
-  clay:           { key: 'clay',          bg: 'bg-slate-50',  border: 'border-slate-200',  text: 'text-slate-800',  dot: 'bg-slate-400',   activeBg: 'bg-slate-100',  activeBorder: 'border-slate-400' },
-  colorant:       { key: 'colorant',      bg: 'bg-violet-50', border: 'border-violet-200', text: 'text-violet-800', dot: 'bg-violet-400',  activeBg: 'bg-violet-100', activeBorder: 'border-violet-400' },
-  base:           { key: 'base',          bg: 'bg-teal-50',   border: 'border-teal-200',   text: 'text-teal-800',   dot: 'bg-teal-400',    activeBg: 'bg-teal-100',   activeBorder: 'border-teal-400' },
-  default:        { key: 'default',       bg: 'bg-gaia-50',   border: 'border-gaia-200',   text: 'text-gaia-800',   dot: 'bg-gaia-400',    activeBg: 'bg-gaia-100',   activeBorder: 'border-gaia-400' },
-};
-
-const CATEGORY_PRIORITY: IngredientCategory[] = ['fragrance', 'essential-oil', 'botanical', 'butter', 'oil', 'clay', 'colorant', 'base'];
-
-/** Returns the color theme for a recipe based on dominant ingredient category. */
-export function getRecipeColor(recipe: Recipe, ingredients: Ingredient[]): RecipeColorTheme {
-  // Manual override wins
-  if (recipe.color && COLOR_THEMES[recipe.color]) return COLOR_THEMES[recipe.color];
-
-  const recipeIngredients = ingredients.filter((i) => recipe.ingredientIds.includes(i.id));
-  // Count categories (excluding base for dominance)
-  const counts: Partial<Record<IngredientCategory, number>> = {};
-  for (const ing of recipeIngredients) {
-    if (!ing.category || ing.category === 'base') continue;
-    counts[ing.category] = (counts[ing.category] ?? 0) + 1;
-  }
-
-  if (Object.keys(counts).length === 0) return COLOR_THEMES.default;
-
-  const maxCount = Math.max(...Object.values(counts) as number[]);
-  const tied = (Object.keys(counts) as IngredientCategory[]).filter((k) => counts[k] === maxCount);
-
-  // Break ties by priority list
-  for (const priority of CATEGORY_PRIORITY) {
-    if (tied.includes(priority)) {
-      return COLOR_THEMES[priority] ?? COLOR_THEMES.default;
-    }
-  }
-
-  return COLOR_THEMES.default;
-}
-
-// ---------------------------------------------------------------------------
-// Color swatch options for the manual override picker
-// ---------------------------------------------------------------------------
-const COLOR_SWATCHES: Array<{ key: string; dot: string; label: string }> = [
-  { key: 'default',       dot: 'bg-gaia-400',   label: 'Gaia' },
-  { key: 'fragrance',     dot: 'bg-pink-400',   label: 'Pink' },
-  { key: 'essential-oil', dot: 'bg-purple-400', label: 'Purple' },
-  { key: 'botanical',     dot: 'bg-green-400',  label: 'Green' },
-  { key: 'butter',        dot: 'bg-amber-400',  label: 'Amber' },
-  { key: 'oil',           dot: 'bg-yellow-400', label: 'Yellow' },
-  { key: 'clay',          dot: 'bg-slate-400',  label: 'Slate' },
-  { key: 'colorant',      dot: 'bg-violet-400', label: 'Violet' },
-  { key: 'base',          dot: 'bg-teal-400',   label: 'Teal' },
-];
+import { getRecipeColor, COLOR_SWATCHES } from '@/lib/recipeColors';
 
 interface RecipeForm {
   name: string;

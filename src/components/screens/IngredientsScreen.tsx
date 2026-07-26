@@ -21,6 +21,7 @@ import {
 import type { Ingredient, IngredientCategory } from '@/types';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { MODULAR_BENEFITS } from '@/data/benefits';
+import { getBenefitCategoryLabel, getBenefitLabel } from '@/lib/benefitI18n';
 import { INGREDIENT_CATALOG_SIZE, INGREDIENT_SEED, syncIngredientCatalog } from '@/data/ingredientSeed';
 import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
@@ -768,9 +769,11 @@ function BenefitCombo({ value, onChange }: { value: string; onChange: (v: string
             <button
               key={b.id} type="button"
               className="block w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-gaia-50"
-              onClick={() => { onChange(b.label); setOpen(false); }}
+              onClick={() => { onChange(getBenefitLabel(b, t)); setOpen(false); }}
             >
-              <span className="font-medium text-gaia-700">{b.category}</span>{' — '}{b.label}
+              <span className="font-medium text-gaia-700">{getBenefitCategoryLabel(b.category, t)}</span>
+              {' — '}
+              {getBenefitLabel(b, t)}
             </button>
           ))}
         </div>

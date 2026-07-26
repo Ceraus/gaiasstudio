@@ -47,7 +47,7 @@ export default function LocalAiStatusBadge({ settings }: { settings: AppSettings
       cancelled = true;
       clearInterval(id);
     };
-  }, [settings.localAiEnabled]);
+  }, [settings.localAiEnabled, settings.localAiBackend, settings.ollamaUrl, settings.ollamaModel]);
 
   if (!settings.localAiEnabled) return null;
 

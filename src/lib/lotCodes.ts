@@ -7,11 +7,7 @@
 
 import type { LotCode, Recipe } from '@/types';
 import { db } from '@/db/db';
-
-const uid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+import { uid } from '@/lib/id';
 
 /**
  * Extract initials from a recipe name for the lot code prefix.

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Headless-Chrome smoke test for Gaia's Label Studio.
 //
-// Builds nothing itself — run `npm run build` first, then `npm run smoke`.
+// Builds nothing itself — run `npm run smoke` (builds with VITE_E2E=true first).
 // It serves the production build with `vite preview`, drives the REAL app through
 // window.gaiaEditor / window.gaiaTest, and proves the core promises hold:
 //   • add text/shapes, undo/redo, duplicate, align (center offset ~0px), flip, crop
@@ -141,9 +141,7 @@ async function main() {
     await page.setViewport({ width: 1400, height: 900 });
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(String(e)));
-    // ?e2e=1 tells the app to skip the password lock screen so the smoke test
-    // can drive the real UI (search inputs, nav tabs, draft cards, etc.).
-    await page.goto(`${URL}?e2e=1`, { waitUntil: 'networkidle0' });
+    await page.goto(URL, { waitUntil: 'networkidle0' });
 
     await page.waitForFunction(() => window.gaiaTest && typeof window.gaiaTest.templates === 'function', {
       timeout: 15000,

@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type { AppSettings, AveryTemplate, Draft, LabelContext } from '@/types';
 import { DEFAULT_SETTINGS } from '@/db/db';
 import { settingsRepo } from '@/db/repositories';
+import { uid } from '@/lib/id';
+import { touchSessionUnlock } from '@/lib/appLock';
 import i18n from '@/i18n';
 
 export type Screen =
@@ -24,11 +26,6 @@ export type Screen =
   | 'products'
   | 'reports';
 
-const uid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `design-${Date.now()}`;
-
 interface AppState {
   screen: Screen;
   previousScreen: Screen;
@@ -41,6 +38,7 @@ interface AppState {
   labelPng: string | null;
   settings: AppSettings;
   settingsLoaded: boolean;
+  settingsLoadError: string | null;
 
   /** ID of the draft currently loaded in the editor (null if a fresh design). */
   activeDraftId: string | null;
@@ -88,6 +86,7 @@ export const useAppStore = create<AppState>((set) => ({
   labelPng: null,
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
+  settingsLoadError: null,
   activeDraftId: null,
   activeRecipeId: null,
   promptBuilderOutput: null,
@@ -96,6 +95,7 @@ export const useAppStore = create<AppState>((set) => ({
   batchDraftIds: [],
 
   goto: (screen) => {
+    touchSessionUnlock();
     if (typeof window !== 'undefined') {
       window.history.pushState({ gaiaScreen: screen }, '', `#/${screen}`);
     }
@@ -137,11 +137,18 @@ export const useAppStore = create<AppState>((set) => ({
   setLabelPng: (labelPng) => set({ labelPng }),
 
   loadSettings: async () => {
-    const settings = await settingsRepo.get();
-    if (settings.language !== i18n.language) await i18n.changeLanguage(settings.language);
-    document.documentElement.lang = settings.language;
-    applyUiScale(settings.uiScale);
-    set({ settings, settingsLoaded: true });
+    try {
+      const settings = await settingsRepo.get();
+      if (settings.language !== i18n.language) await i18n.changeLanguage(settings.language);
+      document.documentElement.lang = settings.language;
+      applyUiScale(settings.uiScale);
+      set({ settings, settingsLoaded: true, settingsLoadError: null });
+    } catch (err) {
+      set({
+        settingsLoaded: true,
+        settingsLoadError: err instanceof Error ? err.message : String(err),
+      });
+    }
   },
 
   updateSettings: async (patch) => {

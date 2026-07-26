@@ -87,6 +87,44 @@ function isInsideDir(root, target) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+/** Block SSRF to localhost, private networks, and cloud metadata endpoints. */
+function isAllowedSupplierFetchUrl(parsed) {
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')) {
+    return false;
+  }
+  if (host === 'metadata.google.internal' || host.startsWith('169.254.')) return false;
+  // IPv4 private / link-local ranges
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
+  return true;
+}
+
+async function fetchSupplierPageFromMain(url) {
+  try {
+    const parsed = new URL(String(url));
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { ok: false, status: 0, text: '' };
+    }
+    if (!isAllowedSupplierFetchUrl(parsed)) {
+      console.warn('[Gaia] Blocked supplier fetch to disallowed host:', parsed.hostname);
+      return { ok: false, status: 0, text: '' };
+    }
+    const res = await net.fetch(parsed.toString(), {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, text };
+  } catch (err) {
+    console.error('[Gaia] gaia:fetch-url failed:', err);
+    return { ok: false, status: 0, text: '' };
+  }
+}
+
 /** Convert a local file to a base64 data URL without blocking the main process. */
 async function fileToDataUrl(filePath) {
   const stat = await fs.promises.stat(filePath);
@@ -327,43 +365,7 @@ app.whenReady().then(() => {
 
   // Supplier price importer — fetch a product page from the main process so
   // the renderer is never blocked by shop CORS policies. Read-only GET.
-  ipcMain.handle('gaia:fetch-url', async (_event, url) => {
-    try {
-      const parsed = new URL(String(url));
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return { ok: false, status: 0, text: '' };
-      }
-      const res = await net.fetch(parsed.toString(), {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-      });
-      const text = await res.text();
-      return { ok: res.ok, status: res.status, text };
-    } catch (err) {
-      console.error('[Gaia] gaia:fetch-url failed:', err);
-      return { ok: false, status: 0, text: '' };
-    }
-  });
-
-  // Silent PDF save — writes base64 PDF bytes into a sub-folder of the
-  // portable save system (e.g. work_orders/Maria_Lopez_ORD-003.pdf) without
-  // any "Save As" dialog. Returns the absolute path for the success toast.
-  ipcMain.handle('gaia:save-pdf', async (_event, { base64, folder, filename }) => {
-    // Never allow path traversal out of the save system.
-    const safeFolder = String(folder || 'exports').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const safeName = String(filename || 'document.pdf').replace(/[\\/:*?"<>|]/g, '_');
-    const dir = path.join(saveSystemDir, safeFolder);
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, safeName.endsWith('.pdf') ? safeName : `${safeName}.pdf`);
-    await fs.promises.writeFile(filePath, Buffer.from(String(base64), 'base64'));
-    return { path: filePath };
-  });
-
-  // Reveal a file in Explorer / Finder (same scoping as open-file).
+  ipcMain.handle('gaia:fetch-url', (_event, url) => fetchSupplierPageFromMain(url));
   ipcMain.handle('gaia:open-folder', (_event, filePath) => {
     if (typeof filePath !== 'string' || !isInsideDir(saveSystemDir, filePath)) return;
     shell.showItemInFolder(filePath);
@@ -409,30 +411,6 @@ app.whenReady().then(() => {
   ipcMain.handle('gaia:bundled-ai-status', () => bundledAi.getBundledAiStatus());
   ipcMain.handle('gaia:bundled-ai-generate', (_event, prompt) => bundledAi.generateBundledAi(String(prompt || '')));
   ipcMain.handle('gaia:bundled-ai-extract', (_event, pageText) => bundledAi.extractBundledAi(String(pageText || '')));
-
-  // Supplier price importer — fetch a product page from the main process so
-  // the renderer is never blocked by shop CORS policies. Read-only GET.
-  ipcMain.handle('gaia:fetch-url', async (_event, url) => {
-    try {
-      const parsed = new URL(String(url));
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return { ok: false, status: 0, text: '' };
-      }
-      const res = await net.fetch(parsed.toString(), {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-      });
-      const text = await res.text();
-      return { ok: res.ok, status: res.status, text };
-    } catch (err) {
-      console.error('[Gaia] gaia:fetch-url failed:', err);
-      return { ok: false, status: 0, text: '' };
-    }
-  });
 
   // Full-database backup — writes the JSON into the portable save system's
   // backups/ folder and prunes to the newest 14 files, so daily auto-backups

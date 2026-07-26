@@ -9,6 +9,7 @@ import { registerServiceWorker } from '@/lib/pwa';
 
 export default function App() {
   const settingsLoaded = useAppStore((s) => s.settingsLoaded);
+  const settingsLoadError = useAppStore((s) => s.settingsLoadError);
   const settings = useAppStore((s) => s.settings);
   const loadSettings = useAppStore((s) => s.loadSettings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -22,8 +23,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!unlocked) return;
     void loadSettings();
-  }, [loadSettings]);
+  }, [loadSettings, unlocked]);
 
   // Complete Etsy OAuth when Etsy redirects back with ?code=
   useEffect(() => {
@@ -68,6 +70,22 @@ export default function App() {
         <Leaf className="h-10 w-10 animate-pulse" />
         <p className="text-sm">{t('common.loading')}</p>
         {oauthMessage && <p className="max-w-sm text-center text-xs text-slate-500">{oauthMessage}</p>}
+      </div>
+    );
+  }
+
+  if (settingsLoadError) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-gaia-50 px-6 text-center text-gaia-800">
+        <p className="text-sm font-medium">{t('settings.loadFailed', 'Could not load your settings.')}</p>
+        <p className="max-w-md text-xs text-slate-500">{settingsLoadError}</p>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => window.location.reload()}
+        >
+          {t('common.retry', 'Retry')}
+        </button>
       </div>
     );
   }

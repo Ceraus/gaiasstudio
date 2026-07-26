@@ -25,7 +25,7 @@ import { FlaskConical, Image as ImageIcon, Layers, Pencil, Printer } from 'lucid
 import { useTranslation } from 'react-i18next';
 import { useAppStore, type Screen } from '@/store/useAppStore';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
-import { getRecipeColor } from '@/components/screens/RecipesScreen';
+import { getRecipeColor } from '@/lib/recipeColors';
 
 interface Step {
   n: number;

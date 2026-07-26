@@ -21,12 +21,12 @@ import type {
   WorkOrderUsageLine,
 } from '@/types';
 
-const uid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
 import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs } from '@/lib/inventoryMath';
+import { uid } from '@/lib/id';
+import {
+  hydrateSettingsFromStorage,
+  prepareSettingsForStorage,
+} from '@/lib/secretVault';
 
 function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
   const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
@@ -762,14 +762,15 @@ export const productListingsRepo = {
 export const settingsRepo = {
   async get(): Promise<AppSettings> {
     const existing = await db.settings.get('app');
-    if (existing) return { ...DEFAULT_SETTINGS, ...existing };
-    await db.settings.put(DEFAULT_SETTINGS);
-    return DEFAULT_SETTINGS;
+    const merged = existing ? { ...DEFAULT_SETTINGS, ...existing } : DEFAULT_SETTINGS;
+    if (!existing) await db.settings.put(DEFAULT_SETTINGS);
+    return hydrateSettingsFromStorage(merged);
   },
   async update(patch: Partial<AppSettings>) {
     const current = await this.get();
     const next = { ...current, ...patch, id: 'app' as const };
-    await db.settings.put(next);
-    return next;
+    const stored = await prepareSettingsForStorage(next);
+    await db.settings.put(stored);
+    return hydrateSettingsFromStorage(stored);
   },
 };
