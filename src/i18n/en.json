@@ -31,7 +31,9 @@
     "aiOffline": "AI suggestions off",
     "aiModelMissing": "AI model missing",
     "step": "Step",
-    "clear": "Clear"
+    "clear": "Clear",
+    "expand": "Expand",
+    "collapse": "Collapse"
   },
   "workflow": {
     "shape": "Choose Shape & Size",
@@ -61,7 +63,8 @@
     "settings": "Settings",
     "home": "Home",
     "newLabel": "New label",
-    "promptBuilder": "AI Prompt"
+    "promptBuilder": "AI Prompt",
+    "orders": "Orders"
   },
   "steps": {
     "template": "Choose template",
@@ -283,7 +286,13 @@
     "moveUp": "Move up",
     "moveDown": "Move down",
     "empty": "No layers yet. Add something to the canvas.",
-    "renameHint": "Double-click to rename · drag to reorder"
+    "renameHint": "Double-click to rename · drag to reorder",
+    "group": "Group",
+    "ungroup": "Ungroup",
+    "groupTitle": "Group the selected layers (Ctrl+G)",
+    "ungroupTitle": "Split the selected group back into layers",
+    "nSelected": "{{count}} selected",
+    "multiHint": "Ctrl-click: multi · drag: reorder"
   },
   "text": {
     "font": "Font",
@@ -401,7 +410,9 @@
     "benefitSuggestAccept": "Use this",
     "benefitSuggestEdit": "Edit first",
     "benefitSuggestReject": "Discard",
-    "benefitSuggestUseEdited": "Use edited text"
+    "benefitSuggestUseEdited": "Use edited text",
+    "barsPerBatch": "Bars per batch",
+    "barsPerBatchHint": "How many bars the ingredient amounts above make. Orders deduct amounts ÷ this per bar sold."
   },
   "layout": {
     "langEn": "English label text",
@@ -790,7 +801,24 @@
     "quickSetApplyButton": "Apply to {{count}} ingredients",
     "quickSetApplied": "{{count}} ingredient(s) updated",
     "quickSetNoIngredients": "Activate some ingredients first.",
-    "quickSetHint": "e.g. auto-fill all colorants with $0.05/g, or all fragrance oils with $0.10/drop. This overwrites any existing price for ingredients in the category."
+    "quickSetHint": "e.g. auto-fill all colorants with $0.05/g, or all fragrance oils with $0.10/drop. This overwrites any existing price for ingredients in the category.",
+    "supplierLink": "Paste supplier link to auto-fill pricing",
+    "autoFill": "Auto-fill",
+    "autoFillTitle": "Reads the page with the built-in offline AI (plus Gemini if a key is saved in Settings).",
+    "autoFillBusy": "Reading the page… the built-in AI can take up to a minute on big pages.",
+    "foundOnPage": "Found on the page:",
+    "foundByLocalAi": "Built-in AI read the page:",
+    "foundByGemini": "Gemini found on the page:",
+    "partialFind": "Only part of the info was found — fill in the rest below.",
+    "applyFound": "Use these values",
+    "stockOnHand": "Stock on hand (optional)",
+    "stockOff": "off",
+    "stockHint": "Leave empty to skip stock tracking. Completed orders deduct automatically.",
+    "addContainer": "+1 container ({{n}} {{unit}})",
+    "addContainerTitle": "Add one full container to stock",
+    "outOfStock": "out of stock",
+    "lowStock": "running low",
+    "onHand": "{{n}} {{unit}} on hand"
   },
   "materials": {
     "title": "Custom Materials & Packaging",
@@ -1835,5 +1863,57 @@
     "remove": "Remove from sheet",
     "exportPdf": "Export Batch PDF",
     "previewHint": "This is exactly how the sheet will print."
+  },
+  "orders": {
+    "title": "Client Work Orders",
+    "subtitle": "Track what each client ordered. Completing an order deducts your ingredient stock and creates a PDF receipt automatically.",
+    "newOrder": "New Order",
+    "newOrderTitle": "New Work Order",
+    "open": "open",
+    "completed": "completed",
+    "revenue": "revenue",
+    "materials": "materials",
+    "empty": "No work orders yet.",
+    "emptyNoRecipes": "Create a recipe first — orders are built from your saved recipes.",
+    "emptyHint": "Click \"New Order\" when a client buys your soaps.",
+    "gotoRecipes": "Go to Recipes",
+    "clientName": "Client's name",
+    "clientPlaceholder": "e.g. Maria Lopez",
+    "clientHint": "Existing clients auto-suggest as you type — no duplicates are created.",
+    "soapsSold": "Soaps sold",
+    "qty": "Qty",
+    "price": "Price",
+    "addItem": "Add another soap",
+    "notes": "Notes (optional — printed on the receipt)",
+    "notesPlaceholder": "e.g. Birthday gift set, lavender ribbon requested",
+    "orderTotal": "Total",
+    "saveOrder": "Save Order",
+    "needRecipes": "You need at least one saved recipe before creating an order.",
+    "created": "{{n}} saved. Mark it Completed when the soaps are handed over.",
+    "statusOpen": "Open",
+    "completedOn": "Completed {{date}}",
+    "markCompleted": "Mark Completed",
+    "receiptPdf": "Receipt PDF",
+    "reopen": "Reopen",
+    "reopened": "{{n}} reopened — deducted stock was restored.",
+    "materialsUsed": "Materials deducted",
+    "deductedTitle": "Deducted from stock",
+    "notTracked": "untracked",
+    "notTrackedTitle": "Not deducted — stock tracking is off for this ingredient",
+    "completeTitle": "Complete {{n}} for {{client}}?",
+    "completeExplain": "This deducts the exact material amounts below from your tracked stock and saves the PDF receipt. You can Reopen the order later to undo the deduction.",
+    "completeConfirm": "Complete & Save Receipt",
+    "completeFailed": "Could not complete the order.",
+    "noUsage": "No ingredient amounts are set on these recipes yet, so nothing will be deducted. (Set amounts in the Recipe builder to track usage.)",
+    "totalMaterialCost": "Material cost of this order",
+    "shortfallTitle": "Not enough stock for:",
+    "shortfallLine": "needs {{needed}} {{unit}}, only {{onHand}} on hand",
+    "shortfallHint": "You can still complete the order — stock stops at 0 and never goes negative.",
+    "receiptSavedTo": "Receipt saved: {{path}}",
+    "receiptDownloaded": "Receipt \"{{name}}\" downloaded.",
+    "receiptFailed": "Could not create the receipt PDF.",
+    "deleteTitle": "Delete this order?",
+    "deleteOpenWarning": "{{n}} for {{client}} will be removed. This cannot be undone.",
+    "deleteCompletedWarning": "{{n}} for {{client}} is completed — deleting it does NOT restore deducted stock (use Reopen first if you need that)."
   }
 }

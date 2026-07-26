@@ -7,6 +7,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Client Work Orders & automated sales receipts** (Dexie v13) — a new
+  Orders tab tracks what each client bought: type the client's name (existing
+  clients auto-suggest, no duplicates), pick the recipes sold + quantities
+  (unit prices pre-fill from each recipe's retail price), and mark the order
+  **Completed** — the app previews and deducts the exact fractional
+  ingredient usage (grams of base/oils, drops of EO) from tracked stock,
+  freezes a COGS snapshot, and silently saves a professional 8.5"×11" PDF
+  receipt to `work_orders/[Client_Name]_[ORD-xxx].pdf`. **Reopen** restores
+  exactly what was deducted. Complements the Finances screen (expenses) with
+  the sales side of the business.
+- **Supplier-link price importer** — a "Paste supplier link to auto-fill
+  pricing" field in the Inventory price modal. Three tiers: a local scraper
+  (JSON-LD → meta tags → regexes), the **bundled offline AI** with a
+  grammar-enforced JSON response (no key, nothing leaves the machine), and
+  Gemini via the stored Google AI Studio key as a last resort. Detected
+  price/size are confirmed before anything is saved; the link is remembered
+  per ingredient for re-checks.
+- **Stock on hand** (optional, per ingredient) with a "+1 container"
+  shortcut in the price modal and low/out-of-stock badges on the inventory
+  grid. Completed work orders deduct it automatically; untracked ingredients
+  are left alone.
+- **Bars per batch** on recipes (Revenue & Profit widget) — work orders
+  deduct `ingredient amounts ÷ bars per batch × quantity sold`.
+- **Strict 4-layer editor stack** — every canvas now spawns Base (white) →
+  Background slot (AI/photo art swaps in *in place*, order never shuffles) →
+  a template-shaped Legibility Overlay at 15% opacity → Foreground text/logo.
+  Auto-layouts preserve the structural stack and only regenerate content.
+- **Layers panel multi-select** — Ctrl/Cmd-click and Shift-click select
+  multiple layers, with Group/Ungroup buttons in a new action bar (alongside
+  the existing drag-to-reorder).
+- **`electron/schema.sql`** — the canonical better-sqlite3 DDL mirroring
+  Dexie v13 (all tables incl. clients / work_orders / work_order_items) for
+  the desktop persistence adapter.
 - **Custom Materials & Packaging library** — a reusable, shared list of
   packaging/materials costs (bags, boxes, labels) with categories, cost and
   unit, active/inactive states (Dexie v11). Managed from a new card on the
@@ -35,8 +68,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `electronAPI.openExternalUrl` bridge.
 
 ### Changed
+- **Bundled AI model upgraded: Qwen2.5-0.5B → Qwen3-4B-Instruct-2507**
+  (Q4_K_M, ~2.4 GB, Apache-2.0). One model now handles BOTH offline AI jobs:
+  noticeably better benefit-tagline suggestions (and real Spanish support),
+  plus reliable supplier-page extraction via node-llama-cpp's JSON-schema
+  grammar. Sized for CPU-only desktops (8-core, 64 GB target): taglines in a
+  few seconds, page extraction in tens of seconds. `npm run ai:fetch-model`
+  downloads the new file.
+- **Smoke suite hardening** — async page evaluations now stash results on a
+  window global and poll (fixes intermittent "Promise was collected" CDP
+  failures on modern Chrome), `puppeteer-core` bumped to ^25, and the stale
+  "25% larger by default" check now tests what the app actually does since
+  the 100%-default change: default 100%, and the Settings control really
+  scales to 125% and back. New checks cover the 4-layer stack and layers
+  multi-select → group → ungroup.
 - **Ollama support removed entirely** — the app now ships with the bundled,
-  fully offline local AI (Qwen2.5-0.5B) as the only AI backend. Settings no
+  fully offline local AI as the only AI backend. Settings no
   longer shows a backend toggle or Ollama URL/model fields, just an on/off
   toggle and "Test Connection" for the bundled model.
 - **AI Suggestions are more prominent** — the Recipe Builder's benefit

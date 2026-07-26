@@ -31,7 +31,9 @@
     "aiOffline": "Sugerencias IA desconectadas",
     "aiModelMissing": "Modelo de IA faltante",
     "step": "Paso",
-    "clear": "Limpiar"
+    "clear": "Limpiar",
+    "expand": "Expandir",
+    "collapse": "Contraer"
   },
   "workflow": {
     "shape": "Elegir Forma y Tamaño",
@@ -62,7 +64,8 @@
     "home": "Inicio",
     "newLabel": "Nueva etiqueta",
     "promptBuilder": "Prompt IA",
-    "finances": "Finanzas"
+    "finances": "Finanzas",
+    "orders": "Pedidos"
   },
   "steps": {
     "template": "Elegir plantilla",
@@ -284,7 +287,13 @@
     "moveUp": "Subir",
     "moveDown": "Bajar",
     "empty": "Aún no hay capas. Agrega algo al lienzo.",
-    "renameHint": "Doble clic para renombrar · arrastra para reordenar"
+    "renameHint": "Doble clic para renombrar · arrastra para reordenar",
+    "group": "Agrupar",
+    "ungroup": "Desagrupar",
+    "groupTitle": "Agrupa las capas seleccionadas (Ctrl+G)",
+    "ungroupTitle": "Separa el grupo seleccionado en capas",
+    "nSelected": "{{count}} seleccionadas",
+    "multiHint": "Ctrl-clic: varias · arrastra: reordenar"
   },
   "text": {
     "font": "Fuente",
@@ -402,7 +411,9 @@
     "benefitSuggestAccept": "Usar esto",
     "benefitSuggestEdit": "Editar primero",
     "benefitSuggestReject": "Descartar",
-    "benefitSuggestUseEdited": "Usar texto editado"
+    "benefitSuggestUseEdited": "Usar texto editado",
+    "barsPerBatch": "Barras por lote",
+    "barsPerBatchHint": "Cuántas barras rinden las cantidades de arriba. Los pedidos descuentan cantidades ÷ esto por barra vendida."
   },
   "layout": {
     "langEn": "Texto de etiqueta en inglés",
@@ -791,7 +802,24 @@
     "quickSetApplyButton": "Aplicar a {{count}} ingredientes",
     "quickSetApplied": "{{count}} ingrediente(s) actualizado(s)",
     "quickSetNoIngredients": "Activa algunos ingredientes primero.",
-    "quickSetHint": "ej. rellena todos los colorantes con $0.05/g, o todos los aceites de fragancia con $0.10/gota. Esto sobrescribe cualquier precio existente de los ingredientes en la categoría."
+    "quickSetHint": "ej. rellena todos los colorantes con $0.05/g, o todos los aceites de fragancia con $0.10/gota. Esto sobrescribe cualquier precio existente de los ingredientes en la categoría.",
+    "supplierLink": "Pega el enlace del proveedor para autocompletar el precio",
+    "autoFill": "Autocompletar",
+    "autoFillTitle": "Lee la página con la IA integrada sin conexión (más Gemini si guardaste una clave en Ajustes).",
+    "autoFillBusy": "Leyendo la página… la IA integrada puede tardar hasta un minuto en páginas grandes.",
+    "foundOnPage": "Encontrado en la página:",
+    "foundByLocalAi": "La IA integrada leyó la página:",
+    "foundByGemini": "Gemini encontró en la página:",
+    "partialFind": "Solo se encontró parte de la información — completa el resto abajo.",
+    "applyFound": "Usar estos valores",
+    "stockOnHand": "Existencias (opcional)",
+    "stockOff": "sin seguimiento",
+    "stockHint": "Déjalo vacío para omitir el control de existencias. Los pedidos completados descuentan automáticamente.",
+    "addContainer": "+1 envase ({{n}} {{unit}})",
+    "addContainerTitle": "Agrega un envase completo a las existencias",
+    "outOfStock": "agotado",
+    "lowStock": "quedan pocas",
+    "onHand": "{{n}} {{unit}} disponibles"
   },
   "materials": {
     "title": "Materiales y Empaques Personalizados",
@@ -1836,5 +1864,57 @@
     "remove": "Quitar de la hoja",
     "exportPdf": "Exportar PDF del lote",
     "previewHint": "Así se imprimirá exactamente la hoja."
+  },
+  "orders": {
+    "title": "Pedidos de Clientes",
+    "subtitle": "Registra lo que pidió cada cliente. Completar un pedido descuenta tus existencias de ingredientes y crea un recibo PDF automáticamente.",
+    "newOrder": "Nuevo Pedido",
+    "newOrderTitle": "Nuevo Pedido",
+    "open": "abiertos",
+    "completed": "completados",
+    "revenue": "ingresos",
+    "materials": "materiales",
+    "empty": "Aún no hay pedidos.",
+    "emptyNoRecipes": "Crea una receta primero — los pedidos se arman con tus recetas guardadas.",
+    "emptyHint": "Haz clic en \"Nuevo Pedido\" cuando un cliente compre tus jabones.",
+    "gotoRecipes": "Ir a Recetas",
+    "clientName": "Nombre del cliente",
+    "clientPlaceholder": "ej. María López",
+    "clientHint": "Los clientes existentes se sugieren al escribir — no se crean duplicados.",
+    "soapsSold": "Jabones vendidos",
+    "qty": "Cant.",
+    "price": "Precio",
+    "addItem": "Agregar otro jabón",
+    "notes": "Notas (opcional — se imprimen en el recibo)",
+    "notesPlaceholder": "ej. Set de regalo de cumpleaños, con cinta de lavanda",
+    "orderTotal": "Total",
+    "saveOrder": "Guardar Pedido",
+    "needRecipes": "Necesitas al menos una receta guardada antes de crear un pedido.",
+    "created": "{{n}} guardado. Márcalo como Completado cuando entregues los jabones.",
+    "statusOpen": "Abierto",
+    "completedOn": "Completado {{date}}",
+    "markCompleted": "Marcar Completado",
+    "receiptPdf": "Recibo PDF",
+    "reopen": "Reabrir",
+    "reopened": "{{n}} reabierto — las existencias descontadas fueron restauradas.",
+    "materialsUsed": "Materiales descontados",
+    "deductedTitle": "Descontado de existencias",
+    "notTracked": "sin seguimiento",
+    "notTrackedTitle": "No descontado — el control de existencias está apagado para este ingrediente",
+    "completeTitle": "¿Completar {{n}} de {{client}}?",
+    "completeExplain": "Esto descuenta las cantidades exactas de material de tus existencias y guarda el recibo PDF. Puedes Reabrir el pedido después para deshacer el descuento.",
+    "completeConfirm": "Completar y Guardar Recibo",
+    "completeFailed": "No se pudo completar el pedido.",
+    "noUsage": "Estas recetas aún no tienen cantidades de ingredientes, así que no se descontará nada. (Fija cantidades en el editor de Recetas para llevar el control.)",
+    "totalMaterialCost": "Costo de materiales de este pedido",
+    "shortfallTitle": "No hay suficientes existencias de:",
+    "shortfallLine": "necesita {{needed}} {{unit}}, solo hay {{onHand}}",
+    "shortfallHint": "Aun así puedes completar el pedido — las existencias se detienen en 0 y nunca quedan negativas.",
+    "receiptSavedTo": "Recibo guardado: {{path}}",
+    "receiptDownloaded": "Recibo \"{{name}}\" descargado.",
+    "receiptFailed": "No se pudo crear el recibo PDF.",
+    "deleteTitle": "¿Eliminar este pedido?",
+    "deleteOpenWarning": "{{n}} de {{client}} será eliminado. Esto no se puede deshacer.",
+    "deleteCompletedWarning": "{{n}} de {{client}} está completado — eliminarlo NO restaura las existencias descontadas (usa Reabrir primero si lo necesitas)."
   }
 }

@@ -39,8 +39,14 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
 - **Pick a shape & size visually.** 49 print-verified templates covering circles,
   ovals, squares, rectangles and rounded stickers — including real Avery products
   (22807 2″ round, 6871 back label, and many more). No pixels, no coordinates.
+- **A strict 4-layer canvas.** Every design spawns with the same stack — solid
+  white **Base** → **Background** slot (AI/photo art drops in without reshuffling
+  anything) → a template-shaped, 15%-opacity **Legibility Overlay** → the
+  **Foreground** text & logo — so type stays readable over busy AI art and
+  auto-layouts only ever regenerate the foreground.
 - **A real editor.** Move / resize / rotate / crop / group, a full **layers panel**
-  (drag-to-reorder, hide, lock, rename, delete), **smart snapping guides** (magenta
+  (drag-to-reorder, **Ctrl/Shift multi-select → group/ungroup**, hide, lock,
+  rename, delete), **smart snapping guides** (magenta
   lines when things line up or center — on move *and* resize, plus equal-spacing
   guides), **visual bleed masks** (a dimmed ring + cut line + safe zone), rich
   **typography** with elegant Google Fonts, **curved text** on round/oval labels,
@@ -72,14 +78,25 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
   evenly" action so a part-used sheet of sticker paper is never thrown away.
 - **Recipe & ingredient manager** with a live checklist (has a name / has
   ingredients / includes a soap base / has a benefit).
+- **Zero-math inventory & pricing** with a **supplier-link importer**: paste a
+  product URL and the app extracts total price + container size — local
+  scraper first, then the **bundled offline AI** (grammar-enforced JSON, no
+  key, nothing leaves the machine), then Gemini if a key is stored. Optional
+  **stock-on-hand** tracking with low/out badges.
+- **Client Work Orders & receipts.** Log what each client bought; completing
+  an order deducts the exact fractional ingredient usage (grams / drops) from
+  tracked stock, snapshots the material cost, and silently saves an 8.5″×11″
+  **PDF receipt** to `work_orders/`. Reopen restores the deducted stock. The
+  **Finances** tab covers the other direction — an expense ledger for supplier
+  receipts with price sync back into Inventory.
 - **Assets drawer** with 4 tabs: My Photos, Library, Free Stock (Unsplash/Pixabay),
   and AI (open a generator, import the result).
 - **True print routing.** `pdf-lib` stamps your flattened label onto the exact
   Avery grid at real inch dimensions — never the browser print dialog. WYSIWYG
   sheet preview, quantity + fill-sheet, and `PREFIX___01.pdf` file naming.
 - **English & Spanish** (`react-i18next`).
-- **Sized for comfort.** The whole interface renders 25% larger than default;
-  Settings offers 100 / 110 / 125 / 140% if that isn't the right fit.
+- **Sized for comfort.** Settings offers 100 / 110 / 125 / 140% interface
+  scaling (default 100%) so every control and label can be as large as needed.
 - **Non-destructive history.** A 2000 ms debounced autosave writes snapshots you
   can restore from the History tab.
 
@@ -90,8 +107,9 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
 | App | React + Vite + TypeScript + Tailwind |
 | Canvas editor | **Fabric.js v6** |
 | State | **Zustand** (+ an imperative editor controller) |
-| Local database | **Dexie / IndexedDB** (ingredients, recipes, assets, versions, drafts, collections, label sets, settings) |
-| PDF export | **pdf-lib** |
+| Local database | **Dexie / IndexedDB** (ingredients, recipes, assets, versions, drafts, collections, label sets, materials, receipts, clients, work orders, settings) — better-sqlite3 DDL mirror in `electron/schema.sql` |
+| PDF export | **pdf-lib** (Avery sheets, batch sheets, client receipts) |
+| Local AI | **node-llama-cpp** + Qwen3-4B-Instruct-2507 GGUF (offline taglines + supplier-page extraction) |
 | i18n | **react-i18next** |
 | Fonts | **@fontsource** (offline) + Google Fonts (on demand) |
 | Icons | lucide-react |
