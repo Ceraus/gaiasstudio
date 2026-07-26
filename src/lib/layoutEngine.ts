@@ -37,7 +37,13 @@ function inciList(recipe: Recipe, ingredients: Ingredient[]): string {
     .join(', ');
 }
 
-/** Removes prior text/shape but keeps the user's background & logo images. */
+/**
+ * Removes prior text/shape content but keeps the user's background & logo
+ * images AND the structural 4-layer stack (white base + legibility overlay),
+ * so auto-layout only regenerates the foreground.
+ */
+const LAYOUT_KEEP_KINDS = ['background', 'logo', 'base', 'overlay'];
+
 function clearForLayout() {
   const canvas = editor.canvas;
   if (!canvas) return;
@@ -47,7 +53,7 @@ function clearForLayout() {
     .slice()
     .forEach((o) => {
       const kind = String((o as { gaiaKind?: string }).gaiaKind ?? '');
-      if (kind && !['background', 'logo'].includes(kind) && !kind.startsWith('__')) {
+      if (kind && !LAYOUT_KEEP_KINDS.includes(kind) && !kind.startsWith('__')) {
         canvas.remove(o);
       }
     });
@@ -174,6 +180,28 @@ function layoutFront(
 
   // Sage-green base — shows through when no background image is loaded
   canvas.backgroundColor = '#c8d4c0';
+
+  // ── Curved product name (round/oval labels) ──────────────────────────────
+  // The signature look: the recipe name arched along the top of the circle.
+  const isRoundLabel =
+    editor.template?.shape === 'circle' || editor.template?.shape === 'oval';
+  if (isRoundLabel) {
+    const namePt = clamp((editor.template?.labelWidthIn ?? 2) * 7, 10, 20);
+    const nameText = new fabric.Textbox(recipe.name?.trim() || str.productName, {
+      width: editor.labelWpx * 0.78,
+      fontFamily: HEADING_FONT,
+      fontSize: ptToPx(namePt),
+      fill: INK,
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'center',
+      left: cx,
+      top: s.top + s.height * 0.15,
+    });
+    applyCurveToText(nameText, 55); // gentle upward arch
+    loadFont(HEADING_FONT);
+    editor.addCustom(nameText, 'text', 'Product name');
+  }
 
   // ── Legibility circle ────────────────────────────────────────────────────
   // 33% of the label width leaves a ring roughly 0.28" wide on a 2" label,

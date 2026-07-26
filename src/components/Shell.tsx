@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BookOpen, FileStack, FlaskConical, Layers,
+  BookOpen, ClipboardList, FileStack, FlaskConical, Layers,
   Leaf, Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
 import { useAppStore, type Screen } from '@/store/useAppStore';
@@ -11,6 +11,7 @@ import BackgroundScreen from '@/components/screens/BackgroundScreen';
 import RecipesScreen from '@/components/screens/RecipesScreen';
 import IngredientsScreen from '@/components/screens/IngredientsScreen';
 import InventoryScreen from '@/components/screens/InventoryScreen';
+import WorkOrdersScreen from '@/components/screens/WorkOrdersScreen';
 import SettingsScreen from '@/components/screens/SettingsScreen';
 import PromptBuilderScreen from '@/components/screens/PromptBuilderScreen';
 import LabelSetsScreen from '@/components/screens/LabelSetsScreen';
@@ -33,7 +34,7 @@ const FinancesScreen = lazy(() => import('@/components/screens/FinancesScreen'))
 
 /** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings). */
 const STEPPER_SCREENS: Screen[] = [
-  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances',
+  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'orders', 'promptBuilder', 'finances',
 ];
 
 /** Library tabs shown in the center of the browsing-mode header. */
@@ -48,6 +49,7 @@ const BASE_LIBRARY_TABS: Array<{
   { id: 'recipes',     labelKey: 'nav.recipes',     defaultLabel: 'Recipes',     icon: BookOpen     },
   { id: 'ingredients', labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: FlaskConical },
   { id: 'inventory',   labelKey: 'nav.inventory',   defaultLabel: 'Inventory',   icon: Package      },
+  { id: 'orders',      labelKey: 'nav.orders',      defaultLabel: 'Orders',      icon: ClipboardList },
   { id: 'finances',    labelKey: 'nav.finances',    defaultLabel: 'Finances',    icon: Receipt      },
   { id: 'sets',        labelKey: 'nav.sets',        defaultLabel: 'Label Sets',  icon: Layers,      optional: true },
 ];
@@ -221,6 +223,7 @@ export default function Shell() {
           {screen === 'recipes'       && <RecipesScreen />}
           {screen === 'ingredients'   && <IngredientsScreen />}
           {screen === 'inventory'     && <InventoryScreen />}
+          {screen === 'orders'        && <WorkOrdersScreen />}
           {screen === 'settings'      && <SettingsScreen />}
           {screen === 'promptBuilder' && <PromptBuilderScreen />}
           {screen === 'sets'          && <LabelSetsScreen />}

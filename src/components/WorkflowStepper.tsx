@@ -49,6 +49,7 @@ const ALL_WORKFLOW_SCREENS: Screen[] = [
   'drafts',
   'batch',
   'inventory',
+  'orders',
   'promptBuilder',
 ];
 

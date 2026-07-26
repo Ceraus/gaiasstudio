@@ -26,10 +26,12 @@ export default function AutoLayoutPicker({ open, onClose }: { open: boolean; onC
 
   const choose = async (recipe: Recipe) => {
     const canvas = editor.canvas;
+    // Structural layers (base / background / overlay) are not "content" —
+    // only user text, shapes and non-logo images trigger the replace warning.
     const hasContent = canvas && canvas.getObjects().some(
       (o) => {
         const kind = String((o as { gaiaKind?: string }).gaiaKind ?? '');
-        return !['background', 'logo'].includes(kind) && !kind.startsWith('__');
+        return !['background', 'logo', 'base', 'overlay'].includes(kind) && !kind.startsWith('__');
       },
     );
     if (hasContent && !window.confirm(t('layout.confirmClear', 'This will replace your current label content. Continue?'))) return;

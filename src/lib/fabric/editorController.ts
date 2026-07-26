@@ -30,6 +30,8 @@ type Gaia = fabric.FabricObject & {
   gaiaLockAspect?: boolean;
   isLegibilityOverlay?: boolean;
   gaiaAdjust?: ImageAdjust;
+  /** True on the empty "Background" slot rect (swapped for a real image later). */
+  gaiaPlaceholder?: boolean;
 };
 
 /** Non-destructive image adjustments. All amounts are Fabric's -1…1 range. */
@@ -40,6 +42,13 @@ export interface ImageAdjust {
 }
 
 export const NEUTRAL_ADJUST: ImageAdjust = { brightness: 0, contrast: 0, saturation: 0 };
+
+/**
+ * Structural layer kinds created by the strict 4-layer context initialization.
+ * These survive auto-layouts (only foreground content is regenerated) and are
+ * excluded from safe-zone fit checks.
+ */
+export const STRUCTURAL_KINDS = ['base', 'background', 'overlay'] as const;
 
 export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
 
@@ -196,22 +205,69 @@ class EditorController {
     this.cropTarget = null;
   }
 
-  /** Populates a blank canvas with the 3 default starter layers. */
+  /** Fabric props that make a structural layer immovable until unlocked. */
+  private static readonly LOCKED_PROPS = {
+    selectable: false,
+    evented: false,
+    lockMovementX: true,
+    lockMovementY: true,
+    lockRotation: true,
+    lockScalingX: true,
+    lockScalingY: true,
+    hasControls: false,
+  } as const;
+
+  /**
+   * Builds the Legibility Overlay: a semi-transparent white vector shape that
+   * MATCHES the template shape (circle/oval → ellipse, rounded sticker →
+   * rounded rect, otherwise rect) at 15% opacity. It sits between the
+   * background and the foreground text so type stays readable over busy
+   * AI-generated art.
+   */
+  private buildLegibilityShape(): fabric.FabricObject & Gaia {
+    const common = {
+      left: this.trim.left,
+      top: this.trim.top,
+      originX: 'left' as const,
+      originY: 'top' as const,
+      fill: '#ffffff',
+      opacity: 0.15,
+      stroke: '',
+      strokeWidth: 0,
+      ...EditorController.LOCKED_PROPS,
+    };
+    const shape = this.template?.shape;
+    if (shape === 'circle' || shape === 'oval') {
+      return new fabric.Ellipse({
+        ...common,
+        rx: this.labelWpx / 2,
+        ry: this.labelHpx / 2,
+      }) as fabric.Ellipse & Gaia;
+    }
+    const radius =
+      shape === 'rounded-rectangle' ? (this.template?.cornerRadiusIn || 0.1) * EDITOR_PPI : 0;
+    return new fabric.Rect({
+      ...common,
+      width: this.labelWpx,
+      height: this.labelHpx,
+      rx: radius,
+      ry: radius,
+    }) as fabric.Rect & Gaia;
+  }
+
+  /**
+   * Populates a blank canvas with the STRICT 4-LAYER context stack:
+   *   1 (bottom) Base — solid white covering the label trim zone.
+   *   2          Background — the AI/photo background slot (an invisible
+   *              placeholder until an image arrives, so the stack shape is
+   *              always identical across Front / Back / Side contexts).
+   *   3          Legibility Overlay — template-shaped white vector at 15%.
+   *   4 (top)    Foreground — text (and later the transparent logo).
+   */
   private addDefaultLayers() {
     if (!this.canvas) return;
     this.isRestoring = true;
     try {
-      const lockedProps = {
-        selectable: false,
-        evented: false,
-        lockMovementX: true,
-        lockMovementY: true,
-        lockRotation: true,
-        lockScalingX: true,
-        lockScalingY: true,
-        hasControls: false,
-      };
-
       // Layer 1 — Base: solid white rect covering the label trim zone.
       const base = new fabric.Rect({
         left: this.trim.left,
@@ -223,36 +279,45 @@ class EditorController {
         strokeWidth: 0,
         originX: 'left',
         originY: 'top',
-        ...lockedProps,
+        ...EditorController.LOCKED_PROPS,
       }) as fabric.Rect & Gaia;
       base.id = uid();
-      base.gaiaKind = 'shape';
+      base.gaiaKind = 'base';
       base.name = 'Base';
       base.locked = true;
       this.canvas.add(base);
 
-      // Layer 2 — Legibility Overlay: white rect at 30% opacity above backgrounds.
-      const overlay = new fabric.Rect({
+      // Layer 2 — Background slot: fully transparent placeholder rect that a
+      // real AI/photo background replaces in place (see insertBackgroundImage).
+      const bgSlot = new fabric.Rect({
         left: this.trim.left,
         top: this.trim.top,
         width: this.labelWpx,
         height: this.labelHpx,
-        fill: '#ffffff',
-        opacity: 0.3,
+        fill: 'rgba(0,0,0,0)',
         stroke: '',
         strokeWidth: 0,
         originX: 'left',
         originY: 'top',
-        ...lockedProps,
+        ...EditorController.LOCKED_PROPS,
       }) as fabric.Rect & Gaia;
+      bgSlot.id = uid();
+      bgSlot.gaiaKind = 'background';
+      bgSlot.name = 'Background';
+      bgSlot.locked = true;
+      bgSlot.gaiaPlaceholder = true;
+      this.canvas.add(bgSlot);
+
+      // Layer 3 — Legibility Overlay: template-shaped vector at 15% opacity.
+      const overlay = this.buildLegibilityShape();
       overlay.id = uid();
-      overlay.gaiaKind = 'shape';
+      overlay.gaiaKind = 'overlay';
       overlay.name = 'Legibility Overlay';
       overlay.locked = true;
       overlay.isLegibilityOverlay = true;
       this.canvas.add(overlay);
 
-      // Layer 3 — Text / Info: centred instructional placeholder text.
+      // Layer 4 — Foreground: centred instructional placeholder text.
       const textObj = new fabric.Textbox('Your product name here', {
         width: this.labelWpx * 0.82,
         fontFamily: DEFAULT_FONT,
@@ -553,6 +618,9 @@ class EditorController {
       ? Math.max(targetW / iw, targetH / ih)
       : Math.min(targetW / iw, targetH / ih);
 
+    // Every image (logos especially) spawns dead-center on the label —
+    // the "auto-center" rule for transparent brand logos. Snap-to-center
+    // guides keep it centered if the user nudges it later.
     img.set({
       originX: 'center',
       originY: 'center',
@@ -561,14 +629,49 @@ class EditorController {
       scaleX: scale,
       scaleY: scale,
     });
-    this.tag(img, kind, name);
-    this.place(img, !isBg);
+
     if (isBg) {
-      this.canvas.sendObjectToBack(img);
-      this.canvas.requestRenderAll();
+      this.insertBackgroundImage(img, name);
       this.onChanged();
+      return img;
     }
+
+    this.tag(img, kind, name);
+    this.place(img, true);
     return img;
+  }
+
+  /**
+   * Slots a background image into the strict 4-layer stack: it REPLACES the
+   * current background layer (the invisible placeholder or a previous image)
+   * at the same stack position, so the order Base → Background → Legibility
+   * Overlay → Foreground is always preserved. The layer arrives locked; it
+   * can be unlocked from the Layers panel for repositioning.
+   */
+  private insertBackgroundImage(img: fabric.FabricImage & Gaia, name?: string) {
+    const canvas = this.canvas!;
+    img.set(EditorController.LOCKED_PROPS);
+    img.id = uid();
+    img.gaiaKind = 'background';
+    img.name = name ?? 'Background';
+    img.locked = true;
+    img.gaiaPlaceholder = false;
+
+    const existing = canvas
+      .getObjects()
+      .find((o) => (o as Gaia).gaiaKind === 'background') as Gaia | undefined;
+
+    canvas.add(img);
+    if (existing) {
+      const slot = canvas.getObjects().indexOf(existing as fabric.FabricObject);
+      canvas.remove(existing as fabric.FabricObject);
+      canvas.moveObjectTo(img, slot);
+    } else {
+      // No slot (legacy design) — sit just above the base layer.
+      const base = canvas.getObjects().find((o) => (o as Gaia).gaiaKind === 'base');
+      canvas.moveObjectTo(img, base ? canvas.getObjects().indexOf(base) + 1 : 0);
+    }
+    canvas.requestRenderAll();
   }
 
   addText(kind: 'heading' | 'body' | string = 'body', text?: string) {
@@ -1173,28 +1276,49 @@ class EditorController {
   }
 
   /**
-   * Drag-and-drop reorder from the layers panel.
-   *
-   * The panel lists the topmost layer first, so its indices run opposite to
-   * Fabric's stacking order; both indices are converted here so callers can
-   * think purely in "what the user sees".
+   * Drag-and-drop z-index reordering from the Layers panel.
+   * `targetPanelIndex` is the FINAL position in panel order (0 = topmost
+   * layer = highest canvas index). Fabric's moveObjectTo uses remove-then-
+   * insert semantics, so the final index equals the requested index no matter
+   * which direction the layer travels.
    */
-  reorderLayer(id: string, toPanelIndex: number) {
+  reorderLayer(id: string, targetPanelIndex: number) {
     const canvas = this.canvas;
-    const obj = this.findById(id);
-    if (!canvas || !obj || this.cropMode) return;
-    const visible = canvas
-      .getObjects()
-      .filter((o) => !String((o as Gaia).gaiaKind ?? '').startsWith('__'));
-    const clamped = Math.max(0, Math.min(visible.length - 1, toPanelIndex));
-    const targetStackIndex = visible.length - 1 - clamped;
-    if (visible[targetStackIndex] === obj) return;
-
-    const reordered = visible.filter((o) => o !== obj);
-    reordered.splice(targetStackIndex, 0, obj);
-    reordered.forEach((o, i) => canvas.moveObjectTo(o, i));
+    if (!canvas || this.cropMode) return;
+    const o = this.findById(id);
+    if (!o) return;
+    const count = canvas.getObjects().length;
+    const clamped = Math.max(0, Math.min(count - 1, targetPanelIndex));
+    const targetCanvasIndex = count - 1 - clamped; // panel order is reversed
+    if (canvas.getObjects().indexOf(o) === targetCanvasIndex) return;
+    canvas.moveObjectTo(o, targetCanvasIndex);
     canvas.requestRenderAll();
     this.onChanged();
+  }
+
+  /**
+   * Selects multiple layers from the panel (Ctrl/Shift-click) as one
+   * ActiveSelection so they can be moved / grouped together. Locked and
+   * hidden layers are skipped — they cannot participate in a live selection.
+   */
+  selectLayers(ids: string[]) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const wanted = new Set(ids);
+    const objs = canvas
+      .getObjects()
+      .filter((o) => {
+        const g = o as Gaia;
+        return g.id !== undefined && wanted.has(g.id) && !g.locked && o.visible !== false;
+      });
+    canvas.discardActiveObject();
+    if (objs.length === 1) {
+      canvas.setActiveObject(objs[0]);
+    } else if (objs.length > 1) {
+      canvas.setActiveObject(new fabric.ActiveSelection(objs, { canvas }));
+    }
+    canvas.requestRenderAll();
+    this.syncSelection();
   }
 
   deleteLayer(id: string) {
@@ -1300,9 +1424,11 @@ class EditorController {
 
   setLegibilityOverlayVisible(v: boolean) {
     if (!this.canvas) return;
-    const overlay = this.canvas.getObjects().find((o) => (o as Gaia).isLegibilityOverlay);
-    if (!overlay) return;
-    overlay.set('visible', v);
+    // Both the structural overlay layer and any auto-layout legibility shape
+    // carry the flag — toggle them together so the button always "just works".
+    const overlays = this.canvas.getObjects().filter((o) => (o as Gaia).isLegibilityOverlay);
+    if (!overlays.length) return;
+    overlays.forEach((o) => o.set('visible', v));
     this.legibilityOverlayVisible = v;
     useEditorStore.getState().set({ legibilityOverlayVisible: v });
     this.canvas.requestRenderAll();
@@ -1441,8 +1567,8 @@ class EditorController {
   // -- background & auto-layout helpers -------------------------------------
 
   /**
-   * Loads an image from a URL and inserts it as the background layer, placed just
-   * above the base white rect so the legibility overlay remains on top.
+   * Loads an image from a URL and slots it into the Background layer of the
+   * strict 4-layer stack (replacing the placeholder or a previous image).
    * Safe to call on fresh canvases immediately after addDefaultLayers().
    */
   async setBackgroundFromUrl(url: string): Promise<void> {
@@ -1450,24 +1576,14 @@ class EditorController {
     const img = (await fabric.FabricImage.fromURL(url, {
       crossOrigin: 'anonymous',
     })) as fabric.FabricImage & Gaia;
+    if (!this.canvas) return; // disposed while the image was loading
 
     const cw = this.canvas.getWidth();
     const ch = this.canvas.getHeight();
     const iw = img.width || 1;
     const ih = img.height || 1;
-    // Cover mode: scale so the image fills the entire canvas.
+    // Cover mode: scale so the image fills the entire canvas (incl. bleed).
     const scale = Math.max(cw / iw, ch / ih);
-
-    const lockedProps = {
-      selectable: false,
-      evented: false,
-      lockMovementX: true,
-      lockMovementY: true,
-      lockRotation: true,
-      lockScalingX: true,
-      lockScalingY: true,
-      hasControls: false,
-    };
 
     img.set({
       originX: 'center',
@@ -1476,18 +1592,8 @@ class EditorController {
       top: this.trim.cy,
       scaleX: scale,
       scaleY: scale,
-      ...lockedProps,
     });
-    img.id = uid();
-    img.gaiaKind = 'background';
-    img.name = 'Background';
-    img.locked = true;
-
-    this.canvas.add(img);
-    // Stack order: base (0) → background image (1) → legibility overlay (2) → text (3+)
-    this.canvas.sendObjectToBack(img);  // index 0
-    this.canvas.bringObjectForward(img); // index 1, above the base white rect
-    this.canvas.requestRenderAll();
+    this.insertBackgroundImage(img);
   }
 
   /**
@@ -1649,6 +1755,8 @@ function defaultName(kind: string) {
   const map: Record<string, string> = {
     logo: 'Logo',
     background: 'Background',
+    base: 'Base',
+    overlay: 'Legibility Overlay',
     photo: 'Photo',
     ai: 'AI image',
     stock: 'Stock photo',

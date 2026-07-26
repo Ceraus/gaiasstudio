@@ -13,6 +13,7 @@ export type Screen =
   | 'recipes'
   | 'ingredients'
   | 'inventory'
+  | 'orders'
   | 'settings'
   | 'promptBuilder'
   | 'sets'
