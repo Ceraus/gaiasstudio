@@ -215,13 +215,11 @@ export default function WorkOrdersScreen() {
     const items = itemsByOrder.get(order.id) ?? [];
     const drafts = await draftsRepo.all(); // newest first
     const ids: string[] = [];
-    const quantities: Record<string, number> = {};
     const missing: string[] = [];
     for (const item of items) {
       const draft = drafts.find((d) => d.recipeId === item.recipeId);
       if (draft) {
         if (!ids.includes(draft.id)) ids.push(draft.id);
-        quantities[draft.id] = (quantities[draft.id] ?? 0) + item.quantity;
       } else {
         missing.push(item.recipeName);
       }
@@ -236,7 +234,7 @@ export default function WorkOrdersScreen() {
         missing: missing.join(', '),
       }));
     }
-    setBatchDraftIds(ids, quantities);
+    setBatchDraftIds(ids);
     goto('batch');
   };
 

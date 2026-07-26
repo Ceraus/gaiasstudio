@@ -46,7 +46,6 @@ export default function BatchPrintScreen() {
   const goto = useAppStore((s) => s.goto);
   const settings = useAppStore((s) => s.settings);
   const batchDraftIds = useAppStore((s) => s.batchDraftIds);
-  const batchQuantities = useAppStore((s) => s.batchQuantities);
 
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,17 +58,10 @@ export default function BatchPrintScreen() {
     Promise.all(batchDraftIds.map((id) => draftsRepo.get(id)))
       .then((rows) => {
         if (cancelled) return;
-        // Quantities pre-filled by the Work Order "Print labels" bridge win;
-        // everything else starts at 1 copy.
-        setQueue(rows.filter((d): d is Draft => !!d).map((draft) => ({
-          draft,
-          quantity: Math.max(1, Math.min(999, batchQuantities[draft.id] ?? 1)),
-        })));
+        setQueue(rows.filter((d): d is Draft => !!d).map((draft) => ({ draft, quantity: 1 })));
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-    // batchQuantities only matters together with a fresh id list
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchDraftIds]);
 
   /**

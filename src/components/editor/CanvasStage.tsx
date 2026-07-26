@@ -209,7 +209,6 @@ export default function CanvasStage() {
     <div
       ref={containerRef}
       className="canvas-checkerboard relative flex-1 overflow-auto"
-      data-tour="editor-canvas"
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);

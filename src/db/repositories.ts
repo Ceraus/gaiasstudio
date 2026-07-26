@@ -9,6 +9,7 @@ import type {
   Draft,
   ExpenseCategory,
   Ingredient,
+  IngredientCategory,
   LabelSet,
   Receipt,
   ReceiptLineItem,
@@ -24,12 +25,7 @@ const uid = () =>
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-import {
-  baseUnitOf,
-  calculateFractionalCost,
-  calculateProfitMargin,
-  calculateRecipeMaterialCogs,
-} from '@/lib/inventoryMath';
+import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs } from '@/lib/inventoryMath';
 
 function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
   const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
@@ -38,6 +34,27 @@ function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
       ? calculateProfitMargin(recipe.retailPrice, cogsTotal)
       : undefined;
   return { cogsTotal, profitMargin };
+}
+
+// ---------------------------------------------------------------------------
+// Measurement helpers (shared by Inventory, Recipes, and Work Orders)
+// ---------------------------------------------------------------------------
+
+/** Categories measured in drops by default (everything else uses grams). */
+export const VOLUME_CATEGORIES: ReadonlySet<IngredientCategory> = new Set([
+  'essential-oil',
+  'fragrance',
+]);
+
+/** True when the ingredient is measured in drops (volume) rather than grams. */
+export function isVolumeIngredient(ing: Pick<Ingredient, 'measurementType' | 'category'>): boolean {
+  if (ing.measurementType) return ing.measurementType === 'volume';
+  return ing.category ? VOLUME_CATEGORIES.has(ing.category) : false;
+}
+
+/** Base unit label for an ingredient ('g' or 'drops'). */
+export function baseUnitOf(ing: Pick<Ingredient, 'measurementType' | 'category'>): 'g' | 'drops' {
+  return isVolumeIngredient(ing) ? 'drops' : 'g';
 }
 
 // --- Ingredients -----------------------------------------------------------
@@ -479,10 +496,9 @@ export const clientsRepo = {
 
 // --- Work Orders -------------------------------------------------------------
 //
-// The SALES pipeline (Receipts above are the expense side): New Order (open)
-// → Mark Completed → tracked ingredient stock deducted + COGS snapshot stored
-// → client PDF receipt. "Reopen" restores exactly the stock that was
-// deducted (from the usage snapshot), so mistakes are reversible.
+// The pipeline: New Order (open) → Mark Completed → ingredient stock deducted
+// + COGS snapshot stored → PDF receipt. "Reopen" restores exactly the stock
+// that was deducted (from the usage snapshot), so mistakes are reversible.
 // ---------------------------------------------------------------------------
 
 export interface OrderUsageShortfall {

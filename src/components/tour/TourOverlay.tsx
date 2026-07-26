@@ -21,6 +21,47 @@ import { getTour } from './tours';
 const CARD_W = 340;
 const CARD_GAP = 12;
 const SPOT_PAD = 6;
+/** Estimated card height for placement math (actual card may vary slightly). */
+const CARD_H_EST = 240;
+
+/** Keep the step card inside the viewport — tall spotlights (recipe list, etc.) used to push it off-screen. */
+function placeCard(rect: SpotRect | null): React.CSSProperties {
+  if (!rect) {
+    return { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: CARD_W };
+  }
+
+  const maxTop = window.innerHeight - CARD_H_EST - CARD_GAP;
+  const targetTooTall = rect.height > window.innerHeight * 0.45;
+
+  let left = Math.min(
+    Math.max(rect.left, CARD_GAP),
+    Math.max(CARD_GAP, window.innerWidth - CARD_W - CARD_GAP),
+  );
+  let top = Math.max(CARD_GAP, Math.min(maxTop, (window.innerHeight - CARD_H_EST) / 2));
+
+  if (targetTooTall) {
+    // Sidebar / full-height lists: park the card beside the target when there's room.
+    const beside = rect.left + rect.width + CARD_GAP;
+    if (beside + CARD_W <= window.innerWidth - CARD_GAP) {
+      left = beside;
+    }
+  } else {
+    const belowTop = rect.top + rect.height + SPOT_PAD + CARD_GAP;
+    const aboveTop = rect.top - SPOT_PAD - CARD_GAP - CARD_H_EST;
+    if (belowTop <= maxTop) {
+      top = belowTop;
+    } else if (aboveTop >= CARD_GAP) {
+      top = aboveTop;
+    }
+    left = Math.min(
+      Math.max(rect.left, CARD_GAP),
+      Math.max(CARD_GAP, window.innerWidth - CARD_W - CARD_GAP),
+    );
+  }
+
+  top = Math.max(CARD_GAP, Math.min(maxTop, top));
+  return { left, top, width: CARD_W };
+}
 
 interface SpotRect {
   left: number;
@@ -115,22 +156,7 @@ export default function TourOverlay() {
 
   const isLast = stepIndex === tour.steps.length - 1;
   const spotlight = rect !== null;
-
-  // Card placement: below the target when there's room, otherwise above;
-  // horizontally clamped to the viewport. Centered when there's no target.
-  let cardStyle: React.CSSProperties;
-  if (spotlight && rect) {
-    const below = rect.top + rect.height + CARD_GAP + 230 < window.innerHeight;
-    const left = Math.min(
-      Math.max(rect.left, CARD_GAP),
-      Math.max(CARD_GAP, window.innerWidth - CARD_W - CARD_GAP),
-    );
-    cardStyle = below
-      ? { left, top: rect.top + rect.height + SPOT_PAD + CARD_GAP, width: CARD_W }
-      : { left, bottom: window.innerHeight - rect.top + SPOT_PAD + CARD_GAP, width: CARD_W };
-  } else {
-    cardStyle = { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: CARD_W };
-  }
+  const cardStyle = placeCard(spotlight ? rect : null);
 
   return (
     <div className="fixed inset-0 z-[80]" role="dialog" aria-modal="true" aria-label={t(`tour.${tour.nameKey}`, tour.nameDefault)}>

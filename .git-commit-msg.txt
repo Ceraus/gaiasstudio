@@ -1,0 +1,7 @@
+Fix tour step 2 card clipped off-screen on Recipes page
+
+Tour card placement now clamps to the viewport and parks beside tall
+spotlight targets (like the recipe list sidebar) so Back/Next/Skip stay
+visible. Also fixes a few type errors that were blocking production builds.
+
+Bump to 2.0.43.

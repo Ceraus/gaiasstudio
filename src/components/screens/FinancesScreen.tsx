@@ -2,12 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown, ChevronUp, Download, Loader2, Package, Plus,
-  Receipt as ReceiptIcon, Trash2, TrendingUp, X,
+  Receipt as ReceiptIcon, Trash2, X,
 } from 'lucide-react';
-import type { CustomMaterial, ExpenseCategory, Ingredient, Receipt, ReceiptLineItem, WorkOrder } from '@/types';
-import { customMaterialsRepo, ingredientsRepo, receiptsRepo, workOrdersRepo } from '@/db/repositories';
+import type { CustomMaterial, ExpenseCategory, Ingredient, Receipt, ReceiptLineItem } from '@/types';
+import { customMaterialsRepo, ingredientsRepo, receiptsRepo } from '@/db/repositories';
 import { getIngredientDisplayName } from '@/lib/ingredientI18n';
-import TipBanner from '@/components/tour/TipBanner';
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = ['ingredients', 'packaging', 'shipping', 'equipment', 'other'];
 
@@ -32,21 +31,18 @@ function formatMoney(n: number): string {
 export default function FinancesScreen() {
   const { t } = useTranslation();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [materials, setMaterials] = useState<CustomMaterial[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const reload = async () => {
-    const [r, ords, ings, mats] = await Promise.all([
+    const [r, ings, mats] = await Promise.all([
       receiptsRepo.all(),
-      workOrdersRepo.all(),
       ingredientsRepo.active(),
       customMaterialsRepo.active(),
     ]);
     setReceipts(r);
-    setOrders(ords);
     setIngredients(ings);
     setMaterials(mats);
   };
@@ -54,69 +50,6 @@ export default function FinancesScreen() {
   useEffect(() => { void reload(); }, []);
 
   const summary = useMemo(() => receiptsRepo.summarize(receipts), [receipts]);
-
-  /**
-   * True profit ties BOTH halves of the tracker together:
-   * revenue from completed Work Orders (sales) minus money spent (Receipts).
-   * Per-order material COGS is shown separately as information only — those
-   * ingredient purchases are already inside the expense receipts, so adding
-   * them again would double-count.
-   */
-  const profit = useMemo(() => {
-    const completed = orders.filter((o) => o.status === 'completed');
-    const now = new Date();
-    const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
-    const thisMonthKey = monthKey(now);
-    const thisYear = now.getFullYear();
-
-    let revenueMonth = 0;
-    let revenueYear = 0;
-    let revenueAll = 0;
-    let cogsAll = 0;
-    const revenueByMonth = new Map<string, number>();
-    for (const o of completed) {
-      const d = new Date(o.completedAt ?? o.createdAt);
-      revenueAll += o.total;
-      cogsAll += o.materialCost ?? 0;
-      if (d.getFullYear() === thisYear) revenueYear += o.total;
-      if (monthKey(d) === thisMonthKey) revenueMonth += o.total;
-      revenueByMonth.set(monthKey(d), (revenueByMonth.get(monthKey(d)) ?? 0) + o.total);
-    }
-
-    const expensesByMonth = new Map<string, number>();
-    for (const r of receipts) {
-      const k = monthKey(new Date(r.date));
-      expensesByMonth.set(k, (expensesByMonth.get(k) ?? 0) + r.total);
-    }
-
-    // Last 6 calendar months, oldest first.
-    const months: Array<{ label: string; revenue: number; expenses: number; net: number }> = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const k = monthKey(d);
-      const revenue = revenueByMonth.get(k) ?? 0;
-      const expenses = expensesByMonth.get(k) ?? 0;
-      months.push({
-        label: d.toLocaleDateString(undefined, { month: 'short' }),
-        revenue,
-        expenses,
-        net: revenue - expenses,
-      });
-    }
-
-    return {
-      hasData: completed.length > 0 || receipts.length > 0,
-      revenueMonth,
-      revenueYear,
-      revenueAll,
-      cogsAll,
-      netMonth: revenueMonth - summary.thisMonth,
-      netYear: revenueYear - summary.thisYear,
-      netAll: revenueAll - summary.allTime,
-      months,
-      completedCount: completed.length,
-    };
-  }, [orders, receipts, summary]);
 
   const handleDelete = async (id: string) => {
     await receiptsRepo.remove(id);
@@ -185,7 +118,6 @@ export default function FinancesScreen() {
                 type="button"
                 className="btn-primary text-sm"
                 onClick={() => setShowForm((v) => !v)}
-                data-tour="new-receipt"
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t('finances.newReceipt', 'New Receipt')}
@@ -193,82 +125,11 @@ export default function FinancesScreen() {
             </div>
           </div>
 
-          <TipBanner
-            id="finances-sync-price"
-            textDefault="Link a receipt line to an ingredient and tick sync — the new price flows straight into Inventory, so recipe costs never go stale."
-          />
-
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <StatCard label={t('finances.thisMonth', 'This Month')} value={summary.thisMonth} />
             <StatCard label={t('finances.thisYear', 'This Year')} value={summary.thisYear} />
             <StatCard label={t('finances.allTime', 'All Time')} value={summary.allTime} highlight />
           </div>
-
-          {/* ── Profit dashboard: sales (Work Orders) minus spending (Receipts) ── */}
-          {profit.hasData && (
-            <div className="mt-6 rounded-2xl bg-white p-5 ring-2 ring-gaia-200" data-tour="profit-dashboard">
-              <p className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-800">
-                <TrendingUp className="h-4 w-4 text-gaia-600" />
-                {t('finances.profitTitle', 'Profit — sales vs. spending')}
-              </p>
-              <p className="mb-4 text-xs text-slate-400">
-                {t('finances.profitSubtitle', 'Revenue from completed Orders minus every receipt logged here.')}
-              </p>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {([
-                  [t('finances.thisMonth', 'This Month'), profit.revenueMonth, summary.thisMonth, profit.netMonth],
-                  [t('finances.thisYear', 'This Year'), profit.revenueYear, summary.thisYear, profit.netYear],
-                  [t('finances.allTime', 'All Time'), profit.revenueAll, summary.allTime, profit.netAll],
-                ] as Array<[string, number, number, number]>).map(([label, revenue, expenses, net]) => (
-                  <div key={label} className="rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {t('finances.revenueShort', 'Sales')}{' '}
-                      <span className="font-semibold text-slate-700">{formatMoney(revenue)}</span>
-                      {' − '}
-                      {t('finances.expensesShort', 'Spending')}{' '}
-                      <span className="font-semibold text-slate-700">{formatMoney(expenses)}</span>
-                    </p>
-                    <p className={`mt-1 text-xl font-bold ${net >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                      {net >= 0 ? '+' : '−'}{formatMoney(Math.abs(net))}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Last 6 months, side-by-side bars */}
-              <div className="mt-4 space-y-1.5">
-                {(() => {
-                  const max = Math.max(1, ...profit.months.flatMap((m) => [m.revenue, m.expenses]));
-                  return profit.months.map((m) => (
-                    <div key={m.label} className="flex items-center gap-3 text-xs">
-                      <span className="w-8 shrink-0 font-medium text-slate-500">{m.label}</span>
-                      <div className="flex-1 space-y-0.5">
-                        <div className="h-1.5 rounded-full bg-emerald-400" style={{ width: `${Math.max((m.revenue / max) * 100, m.revenue > 0 ? 2 : 0)}%` }} />
-                        <div className="h-1.5 rounded-full bg-rose-300" style={{ width: `${Math.max((m.expenses / max) * 100, m.expenses > 0 ? 2 : 0)}%` }} />
-                      </div>
-                      <span className={`w-20 shrink-0 text-right font-semibold ${m.net >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                        {m.net >= 0 ? '+' : '−'}{formatMoney(Math.abs(m.net))}
-                      </span>
-                    </div>
-                  ));
-                })()}
-                <p className="pt-1 text-[10px] text-slate-400">
-                  <span className="mr-3 inline-flex items-center gap-1"><span className="inline-block h-1.5 w-4 rounded-full bg-emerald-400" />{t('finances.legendSales', 'sales')}</span>
-                  <span className="inline-flex items-center gap-1"><span className="inline-block h-1.5 w-4 rounded-full bg-rose-300" />{t('finances.legendSpending', 'spending')}</span>
-                </p>
-              </div>
-
-              {profit.cogsAll > 0 && (
-                <p className="mt-3 text-[11px] text-slate-400">
-                  {t('finances.cogsNote', 'For reference: completed orders used {{cogs}} of raw materials (already part of your ingredient receipts — not double-counted above).', {
-                    cogs: formatMoney(profit.cogsAll),
-                  })}
-                </p>
-              )}
-            </div>
-          )}
 
           {summary.byCategory.length > 0 && (
             <div className="mt-6 rounded-2xl bg-white p-5 ring-1 ring-slate-200">

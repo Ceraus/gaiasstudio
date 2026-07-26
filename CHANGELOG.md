@@ -4,6 +4,15 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.43] - 2026-07-26
+
+### Fixed
+- **Design-a-label tour step 2 had no visible Next button** — on the Recipes
+  screen the tour spotlighted the full recipe list (a tall sidebar). The step
+  card was positioned above/below that target and clipped off-screen, so there
+  was no way to proceed. Tour card placement now clamps to the viewport and
+  parks beside tall targets so Back / Next / Skip are always reachable.
+
 ## [2.0.42] - 2026-07-26
 
 ### Added
