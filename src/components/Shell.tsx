@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BookOpen, ClipboardList, FileStack, FlaskConical, HelpCircle, Layers,
-  Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
+  BarChart3, BookOpen, ClipboardList, FileStack, FlaskConical, HelpCircle, Layers,
+  Loader2, Package, Plus, Receipt, Settings as SettingsIcon, ShoppingBag, Sparkles, Store,
 } from 'lucide-react';
 import brandIcon from '@/assets/icon.png';
 import { useAppStore, type Screen } from '@/store/useAppStore';
@@ -36,27 +36,37 @@ const BatchPrintScreen = lazy(() => import('@/components/screens/BatchPrintScree
 const FinancesScreen = lazy(() => import('@/components/screens/FinancesScreen'));
 // Work Orders builds client receipts with pdf-lib — lazy-loaded like Finances.
 const WorkOrdersScreen = lazy(() => import('@/components/screens/WorkOrdersScreen'));
+// New screens for the Studio expansion
+const ShopScreen = lazy(() => import('@/components/screens/ShopScreen'));
+const ProductsScreen = lazy(() => import('@/components/screens/ProductsScreen'));
+const ReportsScreen = lazy(() => import('@/components/screens/ReportsScreen'));
 
 /** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings). */
 const STEPPER_SCREENS: Screen[] = [
-  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances', 'orders',
+  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances', 'orders', 'shop', 'products', 'reports',
 ];
 
-/** Library tabs shown in the center of the browsing-mode header. */
+/** Library tabs — grouped: Design | Business | Connect */
+type NavGroup = 'design' | 'business' | 'connect';
+
 const BASE_LIBRARY_TABS: Array<{
   id: Screen;
+  group: NavGroup;
   labelKey: string;
   defaultLabel: string;
   icon: typeof BookOpen;
   optional?: boolean;
 }> = [
-  { id: 'drafts',      labelKey: 'drafts.title',   defaultLabel: 'Workspace',   icon: FileStack    },
-  { id: 'recipes',     labelKey: 'nav.recipes',     defaultLabel: 'Recipes',     icon: BookOpen     },
-  { id: 'ingredients', labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: FlaskConical },
-  { id: 'inventory',   labelKey: 'nav.inventory',   defaultLabel: 'Inventory',   icon: Package      },
-  { id: 'orders',      labelKey: 'nav.orders',      defaultLabel: 'Orders',      icon: ClipboardList },
-  { id: 'finances',    labelKey: 'nav.finances',    defaultLabel: 'Finances',    icon: Receipt      },
-  { id: 'sets',        labelKey: 'nav.sets',        defaultLabel: 'Label Sets',  icon: Layers,      optional: true },
+  { id: 'drafts',      group: 'design',   labelKey: 'drafts.title',    defaultLabel: 'Workspace',   icon: FileStack    },
+  { id: 'ingredients', group: 'design',   labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: FlaskConical },
+  { id: 'sets',        group: 'design',   labelKey: 'nav.sets',        defaultLabel: 'Label Sets',  icon: Layers,      optional: true },
+  { id: 'products',    group: 'business', labelKey: 'nav.products',    defaultLabel: 'Products',    icon: ShoppingBag  },
+  { id: 'recipes',     group: 'business', labelKey: 'nav.recipes',     defaultLabel: 'Recipes',     icon: BookOpen     },
+  { id: 'inventory',   group: 'business', labelKey: 'nav.inventory',   defaultLabel: 'Inventory',   icon: Package      },
+  { id: 'orders',      group: 'business', labelKey: 'nav.orders',      defaultLabel: 'Orders',      icon: ClipboardList },
+  { id: 'finances',    group: 'business', labelKey: 'nav.finances',    defaultLabel: 'Finances',    icon: Receipt      },
+  { id: 'reports',     group: 'business', labelKey: 'nav.reports',     defaultLabel: 'Reports',     icon: BarChart3    },
+  { id: 'shop',        group: 'connect',  labelKey: 'nav.shop',        defaultLabel: 'Etsy Shop',   icon: Store        },
 ];
 
 export default function Shell() {
@@ -157,12 +167,20 @@ export default function Shell() {
             compute as auto too, per the CSS spec, cropping that overhang). */}
         <div className="min-w-0 flex-1">
           <nav className="flex items-center justify-start gap-0.5" data-tour="nav-tabs">
-            {LIBRARY_TABS.map(({ id, labelKey, defaultLabel, icon: Icon }) => {
+            {LIBRARY_TABS.map(({ id, group, labelKey, defaultLabel, icon: Icon }, index) => {
               const isActive    = screen === id;
               const hasDraftWip = id === 'drafts' && !!activeDraftId;
+              const prevGroup = index > 0 ? LIBRARY_TABS[index - 1].group : null;
+              const showDivider = prevGroup && prevGroup !== group;
               return (
+                <span key={id} className="flex items-center">
+                  {showDivider && (
+                    <span
+                      className="mx-1 hidden h-5 w-px shrink-0 bg-slate-200 lg:inline-block"
+                      aria-hidden
+                    />
+                  )}
                 <button
-                  key={id}
                   onClick={() => goto(id)}
                   className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                     isActive
@@ -182,6 +200,7 @@ export default function Shell() {
                     />
                   )}
                 </button>
+                </span>
               );
             })}
           </nav>
@@ -263,6 +282,9 @@ export default function Shell() {
           {screen === 'batch'         && <BatchPrintScreen />}
           {screen === 'finances'      && <FinancesScreen />}
           {screen === 'orders'        && <WorkOrdersScreen />}
+          {screen === 'shop'          && <ShopScreen />}
+          {screen === 'products'      && <ProductsScreen />}
+          {screen === 'reports'       && <ReportsScreen />}
         </Suspense>
       </main>
 

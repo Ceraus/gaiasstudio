@@ -1,10 +1,10 @@
 {
   "app": {
-    "name": "Gaia's Essences",
-    "tagline": "Rosa's label studio for Gaia's Essences — beautiful labels, start to finish."
+    "name": "Gaia's Studio",
+    "tagline": "Rosa's business hub for Gaia's Essences — labels, recipes, inventory, orders, and Etsy."
   },
   "lock": {
-    "title": "Gaia's Essences",
+    "title": "Gaia's Studio",
     "subtitle": "Enter your password to open the studio.",
     "placeholder": "Password",
     "unlock": "Unlock",
@@ -72,6 +72,10 @@
     "newLabel": "New label",
     "promptBuilder": "AI Prompt",
     "orders": "Orders",
+    "finances": "Finances",
+    "products": "Products",
+    "shop": "Etsy Shop",
+    "reports": "Reports",
     "help": "Help & walkthroughs"
   },
   "steps": {

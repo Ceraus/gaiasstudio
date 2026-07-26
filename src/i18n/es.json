@@ -1,10 +1,10 @@
 {
   "app": {
-    "name": "Gaia's Essences",
-    "tagline": "El estudio de etiquetas de Rosa para Gaia's Essences — hermosas, de principio a fin."
+    "name": "Gaia's Studio",
+    "tagline": "El centro de negocios de Rosa para Gaia's Essences — etiquetas, recetas, inventario, pedidos y Etsy."
   },
   "lock": {
-    "title": "Gaia's Essences",
+    "title": "Gaia's Studio",
     "subtitle": "Ingresa tu contraseña para abrir el estudio.",
     "placeholder": "Contraseña",
     "unlock": "Desbloquear",
@@ -73,6 +73,9 @@
     "promptBuilder": "Prompt IA",
     "finances": "Finanzas",
     "orders": "Pedidos",
+    "products": "Productos",
+    "shop": "Tienda Etsy",
+    "reports": "Informes",
     "help": "Ayuda y recorridos"
   },
   "steps": {

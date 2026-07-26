@@ -1,0 +1,19 @@
+{
+  "name": "Gaia's Studio",
+  "short_name": "Gaia's Studio",
+  "description": "Rosa's business studio for Gaia's Essences — labels, recipes, inventory, orders, and Etsy, all in one place.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f8faf9",
+  "theme_color": "#2d6a4f",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"]
+}

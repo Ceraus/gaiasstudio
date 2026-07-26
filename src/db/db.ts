@@ -7,8 +7,12 @@ import type {
   CustomMaterial,
   DesignVersion,
   Draft,
+  EtsyListing,
+  EtsySyncLog,
   Ingredient,
   LabelSet,
+  LotCode,
+  ProductListing,
   Receipt,
   Recipe,
   SetPurchase,
@@ -43,6 +47,10 @@ export class GaiaDatabase extends Dexie {
   clients!: Table<Client, string>;
   workOrders!: Table<WorkOrder, string>;
   workOrderItems!: Table<WorkOrderItem, string>;
+  etsyListings!: Table<EtsyListing, string>;
+  productListings!: Table<ProductListing, string>;
+  etsySyncLogs!: Table<EtsySyncLog, string>;
+  lotCodes!: Table<LotCode, string>;
 
   constructor() {
     super('gaia-label-studio');
@@ -149,6 +157,14 @@ export class GaiaDatabase extends Dexie {
       clients: 'id, name, createdAt',
       workOrders: 'id, orderNumber, clientId, status, createdAt',
       workOrderItems: 'id, workOrderId, recipeId, createdAt',
+    });
+
+    // Version 14 — Etsy integration, unified product catalog, lot codes.
+    this.version(14).stores({
+      etsyListings: 'id, etsyListingId, recipeId, state, createdAt',
+      productListings: 'id, name, recipeId, draftId, etsyListingId, active, createdAt',
+      etsySyncLogs: 'id, direction, entity, timestamp',
+      lotCodes: 'id, code, recipeId, productionDate, createdAt',
     });
   }
 }

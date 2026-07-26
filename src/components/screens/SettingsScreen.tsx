@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, Instagram, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Share2, Smartphone, Store, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { checkLocalAiStatus, type LocalAiStatus } from '@/lib/localAi';
 import { exportBackup, restoreBackup } from '@/lib/backup';
+import {
+  getConnectionStatus,
+  startEtsyConnect,
+  type EtsyConnectionStatus,
+} from '@/lib/etsyApi';
+import { getOAuthRedirectUri } from '@/lib/pwa';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -239,6 +245,12 @@ export default function SettingsScreen() {
           </section>
 
           <LocalAiSection />
+
+          <EtsySection />
+
+          <SocialSection />
+
+          <PwaSection />
 
           {/* Business / Maker Info — required for FDA-compliant labels */}
           <section className="card space-y-3">
@@ -638,6 +650,263 @@ function LocalAiSection() {
             )}
           </div>
         </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Etsy Shop — OAuth PKCE connection (add API key now, connect when ready).
+// ---------------------------------------------------------------------------
+function EtsySection() {
+  const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const [connecting, setConnecting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const shop = settings.etsyShop ?? {};
+  const status: EtsyConnectionStatus = getConnectionStatus(shop);
+  const redirectUri = getOAuthRedirectUri();
+
+  const patchShop = (patch: Partial<typeof shop>) =>
+    void updateSettings({ etsyShop: { ...shop, ...patch } });
+
+  const handleConnect = async () => {
+    setMessage(null);
+    if (!shop.apiKey?.trim()) {
+      setMessage(t('settings.etsyNeedKey', 'Add your Etsy API keystring first.'));
+      return;
+    }
+    if (!shop.shopId?.trim()) {
+      setMessage(t('settings.etsyNeedShopId', 'Add your Etsy Shop ID first.'));
+      return;
+    }
+    setConnecting(true);
+    try {
+      const url = await startEtsyConnect({ ...shop, apiKey: shop.apiKey.trim() });
+      if (!url) {
+        setMessage(t('settings.etsyConnectFailed', 'Could not start Etsy connection.'));
+        return;
+      }
+      window.location.href = url;
+    } catch (err) {
+      setMessage(String(err instanceof Error ? err.message : err));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const statusLabel =
+    status === 'connected'
+      ? t('settings.etsyConnected', 'Connected')
+      : status === 'configured'
+        ? t('settings.etsyConfigured', 'Ready to connect')
+        : status === 'expired'
+          ? t('settings.etsyExpired', 'Session expired')
+          : t('settings.etsyDisconnected', 'Not configured');
+
+  const statusColor =
+    status === 'connected'
+      ? 'text-emerald-600'
+      : status === 'expired'
+        ? 'text-amber-600'
+        : 'text-slate-500';
+
+  return (
+    <section className="card space-y-3">
+      <p className="label flex items-center gap-2">
+        <Store className="h-4 w-4" /> {t('settings.etsy', 'Etsy Shop')}
+      </p>
+      <p className="text-xs text-slate-400">
+        {t(
+          'settings.etsyHint',
+          'Connect your Etsy shop to push soap listings and import orders as Work Orders. Add your developer credentials now — you can connect OAuth whenever you are ready.',
+        )}
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <label className="label">{t('settings.etsyApiKey', 'API keystring')}</label>
+          <input
+            type="password"
+            className="input font-mono text-sm"
+            placeholder="your-etsy-keystring"
+            value={shop.apiKey ?? ''}
+            onChange={(e) => patchShop({ apiKey: e.target.value })}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            <a
+              href="https://www.etsy.com/developers/register"
+              target="_blank"
+              rel="noreferrer"
+              className="text-gaia-600 hover:underline"
+            >
+              {t('settings.etsyRegister', 'Register as an Etsy developer →')}
+            </a>
+          </p>
+        </div>
+        <div>
+          <label className="label">{t('settings.etsyShopId', 'Shop ID')}</label>
+          <input
+            className="input font-mono text-sm"
+            placeholder="12345678"
+            value={shop.shopId ?? ''}
+            onChange={(e) => patchShop({ shopId: e.target.value.replace(/\D/g, '') })}
+          />
+        </div>
+        <div>
+          <label className="label">{t('settings.etsyShopName', 'Shop name (display)')}</label>
+          <input
+            className="input"
+            placeholder="GaiasEssences"
+            value={shop.shopName ?? ''}
+            onChange={(e) => patchShop({ shopName: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <p className="text-[11px] text-slate-400">
+        {t('settings.etsyRedirectHint', 'OAuth redirect URI (register this in your Etsy app):')}{' '}
+        <code className="break-all rounded bg-slate-100 px-1 py-0.5">{redirectUri}</code>
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="btn-primary text-sm"
+          disabled={connecting || status === 'connected'}
+          onClick={() => void handleConnect()}
+        >
+          {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Store className="h-4 w-4" />}
+          {status === 'connected'
+            ? t('settings.etsyConnectedBtn', 'Connected')
+            : t('settings.etsyConnect', 'Connect to Etsy')}
+        </button>
+        {status === 'connected' && (
+          <button
+            type="button"
+            className="btn-secondary text-sm"
+            onClick={() => patchShop({ accessToken: undefined, refreshToken: undefined, tokenExpiresAt: undefined })}
+          >
+            {t('settings.etsyDisconnect', 'Disconnect')}
+          </button>
+        )}
+        <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+      </div>
+      {message && <p className="text-xs text-rose-600">{message}</p>}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Social media handles — used on the public site and marketing copy.
+// ---------------------------------------------------------------------------
+function SocialSection() {
+  const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+
+  return (
+    <section className="card space-y-3">
+      <p className="label flex items-center gap-2">
+        <Share2 className="h-4 w-4" /> {t('settings.social', 'Social Media')}
+      </p>
+      <p className="text-xs text-slate-400">
+        {t('settings.socialHint', 'Your Instagram and TikTok usernames — used when we build the public Gaia\'s Essences website.')}
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="label flex items-center gap-1.5">
+            <Instagram className="h-3.5 w-3.5" /> Instagram
+          </label>
+          <div className="flex">
+            <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-sm text-slate-500">@</span>
+            <input
+              className="input rounded-l-none"
+              placeholder="gaiasessences"
+              value={settings.instagramHandle ?? ''}
+              onChange={(e) =>
+                void updateSettings({ instagramHandle: e.target.value.replace(/^@/, '').trim() })
+              }
+            />
+          </div>
+        </div>
+        <div>
+          <label className="label">TikTok</label>
+          <div className="flex">
+            <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-sm text-slate-500">@</span>
+            <input
+              className="input rounded-l-none"
+              placeholder="gaiasessences"
+              value={settings.tiktokHandle ?? ''}
+              onChange={(e) =>
+                void updateSettings({ tiktokHandle: e.target.value.replace(/^@/, '').trim() })
+              }
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PWA — install hint for the browser-hosted Studio on Hostinger.
+// ---------------------------------------------------------------------------
+function PwaSection() {
+  const { t } = useTranslation();
+  const isElectron = !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+  const [deferredPrompt, setDeferredPrompt] = useState<{ prompt: () => Promise<void> } | null>(null);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    if (isElectron) return;
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as Navigator & { standalone?: boolean }).standalone;
+    setInstalled(!!standalone);
+
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as unknown as { prompt: () => Promise<void> });
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+  }, [isElectron]);
+
+  if (isElectron) return null;
+
+  return (
+    <section className="card space-y-3">
+      <p className="label flex items-center gap-2">
+        <Smartphone className="h-4 w-4" /> {t('settings.pwa', 'Install App')}
+      </p>
+      <p className="text-xs text-slate-400">
+        {t(
+          'settings.pwaHint',
+          'When hosted on gaiasessences.com, install Gaia\'s Studio on your phone or tablet like a native app. Your data stays in this browser (IndexedDB) and works offline.',
+        )}
+      </p>
+      {installed ? (
+        <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+          <CheckCircle2 className="h-4 w-4" /> {t('settings.pwaInstalled', 'App is installed')}
+        </p>
+      ) : deferredPrompt ? (
+        <button
+          type="button"
+          className="btn-secondary text-sm"
+          onClick={() => void deferredPrompt.prompt()}
+        >
+          <Smartphone className="h-4 w-4" /> {t('settings.pwaInstall', 'Install Gaia\'s Studio')}
+        </button>
+      ) : (
+        <p className="text-xs text-slate-500">
+          {t(
+            'settings.pwaManual',
+            'Tip: In Chrome or Edge, open the browser menu → "Install Gaia\'s Studio" (or "Add to Home Screen" on mobile).',
+          )}
+        </p>
       )}
     </section>
   );

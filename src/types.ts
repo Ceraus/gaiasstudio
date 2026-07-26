@@ -235,6 +235,16 @@ export interface AppSettings {
   completedTours?: string[];
   /** Tip banner ids permanently dismissed with "Got it". */
   dismissedTips?: string[];
+
+  // ── Etsy integration ─────────────────────────────────────────────────────
+  /** Etsy shop connection credentials and config. */
+  etsyShop?: EtsyShopConfig;
+
+  // ── Social media (used on public site + marketing copy) ────────────────
+  /** Instagram username without @, e.g. "gaiasessences". */
+  instagramHandle?: string;
+  /** TikTok username without @. */
+  tiktokHandle?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +443,82 @@ export interface WorkOrder {
 // ---------------------------------------------------------------------------
 // Label Sets — groups front, back, and side designs for a product line.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Etsy Integration — connects soap recipes/products to an Etsy shop.
+// ---------------------------------------------------------------------------
+
+export type EtsyListingState = 'active' | 'inactive' | 'draft' | 'expired' | 'sold_out';
+
+/** Local mirror of an Etsy listing — works offline between syncs. */
+export interface EtsyListing {
+  id: string;
+  /** Etsy's listing ID (numeric string). Set after first push. */
+  etsyListingId?: string;
+  recipeId?: string;
+  draftId?: string;
+  title: string;
+  description: string;
+  price: number;
+  quantity: number;
+  tags: string[];
+  imageUrl?: string;
+  etsyUrl?: string;
+  state: EtsyListingState;
+  lastSyncedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Etsy shop connection config, stored in AppSettings. */
+export interface EtsyShopConfig {
+  /** Etsy API keystring (OAuth2 client ID). */
+  apiKey?: string;
+  /** Etsy shared secret — required for token exchange. */
+  sharedSecret?: string;
+  /** Etsy shop ID (numeric string). */
+  shopId?: string;
+  /** Etsy shop name (display only). */
+  shopName?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenExpiresAt?: number;
+}
+
+export interface EtsySyncLog {
+  id: string;
+  direction: 'push' | 'pull';
+  entity: 'listings' | 'orders';
+  listingsCreated: number;
+  listingsUpdated: number;
+  ordersImported: number;
+  errors: string[];
+  timestamp: number;
+}
+
+/** Unified product record linking recipe, label design, and Etsy listing. */
+export interface ProductListing {
+  id: string;
+  name: string;
+  recipeId?: string;
+  draftId?: string;
+  etsyListingId?: string;
+  description?: string;
+  price?: number;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Batch/lot code for FDA traceability. */
+export interface LotCode {
+  id: string;
+  code: string;
+  recipeId: string;
+  productionDate: number;
+  linkedOrderIds?: string[];
+  createdAt: number;
+}
 
 export interface LabelSet {
   id: string;

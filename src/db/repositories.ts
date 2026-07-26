@@ -11,6 +11,7 @@ import type {
   Ingredient,
   IngredientCategory,
   LabelSet,
+  ProductListing,
   Receipt,
   ReceiptLineItem,
   Recipe,
@@ -737,6 +738,26 @@ export const workOrdersRepo = {
 };
 
 // --- Settings --------------------------------------------------------------
+
+export const productListingsRepo = {
+  all: () => db.productListings.orderBy('createdAt').reverse().toArray(),
+  get: (id: string) => db.productListings.get(id),
+  byRecipe: (recipeId: string) =>
+    db.productListings.where('recipeId').equals(recipeId).first(),
+
+  async create(input: Omit<ProductListing, 'id' | 'createdAt' | 'updatedAt'>): Promise<ProductListing> {
+    const now = Date.now();
+    const rec: ProductListing = { ...input, id: uid(), createdAt: now, updatedAt: now };
+    await db.productListings.add(rec);
+    return rec;
+  },
+
+  async update(id: string, patch: Partial<ProductListing>) {
+    await db.productListings.update(id, { ...patch, updatedAt: Date.now() });
+  },
+
+  remove: (id: string) => db.productListings.delete(id),
+};
 
 export const settingsRepo = {
   async get(): Promise<AppSettings> {

@@ -19,7 +19,10 @@ export type Screen =
   | 'sets'
   | 'drafts'
   | 'batch'
-  | 'finances';
+  | 'finances'
+  | 'shop'
+  | 'products'
+  | 'reports';
 
 const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
