@@ -28,6 +28,8 @@ export const CUSTOM_PROPS = [
   'isLegibilityOverlay',
   // Marks the single replaceable background slot in the strict layer stack.
   'isBackgroundLayer',
+  // Keeps the locked white base when context auto-layout replaces foregrounds.
+  'isBaseLayer',
 ];
 
 let configured = false;

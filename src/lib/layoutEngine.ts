@@ -46,8 +46,14 @@ function clearForLayout() {
     .getObjects()
     .slice()
     .forEach((o) => {
-      const kind = String((o as { gaiaKind?: string }).gaiaKind ?? '');
-      if (kind && !['background', 'logo'].includes(kind) && !kind.startsWith('__')) {
+      const tagged = o as { gaiaKind?: string; isBaseLayer?: boolean };
+      const kind = String(tagged.gaiaKind ?? '');
+      if (
+        kind
+        && !tagged.isBaseLayer
+        && !['background', 'logo'].includes(kind)
+        && !kind.startsWith('__')
+      ) {
         canvas.remove(o);
       }
     });

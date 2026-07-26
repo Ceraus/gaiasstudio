@@ -30,6 +30,7 @@ type Gaia = fabric.FabricObject & {
   gaiaLockAspect?: boolean;
   isLegibilityOverlay?: boolean;
   isBackgroundLayer?: boolean;
+  isBaseLayer?: boolean;
 };
 
 export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
@@ -211,6 +212,7 @@ class EditorController {
       base.gaiaKind = 'shape';
       base.name = 'Base';
       base.locked = true;
+      base.isBaseLayer = true;
       this.canvas.add(base);
 
       // Layer 2 — Background. A neutral placeholder guarantees a predictable

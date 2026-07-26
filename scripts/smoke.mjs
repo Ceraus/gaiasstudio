@@ -239,7 +239,7 @@ async function main() {
         // bleed edge. Only foreground content must fit inside the safe rect.
         const objs = e.canvas.getObjects().filter((o) => {
           const kind = String(o.gaiaKind || '');
-          return !kind.startsWith('__') && kind !== 'background';
+          return !kind.startsWith('__') && kind !== 'background' && !o.isBaseLayer;
         });
         let worst = 0;
         for (const o of objs) {

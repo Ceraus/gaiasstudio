@@ -1092,17 +1092,24 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
     setImportingSupplier(true);
     try {
       const result = await api.parseSupplierUrl(parsedUrl.toString());
-      const measurementType = result.unit === 'ml' ? 'volume' : 'weight';
+      const measurementType = getCategoryMeasurementType(ing.category);
+      // Essential/fragrance oils are costed per drop. Normalize supplier
+      // fluid-ounce sizes to ml before the 20-drops/ml conversion.
+      const normalizedSize = measurementType === 'volume' && result.unit === 'oz'
+        ? result.containerSize * 29.5735
+        : result.containerSize;
+      const normalizedUnit = measurementType === 'volume' ? 'ml' : result.unit;
       const next: CardState = {
         measurementType,
-        purchaseSize: String(result.containerSize),
-        purchaseUnit: result.unit,
+        purchaseSize: String(Number(normalizedSize.toFixed(4))),
+        purchaseUnit: normalizedUnit,
         purchasePrice: String(result.totalPrice),
       };
       setCard(next);
       await ingredientsRepo.update(ing.id, {
         ...next,
-        purchaseSize: result.containerSize,
+        purchaseSize: normalizedSize,
+        purchaseUnit: normalizedUnit,
         purchasePrice: result.totalPrice,
         manualFractionalCost: 0,
         supplierUrl: result.sourceUrl,
