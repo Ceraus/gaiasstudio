@@ -102,6 +102,15 @@ Everything stays local (IndexedDB, same as the browser app). External links (AI 
 - **Foolproof backups.** One-click full-database export and atomic restore in
   Settings, plus a silent **daily automatic backup** in the desktop app
   (newest 14 kept in `backups/` inside Gaia's Save System).
+- **Built-in walkthroughs.** A first-run guided tour plus five deeper tours
+  (design, inventory, orders, money, printing) that spotlight the real UI —
+  all replayable from the **? Help hub**, with snoozable tips on every key
+  screen, in English and Spanish.
+- **Closes the business loop.** A self-writing **shopping list** (Buy button
+  opens the saved supplier page), per-client order history with one-click
+  **repeat orders**, a **Print labels** bridge from any order to the batch
+  sheet, a **profit dashboard** (sales − spending, by month), printed **lot
+  codes** for batch traceability, and a **printer calibration page**.
 
 ## Tech stack
 

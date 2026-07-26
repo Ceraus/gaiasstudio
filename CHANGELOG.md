@@ -7,6 +7,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Guided walkthroughs + Help hub** — a first-run "Show me around" tour and
+  five deeper tours (Design a label, Inventory & pricing, Orders & receipts,
+  Money & profit, Printing like a pro) that spotlight real UI elements,
+  navigate between screens, and fall back gracefully on empty states. All
+  replayable from a new **? Help hub** in the header, fully bilingual
+  (EN/ES). Snoozable **tip banners** on key screens: ✕ hides one for the
+  session, "Got it" turns it off for good, and the hub can bring them all
+  back. The first-run welcome card now hands off to the tour.
+- **Shopping List** on Inventory — tracked ingredients that are out or
+  running low collect themselves into one card, each with a **Buy** button
+  (opens the saved supplier page) and a **Restocked** button (+1 container).
+- **Per-client history & repeat orders** — filter the Orders list by client
+  (with order count and lifetime total), and a **Repeat** button that starts
+  a new order pre-filled with the same client and items.
+- **Order → labels bridge** — a **Print labels** button on each order queues
+  the newest saved design for every ordered recipe onto the mixed batch
+  sheet, quantities pre-filled to match the order.
+- **Profit dashboard** on Finances — revenue from completed Orders minus
+  logged receipts = real profit for This Month / This Year / All Time, plus
+  a 6-month sales-vs-spending breakdown (with a note keeping material COGS
+  from being double-counted).
+- **Lot codes on printed labels** — an optional batch code (pre-filled from
+  today's date) prints in tiny type inside the bottom edge of every label
+  for cure-date traceability; handles rotated ribbon templates too.
+- **Printer calibration page** — a downloadable test PDF (1-inch square,
+  0.5-inch margin frame, inch rulers) that diagnoses the classic "labels
+  print 2 mm off" scaling problem.
 - **Full backup & restore** — Settings → Data now exports the ENTIRE
   database (every table, schema-agnostic, so future tables are included
   automatically) as one JSON file, and can restore it atomically (one
