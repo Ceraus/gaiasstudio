@@ -26,7 +26,7 @@ export default function WelcomeScreen() {
         <img
           src={logo}
           alt="Gaia's Essences"
-          className="mb-4 h-40 w-40 select-none rounded-3xl object-cover shadow-lg ring-4 ring-white sm:h-48 sm:w-48"
+          className="mb-2 h-48 w-auto select-none object-contain sm:h-56"
           draggable={false}
         />
         <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-gaia-100 px-4 py-1.5 text-sm font-medium text-gaia-700">

@@ -4,6 +4,16 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.41] - 2026-07-26
+
+### Fixed
+- **Welcome screen logo showed a black square** — the "Gaia's Essences"
+  logo asset was actually a JPEG (no alpha channel) saved with a `.png`
+  extension, so its solid black background rendered as an opaque box on
+  the homepage. Re-encoded it as a real PNG with the black background
+  chroma-keyed to transparency (soft-edged, anti-aliased) so the logo now
+  blends cleanly into the app background.
+
 ## [2.0.40] - 2026-07-26
 
 ### Fixed
