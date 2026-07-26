@@ -235,7 +235,12 @@ async function main() {
           bottom: e.trim.top + e.labelHpx - e.safePx,
         };
         const tol = 2;
-        const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
+        // Backgrounds intentionally extend through the safe zone to the trim/
+        // bleed edge. Only foreground content must fit inside the safe rect.
+        const objs = e.canvas.getObjects().filter((o) => {
+          const kind = String(o.gaiaKind || '');
+          return !kind.startsWith('__') && kind !== 'background';
+        });
         let worst = 0;
         for (const o of objs) {
           const b = o.getBoundingRect();

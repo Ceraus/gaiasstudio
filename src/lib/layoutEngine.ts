@@ -1,7 +1,7 @@
 import * as fabric from 'fabric';
 import i18next from 'i18next';
 import type { AppSettings, Ingredient, LabelContext, Recipe } from '@/types';
-import { editor } from '@/lib/fabric/editorController';
+import { applyCurveToText, editor } from '@/lib/fabric/editorController';
 import { ptToPx } from '@/lib/units';
 import { loadFont } from '@/lib/fontManager';
 
@@ -199,6 +199,24 @@ function layoutFront(
   const textWidth = circleDiameter * 0.80;
   const fontFamily = ROUND_BACK_FONT;
   const LINE_HEIGHT = 1.4;
+
+  // Product name is a dedicated curved foreground layer on round/oval labels.
+  // Keeping it separate from the body preserves editing and word wrapping.
+  const isRound = editor.template?.shape === 'circle' || editor.template?.shape === 'oval';
+  const productName = new fabric.Textbox(recipe.name || str.productName, {
+    width: textWidth,
+    fontFamily: HEADING_FONT,
+    fontSize: ptToPx(clamp((editor.template?.labelWidthIn ?? 2) * 8, 11, 22)),
+    fontWeight: 'bold',
+    fill: INK,
+    textAlign: 'center',
+    originX: 'center',
+    originY: 'center',
+    left: cx,
+    top: cy - circleRadius * 0.56,
+  });
+  if (isRound) applyCurveToText(productName, 38);
+  editor.addCustom(productName, 'text', 'Product Name');
 
   // Resolve ingredient INCI names
   const byId = new Map(ingredients.map((i) => [i.id, i]));
