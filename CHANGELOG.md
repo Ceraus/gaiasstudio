@@ -4,6 +4,17 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.42] - 2026-07-26
+
+### Added
+- **Basic password lock** — the app now opens to a simple password screen
+  (bilingual EN/ES) with the Gaia's Essences logo before showing anything
+  else. This is a lightweight local gate, not real security: the password
+  is checked in the app itself and "unlocked" only lasts for the current
+  session, so it re-prompts on every fresh launch. The headless smoke test
+  bypasses it automatically via a `?e2e=1` flag so automated checks keep
+  driving the real UI.
+
 ## [2.0.41] - 2026-07-26
 
 ### Fixed

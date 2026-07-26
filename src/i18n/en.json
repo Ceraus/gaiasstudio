@@ -3,6 +3,13 @@
     "name": "Gaia's Essences",
     "tagline": "Rosa's label studio for Gaia's Essences — beautiful labels, start to finish."
   },
+  "lock": {
+    "title": "Gaia's Essences",
+    "subtitle": "Enter your password to open the studio.",
+    "placeholder": "Password",
+    "unlock": "Unlock",
+    "wrong": "That password isn't right — try again."
+  },
   "common": {
     "back": "Back",
     "next": "Next",

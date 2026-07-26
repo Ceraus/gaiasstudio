@@ -141,7 +141,9 @@ async function main() {
     await page.setViewport({ width: 1400, height: 900 });
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(String(e)));
-    await page.goto(URL, { waitUntil: 'networkidle0' });
+    // ?e2e=1 tells the app to skip the password lock screen so the smoke test
+    // can drive the real UI (search inputs, nav tabs, draft cards, etc.).
+    await page.goto(`${URL}?e2e=1`, { waitUntil: 'networkidle0' });
 
     await page.waitForFunction(() => window.gaiaTest && typeof window.gaiaTest.templates === 'function', {
       timeout: 15000,

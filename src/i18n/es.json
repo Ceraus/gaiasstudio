@@ -3,6 +3,13 @@
     "name": "Gaia's Essences",
     "tagline": "El estudio de etiquetas de Rosa para Gaia's Essences — hermosas, de principio a fin."
   },
+  "lock": {
+    "title": "Gaia's Essences",
+    "subtitle": "Ingresa tu contraseña para abrir el estudio.",
+    "placeholder": "Contraseña",
+    "unlock": "Desbloquear",
+    "wrong": "Esa contraseña no es correcta — intenta de nuevo."
+  },
   "common": {
     "back": "Atrás",
     "next": "Siguiente",
