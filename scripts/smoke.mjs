@@ -73,6 +73,47 @@ function waitForServer(timeoutMs = 20000) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Robust async evaluation.
+//
+// Awaiting a page promise over CDP (`Runtime.callFunctionOn` + awaitPromise)
+// intermittently fails with "ProtocolError: Promise was collected" on modern
+// Chrome: under heavy canvas/GC load the pending promise is only weakly
+// retained by the inspector and gets garbage-collected before it settles.
+// Instead of awaiting across the protocol, we run the async function in the
+// page, stash its outcome on a window global (strongly retained), poll for
+// completion with cheap synchronous evaluations, then read the result.
+// ---------------------------------------------------------------------------
+let evalSeq = 0;
+async function evalAsync(page, fn, ...args) {
+  const key = `__gaiaSmoke${evalSeq++}`;
+  await page.evaluate(
+    (k, fnSrc, fnArgs) => {
+      // Reconstruct the function inside the page so closures aren't needed.
+      // eslint-disable-next-line no-eval
+      const f = (0, eval)(`(${fnSrc})`);
+      window[k] = { done: false };
+      Promise.resolve()
+        .then(() => f(...fnArgs))
+        .then(
+          (value) => { window[k] = { done: true, value }; },
+          (err) => { window[k] = { done: true, error: String((err && err.stack) || err) }; },
+        );
+    },
+    key,
+    fn.toString(),
+    args,
+  );
+  await page.waitForFunction((k) => window[k] && window[k].done, { timeout: 60000, polling: 120 }, key);
+  const outcome = await page.evaluate((k) => {
+    const r = window[k];
+    delete window[k];
+    return r;
+  }, key);
+  if (outcome.error) throw new Error(`evalAsync failed: ${outcome.error}`);
+  return outcome.value;
+}
+
 async function main() {
   const executablePath = findBrowser();
   if (!executablePath) {
@@ -91,7 +132,7 @@ async function main() {
     await waitForServer();
     browser = await puppeteer.launch({
       executablePath,
-      headless: 'new',
+      headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
     });
     const page = await browser.newPage();
@@ -128,11 +169,21 @@ async function main() {
         id,
       );
 
-    // --- A. Core editing ---------------------------------------------------
+    // --- A0. Strict 4-layer context stack -----------------------------------
     await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), anyTpl.id);
     await waitReady(anyTpl.id);
 
-    const core = await page.evaluate(async () => {
+    const stack = await page.evaluate(() =>
+      window.gaiaEditor.canvas.getObjects().map((o) => o.gaiaKind),
+    );
+    check(
+      'spawns with the strict 4-layer stack',
+      JSON.stringify(stack) === JSON.stringify(['base', 'background', 'overlay', 'text']),
+      stack.join(' → '),
+    );
+
+    // --- A. Core editing ---------------------------------------------------
+    const core = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const count = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__')).length;
       e.addText('heading', 'Hello');
@@ -170,7 +221,7 @@ async function main() {
     check('flip toggles horizontally', core.flipped);
 
     // --- B. Crop -----------------------------------------------------------
-    const crop = await page.evaluate(async () => {
+    const crop = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       const c = document.createElement('canvas');
       c.width = 200;
@@ -190,6 +241,35 @@ async function main() {
     check('crop enters crop mode', crop.inCrop === true);
     check('crop applies and exits', crop.outCrop === false);
 
+    // --- B2. Layer panel operations: drag-reorder + multi-select grouping ---
+    const layerOps = await page.evaluate(() => {
+      const e = window.gaiaEditor;
+      const objs = e.canvas.getObjects();
+      const target = objs[objs.length - 1]; // topmost object
+      const total = objs.length;
+      // Drag the topmost layer to the bottom of the panel, then back to the top.
+      e.reorderLayer(target.id, total - 1);
+      const bottomIndex = e.canvas.getObjects().indexOf(target);
+      e.reorderLayer(target.id, 0);
+      const topIndex = e.canvas.getObjects().indexOf(target);
+      // Multi-select two fresh objects via the panel API, group, ungroup.
+      e.addText('body', 'One');
+      e.addShape('circle');
+      const latest = e.canvas.getObjects().slice(-2).map((o) => o.id);
+      e.selectLayers(latest);
+      const selCount = e.canvas.getActiveObjects().length;
+      e.group();
+      const groupedType = e.canvas.getActiveObject()?.type;
+      e.ungroup();
+      const afterUngroup = e.canvas.getActiveObjects().length;
+      return { bottomIndex, topIndex, total, selCount, groupedType, afterUngroup };
+    });
+    check('layer drag-reorder to panel bottom', layerOps.bottomIndex === 0, `canvasIndex=${layerOps.bottomIndex}`);
+    check('layer drag-reorder back to panel top', layerOps.topIndex === layerOps.total - 1);
+    check('panel multi-select selects 2 objects', layerOps.selCount === 2, `selected=${layerOps.selCount}`);
+    check('grouping panel selection makes a group', layerOps.groupedType === 'group', `type=${layerOps.groupedType}`);
+    check('ungroup restores 2 objects', layerOps.afterUngroup === 2);
+
     // --- C. Curved text renders + exports ----------------------------------
     const curved = await page.evaluate(() => {
       const e = window.gaiaEditor;
@@ -207,16 +287,22 @@ async function main() {
     check('curved design exports to PNG', curved.pngOk);
 
     // --- D. Front auto-layout from a recipe (curved name on round) ---------
+    // Structural layers (base / background slot / legibility overlay) are part
+    // of the strict 4-layer stack and are not auto-layout CONTENT — exclude
+    // them so the assertions measure what the layout engine generated.
+    const STRUCTURAL = ['base', 'background', 'overlay'];
     if (round) {
       await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), round.id);
       await waitReady(round.id);
-      const front = await page.evaluate(async () => {
+      const front = await evalAsync(page, async (structural) => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('front', 5);
-        const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
+        const objs = e.canvas.getObjects().filter(
+          (o) => !String(o.gaiaKind || '').startsWith('__') && !structural.includes(o.gaiaKind),
+        );
         const curvedName = objs.some((o) => typeof o.gaiaCurve === 'number' && o.gaiaCurve !== 0);
         return { n: objs.length, curvedName };
-      });
+      }, STRUCTURAL);
       check('front auto-layout creates objects', front.n >= 2, `objects=${front.n}`);
       check('front product name is curved on round label', front.curvedName);
     }
@@ -225,7 +311,7 @@ async function main() {
     if (back) {
       await page.evaluate((id) => window.gaiaTest.startDesign(id, 'back'), back.id);
       await waitReady(back.id);
-      const backFit = await page.evaluate(async () => {
+      const backFit = await evalAsync(page, async (structural) => {
         const e = window.gaiaEditor;
         await window.gaiaTest.autoLayout('back', 25);
         const safe = {
@@ -235,7 +321,11 @@ async function main() {
           bottom: e.trim.top + e.labelHpx - e.safePx,
         };
         const tol = 2;
-        const objs = e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__'));
+        // Structural layers intentionally cover the full label (they define
+        // the base/background/overlay), so only measure generated content.
+        const objs = e.canvas.getObjects().filter(
+          (o) => !String(o.gaiaKind || '').startsWith('__') && !structural.includes(o.gaiaKind),
+        );
         let worst = 0;
         for (const o of objs) {
           const b = o.getBoundingRect();
@@ -248,7 +338,7 @@ async function main() {
           );
         }
         return { n: objs.length, overflow: worst, tol };
-      });
+      }, STRUCTURAL);
       check('back auto-layout creates objects', backFit.n >= 2, `objects=${backFit.n}`);
       check('25-ingredient back label fits safe zone', backFit.overflow <= backFit.tol, `overflow=${backFit.overflow.toFixed(2)}px`);
     }
@@ -257,7 +347,7 @@ async function main() {
     const tpl = anyTpl;
     await page.evaluate((id) => window.gaiaTest.startDesign(id, 'front'), tpl.id);
     await waitReady(tpl.id);
-    const logoAndPdf = await page.evaluate(async () => {
+    const logoAndPdf = await evalAsync(page, async () => {
       const e = window.gaiaEditor;
       // transparent PNG: a filled circle on a transparent background
       const c = document.createElement('canvas');
@@ -279,8 +369,8 @@ async function main() {
     check('transparent logo added as logo layer', logoAndPdf.hasLogo);
     check('exported label is a PNG (alpha-capable)', logoAndPdf.pngIsPng);
 
-    const pdf1 = await page.evaluate((per) => window.gaiaTest.buildPdf(per, false), tpl.perSheet);
-    const pdf3 = await page.evaluate((per) => window.gaiaTest.buildPdf(per * 3, false), tpl.perSheet);
+    const pdf1 = await evalAsync(page, (per) => window.gaiaTest.buildPdf(per, false), tpl.perSheet);
+    const pdf3 = await evalAsync(page, (per) => window.gaiaTest.buildPdf(per * 3, false), tpl.perSheet);
     check(`PDF ${tpl.perSheet} labels → 1 page`, pdf1.pages === 1, `pages=${pdf1.pages}`);
     check(`PDF ${tpl.perSheet * 3} labels → 3 pages`, pdf3.pages === 3, `pages=${pdf3.pages}`);
     check(
