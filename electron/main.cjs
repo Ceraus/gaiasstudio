@@ -27,6 +27,116 @@ let mainWindow = null;
 let aiBrowserWindow = null;
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+const MAX_SUPPLIER_PAGE_BYTES = 2 * 1024 * 1024;
+
+function assertSafeSupplierUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('Enter a valid supplier URL.');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Supplier links must use HTTPS.');
+  }
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  const blockedHost = host === 'localhost'
+    || host.endsWith('.localhost')
+    || host === '0.0.0.0'
+    || host === '::1'
+    || /^127\./.test(host)
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^169\.254\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  if (blockedHost) throw new Error('Local and private network URLs are not allowed.');
+  return parsed;
+}
+
+function decodeHtml(value) {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function parseSupplierPage(html, sourceUrl) {
+  const plainText = decodeHtml(
+    html
+      .replace(/<script\b(?![^>]*application\/ld\+json)[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' '),
+  );
+  const title = decodeHtml(
+    html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() || '',
+  );
+
+  const pricePatterns = [
+    /<meta[^>]+(?:property|itemprop)=["'](?:product:price:amount|price)["'][^>]+content=["']\$?([\d,]+(?:\.\d{1,2})?)/i,
+    /<meta[^>]+content=["']\$?([\d,]+(?:\.\d{1,2})?)["'][^>]+(?:property|itemprop)=["'](?:product:price:amount|price)["']/i,
+    /"price"\s*:\s*["']?\$?([\d,]+(?:\.\d{1,2})?)/i,
+    /(?:price|our price|sale price)\s*[:\-]?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+    /\$\s*([\d,]+(?:\.\d{1,2})?)/,
+  ];
+  const priceMatch = pricePatterns.map((pattern) => html.match(pattern)).find(Boolean);
+  const totalPrice = Number(priceMatch?.[1]?.replace(/,/g, ''));
+
+  // Prefer title/structured text because navigation commonly contains other
+  // product sizes. Supports "16 oz", "1 lb", "30 mL", and "4 fl oz".
+  const sizeText = `${title} ${plainText}`;
+  const sizeMatch = sizeText.match(
+    /\b(\d+(?:\.\d+)?)\s*(fl\.?\s*oz|fluid\s*ounces?|ounces?|oz|pounds?|lbs?|lb|millilit(?:er|re)s?|ml|grams?|g)\b/i,
+  );
+  if (!Number.isFinite(totalPrice) || totalPrice <= 0 || !sizeMatch) {
+    throw new Error('The page did not expose a clear price and container size. Use manual entry.');
+  }
+
+  const containerSize = Number(sizeMatch[1]);
+  const rawUnit = sizeMatch[2].toLowerCase().replace(/\./g, '');
+  const unit = /ml|millilit/.test(rawUnit)
+    ? 'ml'
+    : /lb|pound/.test(rawUnit)
+      ? 'lbs'
+      : /\bg\b|gram/.test(rawUnit)
+        ? 'g'
+        : 'oz';
+  return { title: title || undefined, totalPrice, containerSize, unit, sourceUrl };
+}
+
+async function fetchSupplierPage(rawUrl) {
+  let url = assertSafeSupplierUrl(rawUrl);
+  for (let redirect = 0; redirect <= 3; redirect++) {
+    const response = await fetch(url, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        'user-agent': 'Mozilla/5.0 (compatible; GaiaLabelStudio/1.0)',
+        accept: 'text/html,application/xhtml+xml',
+      },
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location || redirect === 3) throw new Error('Supplier page redirected too many times.');
+      url = assertSafeSupplierUrl(new URL(location, url).toString());
+      continue;
+    }
+    if (!response.ok) throw new Error(`Supplier page returned HTTP ${response.status}.`);
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) throw new Error('Supplier link is not an HTML product page.');
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength > MAX_SUPPLIER_PAGE_BYTES) throw new Error('Supplier page is too large to import safely.');
+    const html = await response.text();
+    if (Buffer.byteLength(html) > MAX_SUPPLIER_PAGE_BYTES) {
+      throw new Error('Supplier page is too large to import safely.');
+    }
+    return parseSupplierPage(html, url.toString());
+  }
+  throw new Error('Unable to load supplier page.');
+}
 
 function distIndex() {
   return path.join(app.getAppPath(), 'dist', 'index.html');
@@ -197,6 +307,26 @@ app.whenReady().then(() => {
       const stat = fs.statSync(fp);
       return { dataUrl, name: path.basename(fp), size: stat.size };
     });
+  });
+
+  // Smart Pantry supplier importer. Fetching in the main process avoids browser
+  // CORS limitations; the URL and response are tightly validated before the
+  // renderer receives only the extracted product fields.
+  ipcMain.handle('gaia:parse-supplier-url', (_event, { url }) => fetchSupplierPage(url));
+
+  // Save generated receipts without a native "Save As" prompt.
+  ipcMain.handle('gaia:save-work-order-receipt', async (_event, { filename, base64 }) => {
+    const safeName = path.basename(String(filename)).replace(/[^\w.-]/g, '_');
+    if (!safeName.toLowerCase().endsWith('.pdf')) throw new Error('Receipt must be a PDF.');
+    const bytes = Buffer.from(String(base64), 'base64');
+    if (bytes.length < 5 || bytes.subarray(0, 4).toString() !== '%PDF') {
+      throw new Error('Receipt data is not a valid PDF.');
+    }
+    const receiptDir = path.join(saveSystemDir, 'work_orders');
+    await fs.promises.mkdir(receiptDir, { recursive: true });
+    const outputPath = path.join(receiptDir, safeName);
+    await fs.promises.writeFile(outputPath, bytes);
+    return outputPath;
   });
 
   // Opens a dedicated BrowserWindow for AI tools (AI Studio, Gemini) that

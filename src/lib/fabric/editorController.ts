@@ -29,6 +29,7 @@ type Gaia = fabric.FabricObject & {
   gaiaCurve?: number;
   gaiaLockAspect?: boolean;
   isLegibilityOverlay?: boolean;
+  isBackgroundLayer?: boolean;
 };
 
 export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
@@ -177,7 +178,7 @@ class EditorController {
     this.cropTarget = null;
   }
 
-  /** Populates a blank canvas with the 3 default starter layers. */
+  /** Populates a blank canvas with the strict four-layer starter stack. */
   private addDefaultLayers() {
     if (!this.canvas) return;
     this.isRestoring = true;
@@ -212,20 +213,67 @@ class EditorController {
       base.locked = true;
       this.canvas.add(base);
 
-      // Layer 2 — Legibility Overlay: white rect at 30% opacity above backgrounds.
-      const overlay = new fabric.Rect({
+      // Layer 2 — Background. A neutral placeholder guarantees a predictable
+      // stack even before the user chooses a photo; setBackgroundFromUrl()
+      // replaces this object without disturbing the other layers.
+      const background = new fabric.Rect({
         left: this.trim.left,
         top: this.trim.top,
         width: this.labelWpx,
         height: this.labelHpx,
-        fill: '#ffffff',
-        opacity: 0.3,
+        fill: '#f6f3ed',
         stroke: '',
         strokeWidth: 0,
         originX: 'left',
         originY: 'top',
         ...lockedProps,
       }) as fabric.Rect & Gaia;
+      background.id = uid();
+      background.gaiaKind = 'background';
+      background.name = 'Background';
+      background.locked = true;
+      background.isBackgroundLayer = true;
+      this.canvas.add(background);
+
+      // Layer 3 — Legibility Overlay: a template-shaped 12% vector wash.
+      // Matching the die shape prevents square overlay corners on round labels.
+      const shape = this.template?.shape ?? 'rectangle';
+      let overlay: Gaia;
+      if (shape === 'circle' || shape === 'oval') {
+        overlay = new fabric.Ellipse({
+          left: this.trim.cx,
+          top: this.trim.cy,
+          rx: this.labelWpx / 2,
+          ry: this.labelHpx / 2,
+          fill: '#ffffff',
+          opacity: 0.12,
+          stroke: '',
+          strokeWidth: 0,
+          originX: 'center',
+          originY: 'center',
+          ...lockedProps,
+        }) as fabric.Ellipse & Gaia;
+      } else {
+        overlay = new fabric.Rect({
+          left: this.trim.left,
+          top: this.trim.top,
+          width: this.labelWpx,
+          height: this.labelHpx,
+          rx: shape === 'rounded-rectangle'
+            ? (this.template?.cornerRadiusIn ?? 0) * EDITOR_PPI
+            : 0,
+          ry: shape === 'rounded-rectangle'
+            ? (this.template?.cornerRadiusIn ?? 0) * EDITOR_PPI
+            : 0,
+          fill: '#ffffff',
+          opacity: 0.12,
+          stroke: '',
+          strokeWidth: 0,
+          originX: 'left',
+          originY: 'top',
+          ...lockedProps,
+        }) as fabric.Rect & Gaia;
+      }
       overlay.id = uid();
       overlay.gaiaKind = 'shape';
       overlay.name = 'Legibility Overlay';
@@ -233,7 +281,7 @@ class EditorController {
       overlay.isLegibilityOverlay = true;
       this.canvas.add(overlay);
 
-      // Layer 3 — Text / Info: centred instructional placeholder text.
+      // Layer 4 — Foreground: centred instructional placeholder text.
       const textObj = new fabric.Textbox('Your product name here', {
         width: this.labelWpx * 0.82,
         fontFamily: DEFAULT_FONT,
@@ -989,7 +1037,7 @@ class EditorController {
     useEditorStore.getState().set({ layers });
   }
 
-  selectLayer(id: string) {
+  selectLayer(id: string, additive = false) {
     const o = this.findById(id);
     if (!o || !this.canvas) return;
     // Fabric v6 refuses setActiveObject for non-selectable objects. Temporarily
@@ -998,7 +1046,20 @@ class EditorController {
     // having to unlock the layer.
     const wasSelectable = o.selectable;
     if (!wasSelectable) o.set('selectable', true);
-    this.canvas.setActiveObject(o);
+    if (additive) {
+      const selected = this.canvas.getActiveObjects();
+      const alreadySelected = selected.includes(o);
+      const next = alreadySelected
+        ? selected.filter((object) => object !== o)
+        : [...selected, o];
+      this.canvas.discardActiveObject();
+      if (next.length === 1) this.canvas.setActiveObject(next[0]);
+      else if (next.length > 1) {
+        this.canvas.setActiveObject(new fabric.ActiveSelection(next, { canvas: this.canvas }));
+      }
+    } else {
+      this.canvas.setActiveObject(o);
+    }
     if (!wasSelectable) o.set('selectable', false);
     this.canvas.requestRenderAll();
     this.syncSelection();
@@ -1051,6 +1112,18 @@ class EditorController {
     // Panel shows top layer first, so "up" == bring forward.
     if (dir === 'up') this.canvas.bringObjectForward(o);
     else this.canvas.sendObjectBackwards(o);
+    this.canvas.requestRenderAll();
+    this.onChanged();
+  }
+
+  /** Move a layer to another layer's stack position (used by panel drag/drop). */
+  reorderLayer(id: string, targetId: string) {
+    const object = this.findById(id);
+    const target = this.findById(targetId);
+    if (!object || !target || !this.canvas || object === target) return;
+    const targetIndex = this.canvas.getObjects().indexOf(target);
+    if (targetIndex < 0) return;
+    this.canvas.moveObjectTo(object, targetIndex);
     this.canvas.requestRenderAll();
     this.onChanged();
   }
@@ -1314,7 +1387,12 @@ class EditorController {
     img.gaiaKind = 'background';
     img.name = 'Background';
     img.locked = true;
+    img.isBackgroundLayer = true;
 
+    const previousBackground = this.canvas
+      .getObjects()
+      .find((object) => (object as Gaia).isBackgroundLayer);
+    if (previousBackground) this.canvas.remove(previousBackground);
     this.canvas.add(img);
     // Stack order: base (0) → background image (1) → legibility overlay (2) → text (3+)
     this.canvas.sendObjectToBack(img);  // index 0

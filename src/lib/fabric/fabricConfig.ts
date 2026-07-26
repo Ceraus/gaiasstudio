@@ -26,6 +26,8 @@ export const CUSTOM_PROPS = [
   'hasControls',
   // Marks the auto-generated legibility overlay rect so it can be found/toggled.
   'isLegibilityOverlay',
+  // Marks the single replaceable background slot in the strict layer stack.
+  'isBackgroundLayer',
 ];
 
 let configured = false;

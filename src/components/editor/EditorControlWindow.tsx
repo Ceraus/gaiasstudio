@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { History, Layers, SlidersHorizontal } from 'lucide-react';
+import { History, Layers, SlidersHorizontal, TextCursorInput } from 'lucide-react';
 import FloatingPanel from './FloatingPanel';
 import PropertiesPanel from './PropertiesPanel';
 import LayersPanel from './LayersPanel';
 import HistoryPanel from './HistoryPanel';
+import QuickTextPanel from './QuickTextPanel';
 
-type Tab = 'properties' | 'layers' | 'history';
+type Tab = 'properties' | 'layers' | 'quickText' | 'history';
 
 export default function EditorControlWindow() {
   const { t } = useTranslation();
@@ -15,6 +16,7 @@ export default function EditorControlWindow() {
   const tabs: { id: Tab; label: string; icon: typeof Layers }[] = [
     { id: 'properties', label: t('panels.properties'), icon: SlidersHorizontal },
     { id: 'layers', label: t('panels.layers'), icon: Layers },
+    { id: 'quickText', label: t('panels.quickText'), icon: TextCursorInput },
     { id: 'history', label: t('panels.history'), icon: History },
   ];
 
@@ -29,7 +31,7 @@ export default function EditorControlWindow() {
         </span>
       }
     >
-      <div className="grid grid-cols-3 gap-1 border-b border-slate-100 p-1.5">
+      <div className="grid grid-cols-4 gap-1 border-b border-slate-100 p-1.5">
         {tabs.map((tb) => {
           const Icon = tb.icon;
           return (
@@ -50,6 +52,7 @@ export default function EditorControlWindow() {
       </div>
       {tab === 'properties' && <PropertiesPanel />}
       {tab === 'layers' && <LayersPanel />}
+      {tab === 'quickText' && <QuickTextPanel />}
       {tab === 'history' && <HistoryPanel />}
     </FloatingPanel>
   );

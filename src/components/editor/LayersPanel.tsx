@@ -5,6 +5,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  GripVertical,
   Image as ImageIcon,
   Lock,
   Shapes,
@@ -29,6 +30,8 @@ export default function LayersPanel() {
   const activeIds = useEditorStore((s) => s.activeIds);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   if (layers.length === 0) {
     return <p className="p-4 text-center text-xs text-slate-400">{t('layers.empty')}</p>;
@@ -42,11 +45,47 @@ export default function LayersPanel() {
         return (
           <li
             key={layer.id}
-            className={`flex items-center gap-1.5 px-2 py-1.5 ${active ? 'bg-gaia-50' : 'hover:bg-slate-50'}`}
+            draggable={editingId !== layer.id}
+            onDragStart={(event) => {
+              setDraggedId(layer.id);
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', layer.id);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setDropTargetId(layer.id);
+            }}
+            onDragLeave={() => {
+              if (dropTargetId === layer.id) setDropTargetId(null);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const sourceId = draggedId ?? event.dataTransfer.getData('text/plain');
+              if (sourceId && sourceId !== layer.id) editor.reorderLayer(sourceId, layer.id);
+              setDraggedId(null);
+              setDropTargetId(null);
+            }}
+            onDragEnd={() => {
+              setDraggedId(null);
+              setDropTargetId(null);
+            }}
+            className={`flex items-center gap-1.5 border-y border-transparent px-2 py-1.5 ${
+              dropTargetId === layer.id
+                ? 'border-gaia-400 bg-gaia-100'
+                : active
+                  ? 'bg-gaia-50'
+                  : 'hover:bg-slate-50'
+            } ${draggedId === layer.id ? 'opacity-50' : ''}`}
           >
+            <GripVertical
+              className="h-4 w-4 shrink-0 cursor-grab text-slate-300"
+              aria-hidden="true"
+            />
             <button
               className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              onClick={() => editor.selectLayer(layer.id)}
+              onClick={(event) =>
+                editor.selectLayer(layer.id, event.metaKey || event.ctrlKey || event.shiftKey)}
             >
               <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-gaia-600' : 'text-slate-400'}`} />
               {editingId === layer.id ? (

@@ -68,6 +68,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Parse product price and container size from a public HTTPS supplier page.
+   * Network validation and HTML parsing happen in the isolated main process.
+   * @param {string} url
+   */
+  parseSupplierUrl(url) {
+    return ipcRenderer.invoke('gaia:parse-supplier-url', { url });
+  },
+
+  /** Save a generated work-order receipt to the portable work_orders folder. */
+  saveWorkOrderReceipt(filename, base64) {
+    return ipcRenderer.invoke('gaia:save-work-order-receipt', { filename, base64 });
+  },
+
+  /**
    * Register a callback for PDFs that were successfully saved to the exports
    * folder by the download interceptor.
    * @param {function({ filename: string }): void} cb

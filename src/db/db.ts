@@ -2,12 +2,15 @@ import Dexie, { type Table } from 'dexie';
 import type {
   AppSettings,
   AssetRecord,
+  Client,
   DesignVersion,
   Draft,
   Ingredient,
   LabelSet,
   Recipe,
   SetPurchase,
+  WorkOrder,
+  WorkOrderItem,
 } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -31,6 +34,9 @@ export class GaiaDatabase extends Dexie {
   labelSets!: Table<LabelSet, string>;
   drafts!: Table<Draft, string>;
   setPurchases!: Table<SetPurchase, string>;
+  clients!: Table<Client, string>;
+  workOrders!: Table<WorkOrder, string>;
+  workOrderItems!: Table<WorkOrderItem, string>;
 
   constructor() {
     super('gaia-label-studio');
@@ -98,6 +104,18 @@ export class GaiaDatabase extends Dexie {
     // (e.g., YumCraft 20-color dye set, Smalltongue 36-color mica set).
     this.version(8).stores({
       setPurchases: 'id, name, createdAt',
+    });
+
+    // Version 9 — Smart Pantry stock tracking and client work orders.
+    //
+    // `workOrderItems` deliberately stores recipe/name/price snapshots rather
+    // than relying on joins at receipt time. This keeps completed receipts
+    // historically accurate if a recipe or client is later edited.
+    this.version(9).stores({
+      ingredients: 'id, name, isSoapBase, active, createdAt, fractionalCost, category',
+      clients: 'id, name, createdAt, updatedAt',
+      workOrders: 'id, clientId, status, orderDate, createdAt, updatedAt',
+      workOrderItems: 'id, workOrderId, recipeId, createdAt',
     });
   }
 }

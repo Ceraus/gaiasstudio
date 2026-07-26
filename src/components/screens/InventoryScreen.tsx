@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown, ChevronUp, Database, DollarSign, Loader2,
-  Package, PackageCheck, Plus, ShoppingBag, Trash2, X,
+  ChevronDown, ChevronRight, ChevronUp, Database, DollarSign, Link, Loader2,
+  Package, PackageCheck, Plus, ShoppingBag, Sparkles, Trash2, X,
 } from 'lucide-react';
 import type { Ingredient, IngredientCategory, Recipe, SetPurchase } from '@/types';
 import {
@@ -56,6 +56,43 @@ const QUICK_SETS: QuickSet[] = [
 // Category-based defaults
 // ---------------------------------------------------------------------------
 const VOLUME_CATEGORIES = new Set<IngredientCategory>(['essential-oil', 'fragrance']);
+
+interface PantryCategory {
+  id: string;
+  label: string;
+  description: string;
+  categories: IngredientCategory[];
+}
+
+const PANTRY_CATEGORIES: PantryCategory[] = [
+  {
+    id: 'colorants',
+    label: 'Colorants',
+    description: 'Micas, dyes, clays, and pigments',
+    categories: ['colorant', 'clay'],
+  },
+  {
+    id: 'essential-oils',
+    label: 'Essential Oils & Fragrance',
+    description: 'Priced per drop',
+    categories: ['essential-oil', 'fragrance'],
+  },
+  {
+    id: 'carrier-oils',
+    label: 'Carrier Oils & Butters',
+    description: 'Oils, butters, and waxes',
+    categories: ['oil', 'butter', 'wax'],
+  },
+  {
+    id: 'botanicals',
+    label: 'Botanicals & Additives',
+    description: 'Bases, herbs, exfoliants, milks, seeds, and spices',
+    categories: [
+      'botanical', 'floral', 'citrus', 'exfoliant', 'base',
+      'additive', 'milk', 'seed', 'spice', 'other',
+    ],
+  },
+];
 
 function getCategoryMeasurementType(category?: IngredientCategory): 'weight' | 'volume' {
   return category && VOLUME_CATEGORIES.has(category) ? 'volume' : 'weight';
@@ -120,22 +157,23 @@ export default function InventoryScreen() {
   const { t } = useTranslation();
   const activeRecipeId = useAppStore((s) => s.activeRecipeId);
 
-  const [activeIngredients, setActiveIngredients] = useState<Ingredient[]>([]);
   const [allIngredients, setAllIngredients] = useState<Ingredient[]>([]);
+  const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
   const [activeRecipe, setActiveRecipe] = useState<Recipe | null>(null);
   const [setPurchases, setSetPurchases] = useState<SetPurchase[]>([]);
+  const [inUseOnly, setInUseOnly] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const [seedDone, setSeedDone] = useState(false);
 
   const reload = async () => {
-    const [all, active, sets] = await Promise.all([
+    const [all, sets, recipes] = await Promise.all([
       ingredientsRepo.all(),
-      ingredientsRepo.active(),
       setPurchasesRepo.all(),
+      recipesRepo.all(),
     ]);
     setAllIngredients(all);
-    setActiveIngredients(active);
     setSetPurchases(sets);
+    setAllRecipes(recipes);
   };
 
   const reloadRecipe = async () => {
@@ -152,9 +190,28 @@ export default function InventoryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRecipeId]);
 
+  const ingredientsInUse = useMemo(
+    () => new Set(allRecipes.flatMap((recipe) => recipe.ingredientIds)),
+    [allRecipes],
+  );
+
+  const visibleIngredients = useMemo(
+    () => allIngredients.filter((ingredient) => !inUseOnly || ingredientsInUse.has(ingredient.id)),
+    [allIngredients, inUseOnly, ingredientsInUse],
+  );
+
+  const categorizedIngredients = useMemo(
+    () => PANTRY_CATEGORIES.map((group) => ({
+      ...group,
+      ingredients: visibleIngredients.filter((ingredient) =>
+        group.categories.includes(ingredient.category ?? 'other')),
+    })),
+    [visibleIngredients],
+  );
+
   const pricedCount = useMemo(
-    () => activeIngredients.filter((i) => i.fractionalCost !== undefined).length,
-    [activeIngredients],
+    () => visibleIngredients.filter((i) => i.fractionalCost !== undefined).length,
+    [visibleIngredients],
   );
 
   // Recipe material cost summary with per-ingredient breakdown
@@ -228,20 +285,47 @@ export default function InventoryScreen() {
             </button>
           </div>
 
+          {/* In-use filter: enabled by default to keep a large pantry calm. */}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-gaia-200">
+            <div>
+              <p className="text-sm font-semibold text-gaia-900">
+                {t('inventory.inUseOnly', 'In-use ingredients only')}
+              </p>
+              <p className="text-xs text-slate-500">
+                {t('inventory.inUseOnlyHint', 'Show only ingredients assigned to a saved recipe.')}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={inUseOnly}
+              onClick={() => setInUseOnly((value) => !value)}
+              className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                inUseOnly ? 'bg-gaia-600' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  inUseOnly ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
           {/* Stats */}
-          {activeIngredients.length > 0 && (
+          {visibleIngredients.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-3">
               <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
                 <Package className="h-4 w-4 text-slate-400" />
-                <span className="font-semibold">{activeIngredients.length}</span>
-                <span className="text-slate-400">{t('inventory.activeIngredients', 'active ingredients')}</span>
+                <span className="font-semibold">{visibleIngredients.length}</span>
+                <span className="text-slate-400">{t('inventory.shownIngredients', 'ingredients shown')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-gaia-600 px-4 py-2 text-sm text-white">
                 <span className="font-semibold">{pricedCount}</span>
                 <span className="opacity-80">{t('inventory.priced', 'priced')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
-                <span className="font-semibold">{activeIngredients.length - pricedCount}</span>
+                <span className="font-semibold">{visibleIngredients.length - pricedCount}</span>
                 <span className="opacity-80">{t('inventory.unpriced', 'missing prices')}</span>
               </div>
               {activeRecipe && (
@@ -263,14 +347,18 @@ export default function InventoryScreen() {
           </div>
 
           {/* Empty state */}
-          {activeIngredients.length === 0 ? (
+          {visibleIngredients.length === 0 ? (
             <div className="mt-8 rounded-2xl border-2 border-dashed border-gaia-200 bg-white py-12 text-center">
               <Package className="mx-auto mb-3 h-10 w-10 text-gaia-300" />
               <p className="font-medium text-slate-600">
-                {t('inventory.noActive', 'No active ingredients yet.')}
+                {inUseOnly
+                  ? t('inventory.noIngredientsInUse', 'No ingredients are assigned to a recipe yet.')
+                  : t('inventory.noActive', 'No ingredients yet.')}
               </p>
               <p className="mt-1 text-sm text-slate-400">
-                {t('inventory.noActiveHint', 'Go to Ingredients to activate some.')}
+                {inUseOnly
+                  ? t('inventory.noIngredientsInUseHint', 'Turn off the filter or add ingredients to a recipe.')
+                  : t('inventory.noActiveHint', 'Go to Ingredients to add your pantry items.')}
               </p>
             </div>
           ) : (
@@ -292,16 +380,18 @@ export default function InventoryScreen() {
                 </div>
               </div>
 
-              <div className="space-y-3">
-                {activeIngredients.map((ing) => (
-                  <PricingCard
-                    key={ing.id}
-                    ing={ing}
-                    recipe={activeRecipe}
-                    onSaved={reload}
-                    onRecipeUpdated={reloadRecipe}
-                  />
-                ))}
+              <div className="space-y-4">
+                {categorizedIngredients
+                  .filter((group) => group.ingredients.length > 0)
+                  .map((group) => (
+                    <PantryAccordion
+                      key={group.id}
+                      group={group}
+                      recipe={activeRecipe}
+                      onSaved={reload}
+                      onRecipeUpdated={reloadRecipe}
+                    />
+                  ))}
               </div>
             </>
           )}
@@ -312,7 +402,7 @@ export default function InventoryScreen() {
           )}
 
           {/* Footer hint */}
-          {activeIngredients.length > 0 && (
+          {visibleIngredients.length > 0 && (
             <p className="mt-6 text-xs text-slate-400">
               {t('inventory.legend', 'Weight → cost per gram. Volume (EOs) → cost per drop (1 ml = 20 drops). Click a field to edit; press Enter or click away to save.')}
             </p>
@@ -321,6 +411,129 @@ export default function InventoryScreen() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Categorized Smart Pantry accordion + category-wide Quick Set pricing
+// ---------------------------------------------------------------------------
+
+interface PantryAccordionProps {
+  group: PantryCategory & { ingredients: Ingredient[] };
+  recipe: Recipe | null;
+  onSaved: () => void;
+  onRecipeUpdated: () => void;
+}
+
+function PantryAccordion({
+  group,
+  recipe,
+  onSaved,
+  onRecipeUpdated,
+}: PantryAccordionProps) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(true);
+  const [showQuickSet, setShowQuickSet] = useState(false);
+  const [baseline, setBaseline] = useState('');
+  const [saving, setSaving] = useState(false);
+  const missing = group.ingredients.filter((ingredient) => ingredient.fractionalCost === undefined);
+
+  const applyBaseline = async () => {
+    const value = Number(baseline);
+    if (!Number.isFinite(value) || value <= 0 || missing.length === 0) return;
+    setSaving(true);
+    try {
+      await ingredientsRepo.applyQuickPrice(missing.map((ingredient) => ingredient.id), value);
+      setBaseline('');
+      setShowQuickSet(false);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-2 bg-slate-50 px-4 py-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open
+            ? <ChevronDown className="h-4 w-4 shrink-0 text-gaia-600" />
+            : <ChevronRight className="h-4 w-4 shrink-0 text-gaia-600" />}
+          <span className="min-w-0">
+            <span className="block font-semibold text-slate-800">{group.label}</span>
+            <span className="block text-xs text-slate-500">{group.description}</span>
+          </span>
+          <span className="ml-auto shrink-0 text-xs text-slate-400">
+            {group.ingredients.length} · {missing.length} {t('inventory.missing', 'missing')}
+          </span>
+        </button>
+        <button
+          type="button"
+          disabled={missing.length === 0}
+          className="btn-secondary shrink-0 px-3 py-1.5 text-xs"
+          onClick={() => setShowQuickSet((value) => !value)}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          {t('inventory.quickSet', 'Quick Set')}
+        </button>
+      </div>
+
+      {showQuickSet && (
+        <div className="flex flex-wrap items-end gap-3 border-t border-slate-100 bg-gaia-50 px-4 py-3">
+          <div className="min-w-[190px] flex-1">
+            <label className="mb-1 block text-xs font-medium text-gaia-800">
+              {group.id === 'essential-oils'
+                ? t('inventory.baselinePerDrop', 'Baseline cost per drop')
+                : t('inventory.baselinePerGram', 'Baseline cost per gram')}
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+              <input
+                autoFocus
+                type="number"
+                min={0.0001}
+                step={0.0001}
+                className="input pl-7"
+                placeholder="0.0500"
+                value={baseline}
+                onChange={(event) => setBaseline(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void applyBaseline();
+                }}
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={saving || Number(baseline) <= 0}
+            onClick={() => void applyBaseline()}
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {t('inventory.applyToMissing', 'Apply to {{count}} missing', { count: missing.length })}
+          </button>
+        </div>
+      )}
+
+      {open && (
+        <div className="space-y-3 p-3">
+          {group.ingredients.map((ingredient) => (
+            <PricingCard
+              key={ingredient.id}
+              ing={ingredient}
+              recipe={recipe}
+              onSaved={onSaved}
+              onRecipeUpdated={onRecipeUpdated}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -773,10 +986,24 @@ interface PricingCardProps {
   onRecipeUpdated: () => void;
 }
 
+interface SupplierParseResult {
+  title?: string;
+  totalPrice: number;
+  containerSize: number;
+  unit: 'oz' | 'lbs' | 'ml' | 'g';
+  sourceUrl: string;
+}
+
 function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps) {
   const { t } = useTranslation();
   const [card, setCard] = useState<CardState>(() => ingToCard(ing));
   const [saving, setSaving] = useState(false);
+  const [supplierUrl, setSupplierUrl] = useState(ing.supplierUrl ?? '');
+  const [importingSupplier, setImportingSupplier] = useState(false);
+  const [supplierMessage, setSupplierMessage] = useState<string | null>(null);
+  const [stockInput, setStockInput] = useState(
+    ing.stockQuantity !== undefined ? String(ing.stockQuantity) : '',
+  );
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cardRef = useRef(card);
@@ -790,14 +1017,24 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
 
   useEffect(() => {
     setCard(ingToCard(ing));
-  }, [ing.purchaseSize, ing.purchaseUnit, ing.purchasePrice, ing.category]);
+    setSupplierUrl(ing.supplierUrl ?? '');
+    setStockInput(ing.stockQuantity !== undefined ? String(ing.stockQuantity) : '');
+  }, [
+    ing.purchaseSize,
+    ing.purchaseUnit,
+    ing.purchasePrice,
+    ing.category,
+    ing.supplierUrl,
+    ing.stockQuantity,
+  ]);
 
   const computedCost = useMemo(() => calculateFractionalCost({
     measurementType: card.measurementType,
     purchaseSize:    parseFloat(card.purchaseSize)  || undefined,
     purchaseUnit:    card.purchaseUnit,
     purchasePrice:   parseFloat(card.purchasePrice) || undefined,
-  }), [card]);
+    manualFractionalCost: ing.manualFractionalCost,
+  }), [card, ing.manualFractionalCost]);
 
   const mathHint = useMemo(() => {
     const size  = parseFloat(card.purchaseSize);
@@ -816,6 +1053,8 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
         purchaseSize:    parseFloat(c.purchaseSize)  || undefined,
         purchaseUnit:    c.purchaseUnit,
         purchasePrice:   parseFloat(c.purchasePrice) || undefined,
+        manualFractionalCost: 0,
+        pricingSource: 'manual',
       });
       onSaved();
       setSaving(false);
@@ -824,6 +1063,70 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') (e.target as HTMLElement).blur();
+  };
+
+  const importSupplierUrl = async () => {
+    setSupplierMessage(null);
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(supplierUrl);
+      if (parsedUrl.protocol !== 'https:') throw new Error();
+    } catch {
+      setSupplierMessage(t('inventory.validHttpsUrl', 'Enter a valid HTTPS supplier link.'));
+      return;
+    }
+
+    const api = (window as unknown as {
+      electronAPI?: {
+        parseSupplierUrl?: (url: string) => Promise<SupplierParseResult>;
+      };
+    }).electronAPI;
+    if (!api?.parseSupplierUrl) {
+      setSupplierMessage(t(
+        'inventory.supplierDesktopOnly',
+        'Automatic import is available in the desktop app. Use the manual fields below in a browser.',
+      ));
+      return;
+    }
+
+    setImportingSupplier(true);
+    try {
+      const result = await api.parseSupplierUrl(parsedUrl.toString());
+      const measurementType = result.unit === 'ml' ? 'volume' : 'weight';
+      const next: CardState = {
+        measurementType,
+        purchaseSize: String(result.containerSize),
+        purchaseUnit: result.unit,
+        purchasePrice: String(result.totalPrice),
+      };
+      setCard(next);
+      await ingredientsRepo.update(ing.id, {
+        ...next,
+        purchaseSize: result.containerSize,
+        purchasePrice: result.totalPrice,
+        manualFractionalCost: 0,
+        supplierUrl: result.sourceUrl,
+        pricingSource: 'supplier',
+      });
+      setSupplierMessage(t('inventory.supplierImported', 'Price and container size imported.'));
+      await onSaved();
+    } catch (error) {
+      setSupplierMessage(
+        error instanceof Error
+          ? error.message
+          : t('inventory.supplierImportFailed', 'Could not read this page. Use manual entry below.'),
+      );
+    } finally {
+      setImportingSupplier(false);
+    }
+  };
+
+  const saveStock = async () => {
+    const value = Number(stockInput);
+    await ingredientsRepo.update(ing.id, {
+      stockQuantity: Number.isFinite(value) ? value : undefined,
+    });
+    await onSaved();
   };
 
   const shortcuts = card.measurementType === 'volume' ? VOLUME_SHORTCUTS : WEIGHT_SHORTCUTS;
@@ -910,6 +1213,42 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
         )}
       </div>
 
+      {/* Supplier importer. Electron fetches the page outside browser CORS and
+          returns only validated price/size data; manual fields remain below. */}
+      <div className="mb-4 rounded-xl bg-gaia-50 p-3 ring-1 ring-gaia-100">
+        <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-gaia-800">
+          <Link className="h-3.5 w-3.5" />
+          {t('inventory.supplierLink', 'Paste supplier link to auto-fill pricing')}
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            inputMode="url"
+            className="input min-w-0 flex-1 text-sm"
+            placeholder="https://supplier.com/product"
+            value={supplierUrl}
+            onChange={(event) => setSupplierUrl(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void importSupplierUrl();
+            }}
+          />
+          <button
+            type="button"
+            className="btn-primary shrink-0 px-3"
+            disabled={!supplierUrl.trim() || importingSupplier}
+            onClick={() => void importSupplierUrl()}
+          >
+            {importingSupplier
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <Sparkles className="h-4 w-4" />}
+            <span className="hidden sm:inline">{t('inventory.autoFill', 'Auto-fill')}</span>
+          </button>
+        </div>
+        {supplierMessage && (
+          <p role="status" className="mt-2 text-xs text-slate-600">{supplierMessage}</p>
+        )}
+      </div>
+
       {/* Two-field entry row */}
       <div className="grid grid-cols-2 gap-3">
 
@@ -983,6 +1322,24 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
           </div>
         </div>
 
+      </div>
+
+      <div className="mt-3 max-w-xs">
+        <label className="mb-1 block text-xs font-medium text-slate-500">
+          {t('inventory.onHand', 'On hand')} ({card.measurementType === 'volume'
+            ? t('inventory.drops', 'drops')
+            : 'g'})
+        </label>
+        <input
+          type="number"
+          step={card.measurementType === 'volume' ? 1 : 0.1}
+          className="input text-sm"
+          placeholder={t('inventory.onHandPlaceholder', 'Optional stock amount')}
+          value={stockInput}
+          onChange={(event) => setStockInput(event.target.value)}
+          onBlur={() => void saveStock()}
+          onKeyDown={handleKeyDown}
+        />
       </div>
 
       {/* Math breakdown hint */}

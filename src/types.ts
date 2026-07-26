@@ -98,6 +98,17 @@ export interface Ingredient {
    * Weight mode: cost per gram. Volume mode: cost per drop.
    */
   fractionalCost?: number;
+  /** Direct per-gram/per-drop baseline used by category Quick Sets. */
+  manualFractionalCost?: number;
+  /** Last supplier page used to populate purchase pricing. */
+  supplierUrl?: string;
+  /** How the current fractional price was entered. */
+  pricingSource?: 'manual' | 'supplier' | 'quick-set';
+  /**
+   * Quantity currently on hand in the ingredient's base unit:
+   * grams for weight ingredients, drops for volume ingredients.
+   */
+  stockQuantity?: number;
 
   createdAt: number;
   updatedAt: number;
@@ -226,6 +237,48 @@ export interface SetPurchase {
   /** Auto-calculated: totalPrice / itemCount */
   pricePerItem: number;
   assignedIngredientIds: string[];
+  createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Client work orders — sales tracking and immutable receipt snapshots.
+// ---------------------------------------------------------------------------
+
+export interface Client {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type WorkOrderStatus = 'draft' | 'completed' | 'cancelled';
+
+export interface WorkOrder {
+  id: string;
+  clientId: string;
+  /** Snapshot retained so historical receipts survive client edits. */
+  clientName: string;
+  status: WorkOrderStatus;
+  orderDate: number;
+  completedAt?: number;
+  notes?: string;
+  subtotal: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WorkOrderItem {
+  id: string;
+  workOrderId: string;
+  recipeId: string;
+  /** Snapshots retained so receipts never change when a recipe is renamed. */
+  recipeName: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
   createdAt: number;
 }
 

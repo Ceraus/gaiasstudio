@@ -4,7 +4,7 @@ import EditorHeader from '@/components/editor/EditorHeader';
 import Toolbar from '@/components/editor/Toolbar';
 import LeftRail from '@/components/editor/LeftRail';
 import CanvasStage from '@/components/editor/CanvasStage';
-import RightPanel from '@/components/editor/RightPanel';
+import EditorControlWindow from '@/components/editor/EditorControlWindow';
 
 export default function EditorScreen() {
   const template       = useAppStore((s) => s.template);
@@ -65,7 +65,7 @@ export default function EditorScreen() {
       <div className="relative flex min-h-0 flex-1">
         <LeftRail />
         <CanvasStage />
-        <RightPanel />
+        <EditorControlWindow />
       </div>
       {toastMsg && (
         <div
