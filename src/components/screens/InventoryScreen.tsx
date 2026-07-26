@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, ChevronDown, ChevronUp, Database, DollarSign, Loader2,
-  MinusCircle, Package, PackageCheck, Pin, Plus, ShoppingBag, Sparkles, Trash2, X,
+  AlertTriangle, Check, ChevronDown, ChevronUp, Database, DollarSign,
+  Link as LinkIcon, Loader2, MinusCircle, Package, PackageCheck, PackagePlus,
+  Pin, Plus, ShoppingBag, Sparkles, Trash2, X,
 } from 'lucide-react';
 import type { CustomMaterial, Ingredient, IngredientCategory, MaterialCategory, Recipe, SetPurchase } from '@/types';
 import { customMaterialsRepo, ingredientsRepo, recipesRepo, setPurchasesRepo } from '@/db/repositories';
 import {
+  baseUnitOf,
   calculateFractionalCost,
+  containerBaseUnits,
   DROPS_PER_ML,
   fractionalCostLabel,
   isVolumeIngredient,
 } from '@/lib/inventoryMath';
+import { importFromSupplierUrl, type SupplierParseResult } from '@/lib/supplierImport';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
 import { getCategoryLabel, getIngredientDisplayName } from '@/lib/ingredientI18n';
 import Modal from '@/components/common/Modal';
@@ -283,6 +287,12 @@ function InventoryGridItem({ ing, onEdit }: { ing: Ingredient; onEdit: () => voi
   const displayName = getIngredientDisplayName(ing.name, t);
   const catLabel = getCategoryLabel(ing.category ?? 'other', t);
 
+  // Stock chip — only for tracked ingredients (stockOnHand set).
+  const tracked = ing.stockOnHand !== undefined;
+  const container = containerBaseUnits(ing);
+  const out = tracked && (ing.stockOnHand ?? 0) <= 0;
+  const low = tracked && !out && container !== null && (ing.stockOnHand ?? 0) < container * 0.2;
+
   return (
     <button
       type="button"
@@ -316,6 +326,24 @@ function InventoryGridItem({ ing, onEdit }: { ing: Ingredient; onEdit: () => voi
           <p className="text-sm font-medium text-amber-600">{t('inventory.tapToPrice', 'Tap to add price')}</p>
         )}
       </div>
+      {tracked && (
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-400">
+          {t('inventory.onHand', '{{n}} {{unit}} on hand', {
+            n: Math.round((ing.stockOnHand ?? 0) * 10) / 10,
+            unit: baseUnitOf(ing),
+          })}
+          {out && (
+            <span className="rounded-full bg-rose-50 px-1.5 py-0.5 font-semibold text-rose-700 ring-1 ring-rose-200">
+              {t('inventory.outOfStock', 'out of stock')}
+            </span>
+          )}
+          {low && (
+            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700 ring-1 ring-amber-200">
+              {t('inventory.lowStock', 'running low')}
+            </span>
+          )}
+        </p>
+      )}
     </button>
   );
 }
@@ -534,6 +562,7 @@ function PriceEditModal({
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
   const measurementType = ing.measurementType ?? getCategoryMeasurementType(ing.category);
   const [form, setForm] = useState<PriceForm>({
     purchasePrice: ing.purchasePrice !== undefined ? String(ing.purchasePrice) : '',
@@ -541,7 +570,14 @@ function PriceEditModal({
     purchaseUnit: ing.purchaseUnit ?? getCategoryDefaultUnit(ing.category),
     measurementType,
   });
+  const [stock, setStock] = useState(ing.stockOnHand !== undefined ? String(ing.stockOnHand) : '');
   const [saving, setSaving] = useState(false);
+
+  // ── Supplier-link importer state ─────────────────────────────────────────
+  const [supplierUrl, setSupplierUrl] = useState(ing.supplierUrl ?? '');
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [found, setFound] = useState<SupplierParseResult | null>(null);
 
   const computedCost = useMemo(
     () =>
@@ -557,14 +593,44 @@ function PriceEditModal({
   const unitOptions: PriceForm['purchaseUnit'][] =
     form.measurementType === 'volume' ? ['ml'] : ['oz', 'lbs', 'g'];
 
+  const runImport = async () => {
+    const url = supplierUrl.trim();
+    if (!url) return;
+    setImportBusy(true);
+    setImportError(null);
+    setFound(null);
+    try {
+      setFound(await importFromSupplierUrl(url, settings));
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  /** Copies the detected values into the form — the user still confirms with Save. */
+  const applyFound = () => {
+    if (!found) return;
+    setForm((f) => ({
+      measurementType: found.unit ? (found.unit === 'ml' ? 'volume' : 'weight') : f.measurementType,
+      purchasePrice: found.price !== undefined ? String(found.price) : f.purchasePrice,
+      purchaseSize: found.size !== undefined ? String(found.size) : f.purchaseSize,
+      purchaseUnit: found.unit ?? f.purchaseUnit,
+    }));
+    setFound(null);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
+      const stockVal = parseFloat(stock);
       await ingredientsRepo.update(ing.id, {
         measurementType: form.measurementType,
         purchasePrice: parseFloat(form.purchasePrice) || undefined,
         purchaseSize: parseFloat(form.purchaseSize) || undefined,
         purchaseUnit: form.purchaseUnit,
+        supplierUrl: supplierUrl.trim() || undefined,
+        stockOnHand: !isNaN(stockVal) && stockVal >= 0 ? stockVal : undefined,
       });
       onSaved();
     } finally {
@@ -574,12 +640,43 @@ function PriceEditModal({
 
   const costLabel = fractionalCostLabel({ measurementType: form.measurementType, category: ing.category });
   const displayName = getIngredientDisplayName(ing.name, t);
+  const stockUnit = baseUnitOf({ measurementType: form.measurementType, category: ing.category });
+  const container = containerBaseUnits({
+    measurementType: form.measurementType,
+    category: ing.category,
+    purchaseSize: parseFloat(form.purchaseSize) || undefined,
+    purchaseUnit: form.purchaseUnit,
+  });
+
+  const addContainerToStock = () => {
+    if (container === null) return;
+    const current = parseFloat(stock) || 0;
+    setStock(String(Math.round((current + container) * 10) / 10));
+  };
+
+  /** Preview of the fractional cost the detected values would produce. */
+  const foundPreview = useMemo(() => {
+    if (!found?.price || !found.size || !found.unit) return undefined;
+    return calculateFractionalCost({
+      measurementType: found.unit === 'ml' ? 'volume' : 'weight',
+      purchaseSize: found.size,
+      purchaseUnit: found.unit,
+      purchasePrice: found.price,
+    });
+  }, [found]);
+
+  const sourceLabel = (r: SupplierParseResult) =>
+    r.source === 'local-ai'
+      ? t('inventory.foundByLocalAi', 'Built-in AI read the page:')
+      : r.source === 'gemini'
+        ? t('inventory.foundByGemini', 'Gemini found on the page:')
+        : t('inventory.foundOnPage', 'Found on the page:');
 
   return (
     <Modal
       open
       onClose={onClose}
-      width={420}
+      width={440}
       title={displayName}
       footer={
         <div className="flex justify-end gap-2">
@@ -592,6 +689,76 @@ function PriceEditModal({
       }
     >
       <div className="space-y-4">
+        {/* ── Paste supplier link to auto-fill pricing ─────────────────────── */}
+        <div>
+          <label className="label flex items-center gap-1.5">
+            <LinkIcon className="h-3 w-3" />
+            {t('inventory.supplierLink', 'Paste supplier link to auto-fill pricing')}
+          </label>
+          <div className="flex gap-1.5">
+            <input
+              type="url"
+              className="input min-w-0 flex-1 text-sm"
+              placeholder="https://…"
+              value={supplierUrl}
+              onChange={(e) => { setSupplierUrl(e.target.value); setImportError(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && supplierUrl.trim() && !importBusy) void runImport(); }}
+            />
+            <button
+              className="btn-secondary shrink-0 px-3 text-xs"
+              disabled={!supplierUrl.trim() || importBusy}
+              onClick={() => void runImport()}
+              title={t('inventory.autoFillTitle', 'Reads the page with the built-in offline AI (plus Gemini if a key is saved in Settings).')}
+            >
+              {importBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {t('inventory.autoFill', 'Auto-fill')}
+            </button>
+          </div>
+          {importBusy && (
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              {t('inventory.autoFillBusy', 'Reading the page… the built-in AI can take up to a minute on big pages.')}
+            </p>
+          )}
+          {found && (
+            <div className="mt-2 rounded-xl bg-gaia-50 px-3 py-2.5 ring-1 ring-gaia-200">
+              <p className="text-xs font-semibold text-gaia-800">{sourceLabel(found)}</p>
+              {found.productName && (
+                <p className="mt-0.5 truncate text-[11px] text-slate-500">{found.productName}</p>
+              )}
+              <p className="mt-1 text-sm text-slate-700">
+                {found.price !== undefined && <span className="font-bold">${found.price.toFixed(2)}</span>}
+                {found.price !== undefined && found.size !== undefined && ' · '}
+                {found.size !== undefined && found.unit && `${found.size} ${found.unit}`}
+                {foundPreview !== undefined && (
+                  <span className="ml-1.5 text-xs font-semibold text-emerald-700">
+                    → ${foundPreview.toFixed(4)}{found.unit === 'ml' ? '/drop' : '/g'}
+                  </span>
+                )}
+              </p>
+              {(found.price === undefined || found.size === undefined) && (
+                <p className="mt-1 text-[11px] text-amber-600">
+                  {t('inventory.partialFind', 'Only part of the info was found — fill in the rest below.')}
+                </p>
+              )}
+              <div className="mt-2 flex gap-2">
+                <button className="btn-primary px-3 py-1.5 text-xs" onClick={applyFound}>
+                  <Check className="h-3 w-3" />
+                  {t('inventory.applyFound', 'Use these values')}
+                </button>
+                <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => setFound(null)}>
+                  {t('common.cancel', 'Cancel')}
+                </button>
+              </div>
+            </div>
+          )}
+          {importError && (
+            <p className="mt-1.5 flex items-start gap-1 text-xs text-amber-700">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+              {importError}
+            </p>
+          )}
+        </div>
+
         <div>
           <label className="label">{t('inventory.whatDidYouPay', 'What did you pay?')}</label>
           <div className="relative">
@@ -648,6 +815,40 @@ function PriceEditModal({
             </p>
           </div>
         )}
+
+        {/* ── Stock on hand (optional; completed Work Orders deduct it) ────── */}
+        <div>
+          <label className="label">{t('inventory.stockOnHand', 'Stock on hand (optional)')}</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="input w-28"
+              placeholder={t('inventory.stockOff', 'off')}
+              value={stock}
+              onChange={(e) => setStock(e.target.value)}
+            />
+            <span className="text-xs text-slate-400">{stockUnit}</span>
+            {container !== null && (
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500 transition hover:border-gaia-300 hover:bg-gaia-50 hover:text-gaia-700"
+                onClick={addContainerToStock}
+                title={t('inventory.addContainerTitle', 'Add one full container to stock')}
+              >
+                <PackagePlus className="h-3 w-3" />
+                {t('inventory.addContainer', '+1 container ({{n}} {{unit}})', {
+                  n: Math.round(container),
+                  unit: stockUnit,
+                })}
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">
+            {t('inventory.stockHint', 'Leave empty to skip stock tracking. Completed orders deduct automatically.')}
+          </p>
+        </div>
       </div>
     </Modal>
   );
