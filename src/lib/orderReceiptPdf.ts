@@ -64,7 +64,7 @@ export async function buildReceiptPdf({ order, items, settings }: ReceiptData): 
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 
-  const businessName = settings.businessName?.trim() || "Gaia's Label Studio";
+  const businessName = settings.businessName?.trim() || "Gaia's Essences";
   doc.setTitle(`Receipt ${order.orderNumber} — ${order.clientName}`);
   doc.setAuthor(businessName);
 

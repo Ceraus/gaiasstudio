@@ -21,6 +21,12 @@ const saveSystemDir = path.join(portableDir, "Gaia's Save System");
 const exportsDir = path.join(saveSystemDir, 'exports');
 const downloadsDir = path.join(saveSystemDir, 'downloads');
 
+// App/window icon — Gaia's Essences mark. Also used by electron-builder's
+// top-level "icon" config (build/icon.png) to auto-generate the packaged
+// .ico/.icns; this copy in electron/ ships inside the app for the runtime
+// BrowserWindow icon (taskbar/title bar) on every platform.
+const appIconPath = path.join(__dirname, 'icon.png');
+
 // Must be called before app.ready so Chromium uses these paths for IndexedDB,
 // localStorage, cookies, session data, and all other user-data storage.
 app.setPath('userData', saveSystemDir);
@@ -170,7 +176,8 @@ function openAiWindow(url) {
   aiBrowserWindow = new BrowserWindow({
     width: 1200,
     height: 900,
-    title: "Gaia's AI Studio",
+    title: "Gaia's Essences — AI Studio",
+    icon: appIconPath,
     webPreferences: {
       partition: 'persist:aistudio',
       nodeIntegration: false,
@@ -195,7 +202,8 @@ function createWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 640,
-    title: "Gaia's Label Studio — Rosa's Workshop",
+    title: "Gaia's Essences — Rosa's Label Studio",
+    icon: appIconPath,
     show: process.env.GAIA_MAINTENANCE !== '1',
     webPreferences: {
       nodeIntegration: false,

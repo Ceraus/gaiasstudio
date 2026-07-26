@@ -158,10 +158,13 @@ export const db = new GaiaDatabase();
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'app',
   language: 'en',
-  filenamePrefix: 'Gaia',
+  filenamePrefix: "Gaia's Essences",
   bleedIn: 0.0625,
   safeIn: 0.0625,
   onboarded: false,
   uiScale: 1,
   localAiEnabled: true,
+  businessName: "Gaia's Essences",
+  businessAddress: "1836 Westchester Ave, Unit #282, Bronx, NY 10472",
+  contact: 'Rosa Suarez · https://www.gaiasessences.com/',
 };

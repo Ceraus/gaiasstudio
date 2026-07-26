@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { BookOpen, FlaskConical, Layers, MousePointerClick, Printer, Shapes, Sparkles, Upload } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import logo from '@/assets/logo.png';
 
 export default function WelcomeScreen() {
   const { t } = useTranslation();
@@ -22,6 +23,12 @@ export default function WelcomeScreen() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full max-w-4xl flex-col items-center justify-center px-6 py-16 text-center">
+        <img
+          src={logo}
+          alt="Gaia's Essences"
+          className="mb-4 h-40 w-40 select-none rounded-3xl object-cover shadow-lg ring-4 ring-white sm:h-48 sm:w-48"
+          draggable={false}
+        />
         <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-gaia-100 px-4 py-1.5 text-sm font-medium text-gaia-700">
           <Sparkles className="h-4 w-4" /> {t('app.tagline')}
         </span>

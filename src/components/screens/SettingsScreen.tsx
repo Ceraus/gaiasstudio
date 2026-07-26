@@ -175,7 +175,7 @@ export default function SettingsScreen() {
               value={settings.filenamePrefix}
               onChange={(e) =>
                 void updateSettings({
-                  filenamePrefix: e.target.value.replace(/[^\w\s-]/g, '').trim().slice(0, 24) || 'Gaia',
+                  filenamePrefix: e.target.value.replace(/[^\w\s'-]/g, '').trim().slice(0, 24) || "Gaia's Essences",
                 })
               }
             />
@@ -252,7 +252,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.businessName', 'Business / Maker Name')}</label>
               <input
                 className="input"
-                placeholder="e.g. Gaia's Botanicals by Rosa"
+                placeholder="e.g. Gaia's Essences"
                 value={settings.businessName ?? ''}
                 onChange={(e) => void updateSettings({ businessName: e.target.value })}
               />
@@ -261,7 +261,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.businessAddress', 'Business Address')}</label>
               <input
                 className="input"
-                placeholder="e.g. 123 Main St, Austin TX 78701"
+                placeholder="e.g. 1836 Westchester Ave, Unit #282, Bronx, NY 10472"
                 value={settings.businessAddress ?? ''}
                 onChange={(e) => void updateSettings({ businessAddress: e.target.value })}
               />
@@ -270,7 +270,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.contact', 'Contact Info')}</label>
               <input
                 className="input"
-                placeholder="e.g. rosa@gaiasoaps.com · (512) 555-0100"
+                placeholder="e.g. Rosa Suarez · https://www.gaiasessences.com/"
                 value={settings.contact ?? ''}
                 onChange={(e) => void updateSettings({ contact: e.target.value })}
               />

@@ -1,7 +1,7 @@
 {
   "app": {
-    "name": "Gaia's Label Studio",
-    "tagline": "Rosa's label studio — beautiful labels, start to finish."
+    "name": "Gaia's Essences",
+    "tagline": "Rosa's label studio for Gaia's Essences — beautiful labels, start to finish."
   },
   "common": {
     "back": "Back",
@@ -337,7 +337,7 @@
     "warnings": "Warnings",
     "warningsPlaceholder": "e.g. For external use only. Discontinue if irritation occurs.",
     "footer": "Business footer",
-    "footerPlaceholder": "e.g. Handmade by Gaia · gaiasoaps.com",
+    "footerPlaceholder": "e.g. Handmade by Gaia's Essences · gaiasessences.com",
     "empty": "No recipes yet, Rosa. Start by adding your first glycerin soap recipe! 🧼",
     "yourRecipes": "Your Recipes",
     "pageOf": "Page {{page}} of {{total}}",
@@ -540,7 +540,7 @@
     "english": "English",
     "spanish": "Español",
     "filenamePrefix": "File name prefix",
-    "filenamePrefixHint": "Exported PDFs are named like Gaia - Recipe Name - v01.pdf.",
+    "filenamePrefixHint": "Exported PDFs are named like Gaia's Essences - Recipe Name - v01.pdf.",
     "displaySize": "Display size",
     "displaySizeHint": "Make the whole app larger for easier reading. The label canvas is unaffected.",
     "scale100": "100%",

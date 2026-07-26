@@ -1,9 +1,9 @@
 {
   "name": "gaia-label-studio",
   "private": true,
-  "version": "2.0.35",
+  "version": "2.0.36",
   "description": "Gaia's Label Studio — an offline-first, Canva-like label & sticker editor with an Avery print-routing engine.",
-  "author": "Gaia",
+  "author": "Rosa Suarez (Gaia's Essences)",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -64,9 +64,10 @@
     "vite": "^5.4.11"
   },
   "build": {
-    "appId": "com.gaia.labelstudio",
+    "appId": "com.gaiasessences.labelstudio",
     "productName": "Gaia's Label Studio",
-    "copyright": "Copyright © Gaia",
+    "copyright": "Copyright © Gaia's Essences",
+    "icon": "build/icon.png",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -111,8 +112,7 @@
           ]
         }
       ],
-      "category": "public.app-category.graphics-design",
-      "icon": "build/icon.icns"
+      "category": "public.app-category.graphics-design"
     },
     "dmg": {
       "title": "Gaia's Label Studio",

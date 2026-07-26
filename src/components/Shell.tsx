@@ -2,8 +2,9 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   BookOpen, ClipboardList, FileStack, FlaskConical, HelpCircle, Layers,
-  Leaf, Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
+  Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
+import brandIcon from '@/assets/icon.png';
 import { useAppStore, type Screen } from '@/store/useAppStore';
 import WelcomeScreen from '@/components/screens/WelcomeScreen';
 import TemplateScreen from '@/components/screens/TemplateScreen';
@@ -109,9 +110,7 @@ export default function Shell() {
       aria-label={t('nav.home', 'Home')}
       onClick={() => goto('welcome')}
     >
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gaia-600 text-white">
-        <Leaf className="h-5 w-5" />
-      </span>
+      <img src={brandIcon} alt="" className="h-9 w-9 shrink-0 select-none rounded-xl object-contain" draggable={false} />
       <span className="hidden whitespace-nowrap text-base font-semibold tracking-tight sm:inline">
         {t('app.name')}
       </span>

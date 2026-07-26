@@ -254,7 +254,7 @@ export default function ExportScreen() {
               className="btn-secondary w-full"
               data-tour="calibration"
               onClick={() => void buildCalibrationPdf().then((bytes) =>
-                downloadBytes(bytes, 'Gaia - Printer Calibration.pdf'))}
+                downloadBytes(bytes, "Gaia's Essences - Printer Calibration.pdf"))}
               title={t('export.calibrationTitle', 'A test page with a 1-inch square and margin frame — print it to verify your printer is at 100% scale.')}
             >
               <Ruler className="h-4 w-4" /> {t('export.calibration', 'Printer calibration page')}

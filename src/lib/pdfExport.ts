@@ -153,7 +153,7 @@ export async function buildCalibrationPdf(): Promise<Uint8Array> {
   });
 
   // Title + instructions.
-  page.drawText('Gaia\u2019s Label Studio \u2014 Printer Calibration', {
+  page.drawText('Gaia\u2019s Essences \u2014 Printer Calibration', {
     x: inToPt(0.75), y: H - inToPt(1), size: 16, font: bold, color: ink,
   });
   const lines = [
@@ -286,7 +286,7 @@ export interface ExportNameOptions {
 
 function formatBrand(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed) return 'Gaia';
+  if (!trimmed) return "Gaia's Essences";
   return trimmed.replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
 }
 
@@ -295,7 +295,7 @@ function sanitizePart(value: string): string {
 }
 
 function seqStorageKey(opts: ExportNameOptions): string {
-  const brand = (opts.brand ?? 'Gaia').toLowerCase();
+  const brand = (opts.brand ?? "Gaia's Essences").toLowerCase();
   const recipe = sanitizePart(opts.recipeName ?? 'Label').toLowerCase();
   const series = (opts.series ?? 'default').toLowerCase();
   return `${brand}|${recipe}|${series}`;
@@ -304,7 +304,7 @@ function seqStorageKey(opts: ExportNameOptions): string {
 /** Preview the next export file name without incrementing the counter. */
 export function peekExportName(opts: ExportNameOptions): string {
   const ext = opts.ext ?? 'pdf';
-  const brand = formatBrand(opts.brand ?? 'Gaia');
+  const brand = formatBrand(opts.brand ?? "Gaia's Essences");
   const recipe = sanitizePart(opts.recipeName ?? 'Label');
   const key = `gaia:seq:${seqStorageKey(opts)}`;
   const next = (Number(localStorage.getItem(key)) || 0) + 1;

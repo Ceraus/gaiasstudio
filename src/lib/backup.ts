@@ -113,7 +113,7 @@ export async function restoreBackup(json: string): Promise<RestoreSummary> {
     throw new Error('That file is not readable as JSON.');
   }
   if (parsed?.app !== 'gaia-label-studio' || typeof parsed.tables !== 'object' || !parsed.tables) {
-    throw new Error("That file doesn't look like a Gaia's Label Studio backup.");
+    throw new Error("That file doesn't look like a Gaia's Essences backup.");
   }
 
   const known = new Map(db.tables.map((t) => [t.name, t]));

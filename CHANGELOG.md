@@ -4,6 +4,22 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.36] - 2026-07-26
+
+### Added
+- **Gaia's Essences branding** — the app now ships with a real icon/favicon
+  and logo mark instead of a generic leaf glyph. The app icon appears in the
+  header, browser tab, and taskbar/title bar (Windows/Linux); packaged builds
+  auto-generate the `.ico`/`.icns` from a single 1024×1024 source (`build/icon.png`)
+  via electron-builder. The full "Gaia's Essences" logo is featured on the
+  Welcome screen. Business Information in Settings now defaults to Rosa's
+  real shop details out of the box — **Gaia's Essences**, 1836 Westchester
+  Ave, Unit #282, Bronx, NY 10472, and Rosa Suarez ·
+  https://www.gaiasessences.com/ — so back labels, FDA checks, and order
+  receipts are pre-filled without any manual setup. Window titles, exported
+  filenames (`Gaia's Essences - Recipe Name - v01.pdf`), receipt letterheads,
+  and the printer calibration sheet all now say "Gaia's Essences".
+
 ## [2.0.35] - 2026-07-26
 
 ### Changed
