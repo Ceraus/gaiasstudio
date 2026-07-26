@@ -4,7 +4,7 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.0.39] - 2026-07-26
+## [2.0.40] - 2026-07-26
 
 ### Fixed
 - Reapplied the original Gaia's Essences icon image the user provided
