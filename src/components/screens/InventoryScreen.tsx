@@ -1,8 +1,28 @@
+// ---------------------------------------------------------------------------
+// InventoryScreen — the "Smart Pantry".
+//
+// A flat list of 131 unpriced ingredients is paralyzing. This screen fixes it:
+//   • Categorized ACCORDIONS — every ingredient lands on one of five shelves
+//     (Colorants / Essential & Fragrance Oils / Carrier Oils & Butters /
+//     Botanicals & Additives / Soap Bases), each collapsible.
+//   • "IN-USE ONLY" — a prominent toggle that hides every ingredient that is
+//     not part of a saved recipe, so Rosa only prices what she actually sells.
+//   • "QUICK SET" bulk pricing — one baseline price per shelf (e.g. $0.05/g)
+//     applied to every Missing-Price ingredient in that shelf, in one click.
+//   • AI SUPPLIER URL IMPORTER — paste a supplier product link; the app
+//     extracts Total Price + Container Size (local scraper first, Gemini via
+//     the stored Google AI Studio key as fallback), previews the detected
+//     values, and on confirm auto-calculates the fractional cost ($/g, $/drop).
+//     Manual entry always remains as the fallback.
+//   • STOCK ON HAND — optional per-ingredient stock that completed Work
+//     Orders deduct automatically.
+// ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown, ChevronUp, Database, DollarSign, Loader2,
-  Package, PackageCheck, Plus, ShoppingBag, Trash2, X,
+  AlertTriangle, Check, ChevronDown, ChevronUp, Database, DollarSign,
+  Link as LinkIcon, Loader2, Package, PackageCheck, PackagePlus, Plus,
+  Search, ShoppingBag, Sparkles, Tags, Trash2, X, Zap,
 } from 'lucide-react';
 import type { Ingredient, IngredientCategory, Recipe, SetPurchase } from '@/types';
 import {
@@ -10,12 +30,91 @@ import {
   recipesRepo,
   setPurchasesRepo,
   calculateFractionalCost,
+  isVolumeIngredient,
+  baseUnitOf,
+  VOLUME_CATEGORIES,
 } from '@/db/repositories';
+import { importFromSupplierUrl, type SupplierParseResult } from '@/lib/supplierImport';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
+import Modal from '@/components/common/Modal';
 import { useAppStore } from '@/store/useAppStore';
 
 // ---------------------------------------------------------------------------
-// Sample prices bulk-loaded with one click
+// Pantry shelves — every IngredientCategory maps to exactly one accordion.
+// ---------------------------------------------------------------------------
+
+type PantryGroupId = 'colorants' | 'essential-oils' | 'carrier-oils' | 'botanicals' | 'bases';
+
+interface PantryGroup {
+  id: PantryGroupId;
+  labelKey: string;
+  defaultLabel: string;
+  hintKey: string;
+  defaultHint: string;
+  categories: IngredientCategory[];
+  /** Default measurement for the Quick Set dialog ($/g vs $/drop). */
+  measurement: 'weight' | 'volume';
+  /** Header accent classes. */
+  tint: string;
+}
+
+const PANTRY_GROUPS: PantryGroup[] = [
+  {
+    id: 'colorants',
+    labelKey: 'inventory.groupColorants', defaultLabel: 'Colorants',
+    hintKey: 'inventory.groupColorantsHint', defaultHint: 'Micas, dyes, oxides & pigments',
+    categories: ['colorant'],
+    measurement: 'weight',
+    tint: 'bg-sky-50 text-sky-600',
+  },
+  {
+    id: 'essential-oils',
+    labelKey: 'inventory.groupEssentialOils', defaultLabel: 'Essential & Fragrance Oils',
+    hintKey: 'inventory.groupEssentialOilsHint', defaultHint: 'Measured in drops (1 ml = 20 drops)',
+    categories: ['essential-oil', 'fragrance'],
+    measurement: 'volume',
+    tint: 'bg-violet-50 text-violet-600',
+  },
+  {
+    id: 'carrier-oils',
+    labelKey: 'inventory.groupCarrierOils', defaultLabel: 'Carrier Oils & Butters',
+    hintKey: 'inventory.groupCarrierOilsHint', defaultHint: 'Base oils, butters & waxes',
+    categories: ['oil', 'butter', 'wax'],
+    measurement: 'weight',
+    tint: 'bg-amber-50 text-amber-600',
+  },
+  {
+    id: 'botanicals',
+    labelKey: 'inventory.groupBotanicals', defaultLabel: 'Botanicals & Additives',
+    hintKey: 'inventory.groupBotanicalsHint', defaultHint: 'Herbs, flowers, clays, exfoliants & extras',
+    categories: [
+      'botanical', 'floral', 'citrus', 'exfoliant', 'clay',
+      'milk', 'seed', 'spice', 'additive', 'other',
+    ],
+    measurement: 'weight',
+    tint: 'bg-green-50 text-green-600',
+  },
+  {
+    id: 'bases',
+    labelKey: 'inventory.groupBases', defaultLabel: 'Soap Bases',
+    hintKey: 'inventory.groupBasesHint', defaultHint: 'Melt & pour / glycerin bases',
+    categories: ['base'],
+    measurement: 'weight',
+    tint: 'bg-slate-100 text-slate-600',
+  },
+];
+
+/** Assigns an ingredient to its pantry shelf. */
+function groupOf(ing: Ingredient): PantryGroupId {
+  if (ing.isSoapBase || ing.category === 'base') return 'bases';
+  for (const g of PANTRY_GROUPS) {
+    if (ing.category && g.categories.includes(ing.category)) return g.id;
+  }
+  return 'botanicals'; // uncategorized extras live with the additives
+}
+
+// ---------------------------------------------------------------------------
+// Sample prices bulk-loaded with one click (kept from the previous screen)
 // ---------------------------------------------------------------------------
 interface SamplePrice {
   name: string;
@@ -37,7 +136,7 @@ const SAMPLE_PRICES: SamplePrice[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Quick "Set" chips — pre-built set entries Rosa can tap to auto-fill
+// Quick "Set" chips — pre-built set-purchase entries (kept)
 // ---------------------------------------------------------------------------
 interface QuickSet {
   label: string;
@@ -47,16 +146,14 @@ interface QuickSet {
 }
 
 const QUICK_SETS: QuickSet[] = [
-  { label: 'YumCraft 20 Dyes',         name: 'YumCraft Soap Dyes 20pk',     totalPrice: 14.99, itemCount: 20 },
-  { label: 'Smalltongue 36 Micas',     name: 'Smalltongue Mica Powder 36pk', totalPrice: 13.99, itemCount: 36 },
-  { label: 'Glycerin Base 5lb',        name: 'Glycerin Base 5lb (bulk)',     totalPrice: 18.00, itemCount: 1  },
+  { label: 'YumCraft 20 Dyes',     name: 'YumCraft Soap Dyes 20pk',      totalPrice: 14.99, itemCount: 20 },
+  { label: 'Smalltongue 36 Micas', name: 'Smalltongue Mica Powder 36pk', totalPrice: 13.99, itemCount: 36 },
+  { label: 'Glycerin Base 5lb',    name: 'Glycerin Base 5lb (bulk)',     totalPrice: 18.00, itemCount: 1  },
 ];
 
 // ---------------------------------------------------------------------------
 // Category-based defaults
 // ---------------------------------------------------------------------------
-const VOLUME_CATEGORIES = new Set<IngredientCategory>(['essential-oil', 'fragrance']);
-
 function getCategoryMeasurementType(category?: IngredientCategory): 'weight' | 'volume' {
   return category && VOLUME_CATEGORIES.has(category) ? 'volume' : 'weight';
 }
@@ -65,13 +162,8 @@ function getCategoryDefaultUnit(category?: IngredientCategory): 'oz' | 'lbs' | '
   return category && VOLUME_CATEGORIES.has(category) ? 'ml' : 'g';
 }
 
-function isVolumeIngredient(ing: Ingredient): boolean {
-  if (ing.measurementType) return ing.measurementType === 'volume';
-  return ing.category ? VOLUME_CATEGORIES.has(ing.category) : false;
-}
-
 // ---------------------------------------------------------------------------
-// Math explanation string
+// Math explanation string ("show your work" — builds trust in the numbers)
 // ---------------------------------------------------------------------------
 function buildMathHint(
   measurementType: 'weight' | 'volume',
@@ -99,6 +191,15 @@ function buildMathHint(
   return `${prefix}$${purchasePrice.toFixed(2)} ÷ ${grams.toFixed(1)}g = $${cpg.toFixed(4)}/g`;
 }
 
+/** Converts a purchase container size into base units (grams or drops). */
+function containerBaseUnits(ing: Ingredient): number | null {
+  if (!ing.purchaseSize || ing.purchaseSize <= 0) return null;
+  if (isVolumeIngredient(ing)) return ing.purchaseSize * 20; // ml → drops
+  if (ing.purchaseUnit === 'oz') return ing.purchaseSize * 28.3495;
+  if (ing.purchaseUnit === 'lbs') return ing.purchaseSize * 453.592;
+  return ing.purchaseSize; // grams
+}
+
 // Quick size shortcuts
 interface SizeShortcut { label: string; size: number; unit: 'oz' | 'lbs' | 'ml' | 'g' }
 const WEIGHT_SHORTCUTS: SizeShortcut[] = [
@@ -113,6 +214,8 @@ const VOLUME_SHORTCUTS: SizeShortcut[] = [
   { label: '30 ml', size: 30, unit: 'ml' },
 ];
 
+const IN_USE_PREF_KEY = 'gaia.pantry.inUseOnly';
+
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
@@ -120,21 +223,27 @@ export default function InventoryScreen() {
   const { t } = useTranslation();
   const activeRecipeId = useAppStore((s) => s.activeRecipeId);
 
-  const [activeIngredients, setActiveIngredients] = useState<Ingredient[]>([]);
   const [allIngredients, setAllIngredients] = useState<Ingredient[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [activeRecipe, setActiveRecipe] = useState<Recipe | null>(null);
   const [setPurchases, setSetPurchases] = useState<SetPurchase[]>([]);
   const [seeding, setSeeding] = useState(false);
   const [seedDone, setSeedDone] = useState(false);
 
+  // Filters
+  const [inUseOnly, setInUseOnly] = useState(false);
+  const [query, setQuery] = useState('');
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const inUseInitialized = useRef(false);
+
   const reload = async () => {
-    const [all, active, sets] = await Promise.all([
+    const [all, recs, sets] = await Promise.all([
       ingredientsRepo.all(),
-      ingredientsRepo.active(),
+      recipesRepo.all(),
       setPurchasesRepo.all(),
     ]);
     setAllIngredients(all);
-    setActiveIngredients(active);
+    setRecipes(recs);
     setSetPurchases(sets);
   };
 
@@ -148,14 +257,65 @@ export default function InventoryScreen() {
 
   useEffect(() => {
     void reloadRecipe();
-    // reloadRecipe is defined inline in component and only reads activeRecipeId from closure
+    // reloadRecipe reads activeRecipeId from closure
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRecipeId]);
 
-  const pricedCount = useMemo(
-    () => activeIngredients.filter((i) => i.fractionalCost !== undefined).length,
-    [activeIngredients],
-  );
+  // -- In-Use map: ingredientId → number of saved recipes that use it --------
+  const inUseCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of recipes) {
+      for (const id of r.ingredientIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return counts;
+  }, [recipes]);
+
+  // Initialize the In-Use toggle once: default ON when recipes reference
+  // ingredients (that's the focused view Rosa needs), OFF otherwise.
+  useEffect(() => {
+    if (inUseInitialized.current || recipes.length === 0) return;
+    inUseInitialized.current = true;
+    const stored = localStorage.getItem(IN_USE_PREF_KEY);
+    if (stored !== null) setInUseOnly(stored === 'true');
+    else setInUseOnly(inUseCounts.size > 0);
+  }, [recipes, inUseCounts]);
+
+  const toggleInUse = () => {
+    setInUseOnly((v) => {
+      localStorage.setItem(IN_USE_PREF_KEY, String(!v));
+      return !v;
+    });
+  };
+
+  // -- Filtering + grouping ---------------------------------------------------
+  const q = query.trim().toLowerCase();
+  const visibleIngredients = useMemo(() => {
+    return allIngredients.filter((ing) => {
+      if (inUseOnly && !inUseCounts.has(ing.id)) return false;
+      if (q && !ing.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [allIngredients, inUseOnly, inUseCounts, q]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<PantryGroupId, Ingredient[]>();
+    for (const g of PANTRY_GROUPS) map.set(g.id, []);
+    for (const ing of visibleIngredients) map.get(groupOf(ing))!.push(ing);
+    // Missing-price ingredients bubble to the top of every shelf.
+    for (const list of map.values()) {
+      list.sort((a, b) => {
+        const am = a.fractionalCost === undefined ? 0 : 1;
+        const bm = b.fractionalCost === undefined ? 0 : 1;
+        return am - bm || a.name.localeCompare(b.name);
+      });
+    }
+    return map;
+  }, [visibleIngredients]);
+
+  // Stats
+  const pricedCount   = visibleIngredients.filter((i) => i.fractionalCost !== undefined).length;
+  const missingCount  = visibleIngredients.length - pricedCount;
+  const hiddenCount   = allIngredients.length - visibleIngredients.length;
 
   // Recipe material cost summary with per-ingredient breakdown
   const recipeCostSummary = useMemo(() => {
@@ -170,7 +330,7 @@ export default function InventoryScreen() {
       const amount = amounts[id];
       const ing = allIngredients.find((i) => i.id === id);
       if (!amount || !ing) continue;
-      const unit = isVolumeIngredient(ing) ? 'drops' : 'g';
+      const unit = baseUnitOf(ing);
       if (ing.fractionalCost !== undefined) {
         const lineCost = amount * ing.fractionalCost;
         total += lineCost;
@@ -200,6 +360,11 @@ export default function InventoryScreen() {
     }
   };
 
+  const toggleGroup = (id: PantryGroupId) =>
+    setOpenGroups((g) => ({ ...g, [id]: !g[id] }));
+
+  const nonEmptyGroups = PANTRY_GROUPS.filter((g) => (grouped.get(g.id) ?? []).length > 0);
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto bg-gaia-50">
@@ -210,10 +375,10 @@ export default function InventoryScreen() {
             <div>
               <h1 className="flex items-center gap-2 text-2xl font-semibold text-gaia-900">
                 <Package className="h-6 w-6 text-gaia-600" />
-                {t('inventory.title', 'Inventory & Pricing')}
+                {t('inventory.title', 'Smart Pantry — Inventory & Pricing')}
               </h1>
               <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                {t('inventory.subtitle', 'Set purchase prices for your active ingredients to calculate recipe material costs.')}
+                {t('inventory.subtitle', 'Everything is grouped into shelves. Open a shelf, set prices once (or paste a supplier link), and your recipe costs calculate themselves.')}
               </p>
             </div>
             <button
@@ -228,20 +393,70 @@ export default function InventoryScreen() {
             </button>
           </div>
 
+          {/* ── Filter bar: prominent In-Use toggle + search ─────────────────── */}
+          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={inUseOnly}
+              onClick={toggleInUse}
+              className="flex items-center gap-2.5"
+            >
+              <span
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  inUseOnly ? 'bg-gaia-600' : 'bg-slate-200'
+                }`}
+              >
+                <span
+                  className={`inline-block h-[18px] w-[18px] transform rounded-full bg-white shadow transition-transform ${
+                    inUseOnly ? 'translate-x-[24px]' : 'translate-x-[3px]'
+                  }`}
+                />
+              </span>
+              <span className="text-sm font-semibold text-slate-700">
+                {t('inventory.inUseOnly', 'In-Use Only')}
+              </span>
+            </button>
+            <span className="text-xs text-slate-400">
+              {inUseOnly
+                ? t('inventory.inUseOnlyOn', 'Showing only ingredients used in your saved recipes ({{hidden}} hidden)', { hidden: hiddenCount })
+                : t('inventory.inUseOnlyOff', 'Showing every ingredient in your pantry')}
+            </span>
+
+            <div className="relative ml-auto w-full sm:w-56">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                className="input pl-8 text-sm"
+                placeholder={t('inventory.searchPlaceholder', 'Search ingredients…')}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              {query && (
+                <button
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  onClick={() => setQuery('')}
+                  aria-label={t('common.clear', 'Clear')}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Stats */}
-          {activeIngredients.length > 0 && (
+          {allIngredients.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-3">
               <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
                 <Package className="h-4 w-4 text-slate-400" />
-                <span className="font-semibold">{activeIngredients.length}</span>
-                <span className="text-slate-400">{t('inventory.activeIngredients', 'active ingredients')}</span>
+                <span className="font-semibold">{visibleIngredients.length}</span>
+                <span className="text-slate-400">{t('inventory.shown', 'shown')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-gaia-600 px-4 py-2 text-sm text-white">
                 <span className="font-semibold">{pricedCount}</span>
                 <span className="opacity-80">{t('inventory.priced', 'priced')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
-                <span className="font-semibold">{activeIngredients.length - pricedCount}</span>
+                <span className="font-semibold">{missingCount}</span>
                 <span className="opacity-80">{t('inventory.unpriced', 'missing prices')}</span>
               </div>
               {activeRecipe && (
@@ -262,48 +477,46 @@ export default function InventoryScreen() {
             />
           </div>
 
-          {/* Empty state */}
-          {activeIngredients.length === 0 ? (
+          {/* ── Pantry shelves (accordions) ──────────────────────────────────── */}
+          {allIngredients.length === 0 ? (
             <div className="mt-8 rounded-2xl border-2 border-dashed border-gaia-200 bg-white py-12 text-center">
               <Package className="mx-auto mb-3 h-10 w-10 text-gaia-300" />
               <p className="font-medium text-slate-600">
-                {t('inventory.noActive', 'No active ingredients yet.')}
+                {t('inventory.noIngredients', 'Your pantry is empty.')}
               </p>
               <p className="mt-1 text-sm text-slate-400">
-                {t('inventory.noActiveHint', 'Go to Ingredients to activate some.')}
+                {t('inventory.noIngredientsHint', 'Go to Ingredients to add some.')}
               </p>
             </div>
+          ) : nonEmptyGroups.length === 0 ? (
+            <div className="mt-8 rounded-2xl border-2 border-dashed border-gaia-200 bg-white py-12 text-center">
+              <Search className="mx-auto mb-3 h-10 w-10 text-gaia-300" />
+              <p className="font-medium text-slate-600">
+                {t('inventory.noMatches', 'Nothing matches the current filters.')}
+              </p>
+              {inUseOnly && (
+                <button className="btn-secondary mx-auto mt-3" onClick={toggleInUse}>
+                  {t('inventory.showAll', 'Show all ingredients')}
+                </button>
+              )}
+            </div>
           ) : (
-            <>
-              {/* Section header */}
-              <div className="mt-6 mb-3 flex items-center justify-between">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {t('inventory.individualPricing', 'Individual Ingredient Pricing')}
-                </h2>
-                <div className="flex items-center gap-3 text-[11px] text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
-                    {t('inventory.legendPriced', 'priced')}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-                    {t('inventory.legendMissing', 'missing')}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {activeIngredients.map((ing) => (
-                  <PricingCard
-                    key={ing.id}
-                    ing={ing}
-                    recipe={activeRecipe}
-                    onSaved={reload}
-                    onRecipeUpdated={reloadRecipe}
-                  />
-                ))}
-              </div>
-            </>
+            <div className="mt-6 space-y-3">
+              {nonEmptyGroups.map((group) => (
+                <PantryGroupAccordion
+                  key={group.id}
+                  group={group}
+                  ingredients={grouped.get(group.id) ?? []}
+                  // A search should reveal its matches even in collapsed shelves.
+                  open={!!openGroups[group.id] || q.length > 0}
+                  onToggle={() => toggleGroup(group.id)}
+                  inUseCounts={inUseCounts}
+                  recipe={activeRecipe}
+                  onSaved={reload}
+                  onRecipeUpdated={reloadRecipe}
+                />
+              ))}
+            </div>
           )}
 
           {/* ── Live Recipe Cost Panel ──────────────────────────────────────── */}
@@ -312,7 +525,7 @@ export default function InventoryScreen() {
           )}
 
           {/* Footer hint */}
-          {activeIngredients.length > 0 && (
+          {allIngredients.length > 0 && (
             <p className="mt-6 text-xs text-slate-400">
               {t('inventory.legend', 'Weight → cost per gram. Volume (EOs) → cost per drop (1 ml = 20 drops). Click a field to edit; press Enter or click away to save.')}
             </p>
@@ -325,7 +538,218 @@ export default function InventoryScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Set Purchases Card — "bought as a set" entry with quick chips
+// Pantry shelf accordion — header with counts + "Quick Set" bulk pricing
+// ---------------------------------------------------------------------------
+interface PantryGroupAccordionProps {
+  group: PantryGroup;
+  ingredients: Ingredient[];
+  open: boolean;
+  onToggle: () => void;
+  inUseCounts: Map<string, number>;
+  recipe: Recipe | null;
+  onSaved: () => void;
+  onRecipeUpdated: () => void;
+}
+
+function PantryGroupAccordion({
+  group, ingredients, open, onToggle, inUseCounts, recipe, onSaved, onRecipeUpdated,
+}: PantryGroupAccordionProps) {
+  const { t } = useTranslation();
+  const [quickSetOpen, setQuickSetOpen] = useState(false);
+
+  const missing = ingredients.filter((i) => i.fractionalCost === undefined);
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+      {/* Header */}
+      <div className="flex w-full items-center gap-3 px-4 py-3.5">
+        <button
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          onClick={onToggle}
+          aria-expanded={open}
+        >
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${group.tint}`}>
+            <Tags className="h-[18px] w-[18px]" />
+          </span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2">
+              <span className="font-semibold text-slate-800">{t(group.labelKey, group.defaultLabel)}</span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                {ingredients.length}
+              </span>
+              {missing.length > 0 && (
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
+                  {t('inventory.nMissing', '{{count}} missing price', { count: missing.length })}
+                </span>
+              )}
+            </span>
+            <span className="block truncate text-xs text-slate-400">{t(group.hintKey, group.defaultHint)}</span>
+          </span>
+        </button>
+
+        {/* Quick Set bulk pricing — only relevant while prices are missing */}
+        {missing.length > 0 && (
+          <button
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-gaia-50 px-3 py-1.5 text-xs font-semibold text-gaia-700 ring-1 ring-gaia-200 transition hover:bg-gaia-100"
+            onClick={() => setQuickSetOpen(true)}
+            title={t('inventory.quickSetTitle', 'Apply one baseline price to every missing-price ingredient on this shelf')}
+          >
+            <Zap className="h-3.5 w-3.5" />
+            {t('inventory.quickSet', 'Quick Set')}
+          </button>
+        )}
+
+        <button className="shrink-0 p-1" onClick={onToggle} aria-label={open ? t('common.collapse', 'Collapse') : t('common.expand', 'Expand')}>
+          {open
+            ? <ChevronUp className="h-4 w-4 text-slate-400" />
+            : <ChevronDown className="h-4 w-4 text-slate-400" />}
+        </button>
+      </div>
+
+      {/* Body */}
+      {open && (
+        <div className="space-y-3 border-t border-slate-100 bg-slate-50/60 px-3 pb-3 pt-3">
+          {ingredients.map((ing) => (
+            <PricingCard
+              key={ing.id}
+              ing={ing}
+              recipe={recipe}
+              usedInRecipes={inUseCounts.get(ing.id) ?? 0}
+              onSaved={onSaved}
+              onRecipeUpdated={onRecipeUpdated}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Quick Set modal */}
+      <QuickSetModal
+        open={quickSetOpen}
+        onClose={() => setQuickSetOpen(false)}
+        group={group}
+        missing={missing}
+        onApplied={onSaved}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Quick Set modal — one baseline price for every missing-price ingredient
+// ---------------------------------------------------------------------------
+interface QuickSetModalProps {
+  open: boolean;
+  onClose: () => void;
+  group: PantryGroup;
+  missing: Ingredient[];
+  onApplied: () => void;
+}
+
+function QuickSetModal({ open, onClose, group, missing, onApplied }: QuickSetModalProps) {
+  const { t } = useTranslation();
+  const [price, setPrice] = useState('');
+  const [applying, setApplying] = useState(false);
+
+  const perUnitLabel = group.measurement === 'volume'
+    ? t('inventory.perDropLong', 'per drop')
+    : t('inventory.perGramLong', 'per gram');
+
+  const parsed = parseFloat(price);
+  const valid = !isNaN(parsed) && parsed > 0;
+
+  const apply = async () => {
+    if (!valid) return;
+    setApplying(true);
+    try {
+      for (const ing of missing) {
+        // Each ingredient keeps its own base unit: weight → $X/gram stored as
+        // a 1 g purchase; volume → $X/drop stored as a 1 ml purchase at 20×X
+        // (1 ml = 20 drops), so calculateFractionalCost lands exactly on X.
+        const volume = isVolumeIngredient(ing) || group.measurement === 'volume';
+        await ingredientsRepo.update(ing.id, volume
+          ? { measurementType: 'volume', purchaseSize: 1, purchaseUnit: 'ml', purchasePrice: parsed * 20 }
+          : { measurementType: 'weight', purchaseSize: 1, purchaseUnit: 'g',  purchasePrice: parsed },
+        );
+      }
+      onApplied();
+      onClose();
+      setPrice('');
+    } catch (err) {
+      console.error('[Inventory] Quick Set failed:', err);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          <Zap className="h-4 w-4 text-gaia-600" />
+          {t('inventory.quickSetHeading', 'Quick Set — {{group}}', { group: t(group.labelKey, group.defaultLabel) })}
+        </span>
+      }
+      footer={
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={onClose}>{t('common.cancel', 'Cancel')}</button>
+          <button className="btn-primary" disabled={!valid || applying} onClick={() => void apply()}>
+            {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            {t('inventory.quickSetApply', 'Apply to {{count}} ingredient(s)', { count: missing.length })}
+          </button>
+        </div>
+      }
+    >
+      <p className="text-sm text-slate-600">
+        {t('inventory.quickSetExplain',
+          'Give every ingredient on this shelf that is still missing a price the same baseline. You can fine-tune any single ingredient afterwards — this just gets you to a usable cost estimate fast.')}
+      </p>
+
+      <div className="mt-4">
+        <label className="mb-1 block text-xs font-medium text-slate-500">
+          {t('inventory.quickSetPriceLabel', 'Baseline price {{unit}}', { unit: perUnitLabel })}
+        </label>
+        <div className="relative w-40">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+          <input
+            autoFocus
+            type="number"
+            min={0}
+            step={0.01}
+            className="input pl-7 text-sm"
+            placeholder={group.measurement === 'volume' ? '0.04' : '0.05'}
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && valid) void apply(); }}
+          />
+        </div>
+        {valid && (
+          <p className="mt-2 text-xs text-emerald-700">
+            {t('inventory.quickSetPreview', 'Every missing-price ingredient below gets ${{price}} {{unit}}.', {
+              price: parsed.toFixed(4),
+              unit: perUnitLabel,
+            })}
+          </p>
+        )}
+      </div>
+
+      {/* Affected ingredient preview */}
+      <div className="mt-4 max-h-44 overflow-y-auto rounded-xl border border-slate-200">
+        {missing.map((ing) => (
+          <div key={ing.id} className="flex items-center gap-2.5 border-b border-slate-50 px-3 py-1.5 text-sm last:border-0">
+            <IngredientIcon category={ing.category} name={ing.name} size="sm" />
+            <span className="flex-1 truncate text-slate-700">{ing.name}</span>
+            <span className="text-[11px] text-slate-400">{baseUnitOf(ing) === 'drops' ? '$/drop' : '$/g'}</span>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Set Purchases Card — "bought as a set" entry with quick chips (kept)
 // ---------------------------------------------------------------------------
 interface SetPurchasesCardProps {
   ingredients: Ingredient[];
@@ -349,7 +773,7 @@ const emptySetForm: SetForm = {
 
 function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchasesCardProps) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<SetForm>(emptySetForm);
   const [saving, setSaving] = useState(false);
@@ -653,7 +1077,7 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
 }
 
 // ---------------------------------------------------------------------------
-// Live Recipe Cost Panel — sticky total at the bottom of the screen
+// Live Recipe Cost Panel — total at the bottom of the screen (kept)
 // ---------------------------------------------------------------------------
 interface RecipeCostPanelProps {
   summary: {
@@ -769,11 +1193,12 @@ function ingToCard(ing: Ingredient): CardState {
 interface PricingCardProps {
   ing: Ingredient;
   recipe: Recipe | null;
+  usedInRecipes: number;
   onSaved: () => void;
   onRecipeUpdated: () => void;
 }
 
-function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps) {
+function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: PricingCardProps) {
   const { t } = useTranslation();
   const [card, setCard] = useState<CardState>(() => ingToCard(ing));
   const [saving, setSaving] = useState(false);
@@ -790,6 +1215,8 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
 
   useEffect(() => {
     setCard(ingToCard(ing));
+    // Re-sync only when the persisted purchase fields change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ing.purchaseSize, ing.purchaseUnit, ing.purchasePrice, ing.category]);
 
   const computedCost = useMemo(() => calculateFractionalCost({
@@ -887,13 +1314,20 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
   return (
     <div className={`rounded-2xl bg-white px-5 py-4 ring-1 transition ${statusRing} ${saving ? 'opacity-60' : ''}`}>
 
-      {/* Card header: name + status dot + result */}
+      {/* Card header: name + status dot + in-use chip + result */}
       <div className="flex items-center gap-3 mb-4">
         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDot}`} />
         <IngredientIcon category={ing.category} name={ing.name} />
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-slate-800 truncate">{ing.name}</p>
-          <p className="text-xs text-slate-400">{catLabel} · {typeLabel}</p>
+          <p className="flex items-center gap-1.5 text-xs text-slate-400">
+            {catLabel} · {typeLabel}
+            {usedInRecipes > 0 && (
+              <span className="rounded-full bg-gaia-50 px-1.5 py-0.5 text-[10px] font-semibold text-gaia-700 ring-1 ring-gaia-200">
+                {t('inventory.inNRecipes', 'in {{count}} recipe(s)', { count: usedInRecipes })}
+              </span>
+            )}
+          </p>
         </div>
         {computedCost !== undefined ? (
           <div className="shrink-0 rounded-xl bg-emerald-50 px-3 py-1.5 text-right ring-1 ring-emerald-100">
@@ -990,6 +1424,12 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
         <p className="mt-2.5 font-mono text-[11px] text-slate-400">{mathHint}</p>
       )}
 
+      {/* ── AI Supplier link importer ─────────────────────────────────────── */}
+      <SupplierImportRow ing={ing} onSaved={onSaved} />
+
+      {/* ── Stock on hand ─────────────────────────────────────────────────── */}
+      <StockRow ing={ing} onSaved={onSaved} />
+
       {/* ── Recipe usage row ────────────────────────────────────────────────── */}
       {recipe && (
         <div className="mt-3 border-t border-slate-100 pt-3">
@@ -1051,6 +1491,255 @@ function PricingCard({ ing, recipe, onSaved, onRecipeUpdated }: PricingCardProps
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Supplier URL importer row — "Paste supplier link to auto-fill pricing."
+// ---------------------------------------------------------------------------
+interface SupplierImportRowProps {
+  ing: Ingredient;
+  onSaved: () => void;
+}
+
+function SupplierImportRow({ ing, onSaved }: SupplierImportRowProps) {
+  const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const [url, setUrl] = useState(ing.supplierUrl ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [found, setFound] = useState<SupplierParseResult | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+
+  useEffect(() => {
+    setUrl(ing.supplierUrl ?? '');
+  }, [ing.supplierUrl]);
+
+  const runImport = async () => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError(null);
+    setFound(null);
+    setApplied(false);
+    try {
+      const result = await importFromSupplierUrl(trimmed, settings.googleAiApiKey);
+      setFound(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Preview of the fractional cost the detected values would produce. */
+  const preview = useMemo(() => {
+    if (!found?.price || !found.size || !found.unit) return undefined;
+    return calculateFractionalCost({
+      measurementType: found.unit === 'ml' ? 'volume' : 'weight',
+      purchaseSize: found.size,
+      purchaseUnit: found.unit,
+      purchasePrice: found.price,
+    });
+  }, [found]);
+
+  const applyFound = async () => {
+    if (!found) return;
+    setApplying(true);
+    try {
+      const patch: Partial<Ingredient> = { supplierUrl: url.trim() };
+      if (found.price !== undefined) patch.purchasePrice = found.price;
+      if (found.size !== undefined) patch.purchaseSize = found.size;
+      if (found.unit !== undefined) {
+        patch.purchaseUnit = found.unit;
+        // ml bottles are dosed in drops; solid units are weighed in grams.
+        patch.measurementType = found.unit === 'ml' ? 'volume' : 'weight';
+      }
+      await ingredientsRepo.update(ing.id, patch);
+      setFound(null);
+      setApplied(true);
+      setTimeout(() => setApplied(false), 3000);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const unitLabel = (r: SupplierParseResult) =>
+    r.size !== undefined && r.unit ? `${r.size} ${r.unit}` : null;
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-500">
+        <LinkIcon className="h-3 w-3" />
+        {t('inventory.supplierLink', 'Paste supplier link to auto-fill pricing')}
+      </label>
+      <div className="flex gap-1.5">
+        <input
+          type="url"
+          className="input min-w-0 flex-1 text-sm"
+          placeholder="https://…"
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setError(null); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && url.trim() && !busy) void runImport(); }}
+        />
+        <button
+          className="btn-secondary shrink-0 px-3 text-xs"
+          disabled={!url.trim() || busy}
+          onClick={() => void runImport()}
+          title={settings.googleAiApiKey
+            ? t('inventory.autoFillTitleAi', 'Reads the page, with Gemini AI as backup (your key from Settings)')
+            : t('inventory.autoFillTitle', 'Reads the page locally. Add a Google AI key in Settings for smarter extraction.')}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {t('inventory.autoFill', 'Auto-fill')}
+        </button>
+      </div>
+
+      {/* Confirmation box — never write to the DB without an explicit Apply */}
+      {found && (
+        <div className="mt-2 rounded-xl bg-gaia-50 px-3 py-2.5 ring-1 ring-gaia-200">
+          <p className="text-xs font-semibold text-gaia-800">
+            {found.source === 'ai'
+              ? t('inventory.foundByAi', 'Gemini found on the page:')
+              : t('inventory.foundOnPage', 'Found on the page:')}
+          </p>
+          {found.productName && (
+            <p className="mt-0.5 truncate text-[11px] text-slate-500">{found.productName}</p>
+          )}
+          <p className="mt-1 text-sm text-slate-700">
+            {found.price !== undefined && <span className="font-bold">${found.price.toFixed(2)}</span>}
+            {found.price !== undefined && unitLabel(found) && ' · '}
+            {unitLabel(found)}
+            {preview !== undefined && (
+              <span className="ml-1.5 text-xs font-semibold text-emerald-700">
+                → ${preview.toFixed(4)}{found.unit === 'ml' ? '/drop' : '/g'}
+              </span>
+            )}
+          </p>
+          {(found.price === undefined || found.size === undefined) && (
+            <p className="mt-1 text-[11px] text-amber-600">
+              {t('inventory.partialFind', 'Only part of the info was found — the rest stays as typed below.')}
+            </p>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button className="btn-primary px-3 py-1.5 text-xs" disabled={applying} onClick={() => void applyFound()}>
+              {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              {t('inventory.applyFound', 'Use these values')}
+            </button>
+            <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setFound(null)}>
+              {t('common.cancel', 'Cancel')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {applied && (
+        <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-emerald-700">
+          <Check className="h-3 w-3" />
+          {t('inventory.appliedFound', 'Pricing updated from the supplier page!')}
+        </p>
+      )}
+
+      {error && (
+        <p className="mt-1.5 flex items-start gap-1 text-xs text-amber-700">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stock-on-hand row — tracked stock that completed Work Orders deduct
+// ---------------------------------------------------------------------------
+interface StockRowProps {
+  ing: Ingredient;
+  onSaved: () => void;
+}
+
+function StockRow({ ing, onSaved }: StockRowProps) {
+  const { t } = useTranslation();
+  const [stock, setStock] = useState(ing.stockOnHand !== undefined ? String(ing.stockOnHand) : '');
+
+  useEffect(() => {
+    setStock(ing.stockOnHand !== undefined ? String(ing.stockOnHand) : '');
+  }, [ing.stockOnHand]);
+
+  const unit = baseUnitOf(ing);
+  const container = containerBaseUnits(ing);
+
+  const save = async (raw: string) => {
+    const val = parseFloat(raw);
+    await ingredientsRepo.update(ing.id, {
+      stockOnHand: isNaN(val) || val < 0 ? undefined : val,
+    });
+    onSaved();
+  };
+
+  const addContainer = async () => {
+    if (!container) return;
+    const current = parseFloat(stock) || 0;
+    const next = Math.round((current + container) * 100) / 100;
+    setStock(String(next));
+    await save(String(next));
+  };
+
+  const tracked = ing.stockOnHand !== undefined;
+  const low = tracked && container !== null && (ing.stockOnHand ?? 0) > 0 && (ing.stockOnHand ?? 0) < container * 0.2;
+  const out = tracked && (ing.stockOnHand ?? 0) <= 0;
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs font-medium text-slate-500">
+          {t('inventory.stockOnHand', 'Stock on hand')}
+        </label>
+        <input
+          type="number"
+          min={0}
+          step={1}
+          className="input w-24 text-sm"
+          placeholder={t('inventory.stockOff', 'off')}
+          value={stock}
+          onChange={(e) => setStock(e.target.value)}
+          onBlur={(e) => void save(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLElement).blur(); }}
+        />
+        <span className="text-xs text-slate-400">{unit}</span>
+
+        {container !== null && (
+          <button
+            className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500 transition hover:border-gaia-300 hover:bg-gaia-50 hover:text-gaia-700"
+            onClick={() => void addContainer()}
+            title={t('inventory.addContainerTitle', 'Add one full container to stock')}
+          >
+            <PackagePlus className="h-3 w-3" />
+            {t('inventory.addContainer', '+1 container ({{n}} {{unit}})', { n: Math.round(container), unit })}
+          </button>
+        )}
+
+        {out && (
+          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200">
+            {t('inventory.outOfStock', 'out of stock')}
+          </span>
+        )}
+        {low && !out && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
+            {t('inventory.lowStock', 'running low')}
+          </span>
+        )}
+        {!tracked && (
+          <span className="text-[11px] text-slate-400">
+            {t('inventory.stockHint', 'Leave empty to skip stock tracking. Completed orders deduct automatically.')}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

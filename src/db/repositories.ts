@@ -2,12 +2,17 @@ import { db, DEFAULT_SETTINGS } from './db';
 import type {
   AppSettings,
   AssetRecord,
+  Client,
   DesignVersion,
   Draft,
   Ingredient,
+  IngredientCategory,
   LabelSet,
   Recipe,
   SetPurchase,
+  WorkOrder,
+  WorkOrderItem,
+  WorkOrderUsageLine,
 } from '@/types';
 
 const uid = () =>
@@ -42,6 +47,27 @@ export function calculateFractionalCost(ing: Partial<Ingredient>): number | unde
     // 'g' or undefined → grams as-is
     return purchasePrice / grams;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Measurement helpers (shared by Inventory, Recipes, and Work Orders)
+// ---------------------------------------------------------------------------
+
+/** Categories measured in drops by default (everything else uses grams). */
+export const VOLUME_CATEGORIES: ReadonlySet<IngredientCategory> = new Set([
+  'essential-oil',
+  'fragrance',
+]);
+
+/** True when the ingredient is measured in drops (volume) rather than grams. */
+export function isVolumeIngredient(ing: Pick<Ingredient, 'measurementType' | 'category'>): boolean {
+  if (ing.measurementType) return ing.measurementType === 'volume';
+  return ing.category ? VOLUME_CATEGORIES.has(ing.category) : false;
+}
+
+/** Base unit label for an ingredient ('g' or 'drops'). */
+export function baseUnitOf(ing: Pick<Ingredient, 'measurementType' | 'category'>): 'g' | 'drops' {
+  return isVolumeIngredient(ing) ? 'drops' : 'g';
 }
 
 // --- Ingredients -----------------------------------------------------------
@@ -229,6 +255,278 @@ export const setPurchasesRepo = {
     await db.setPurchases.update(id, patch);
   },
   remove: (id: string) => db.setPurchases.delete(id),
+};
+
+// --- Clients ----------------------------------------------------------------
+
+export const clientsRepo = {
+  all: () => db.clients.orderBy('name').toArray(),
+  get: (id: string) => db.clients.get(id),
+  async create(input: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>): Promise<Client> {
+    const now = Date.now();
+    const rec: Client = { ...input, id: uid(), createdAt: now, updatedAt: now };
+    await db.clients.add(rec);
+    return rec;
+  },
+  async update(id: string, patch: Partial<Client>) {
+    await db.clients.update(id, { ...patch, updatedAt: Date.now() });
+  },
+  remove: (id: string) => db.clients.delete(id),
+  /**
+   * Returns the existing client with this name (case-insensitive) or creates
+   * one. Keeps the client list free of "Maria" / "maria" duplicates when the
+   * user types a name into the New Order form.
+   */
+  async findOrCreateByName(name: string): Promise<Client> {
+    const needle = name.trim().toLowerCase();
+    const existing = (await db.clients.toArray()).find(
+      (c) => c.name.trim().toLowerCase() === needle,
+    );
+    if (existing) return existing;
+    return this.create({ name: name.trim() });
+  },
+};
+
+// --- Work Orders -------------------------------------------------------------
+//
+// The pipeline: New Order (open) → Mark Completed → ingredient stock deducted
+// + COGS snapshot stored → PDF receipt. "Reopen" restores exactly the stock
+// that was deducted (from the usage snapshot), so mistakes are reversible.
+// ---------------------------------------------------------------------------
+
+export interface OrderUsageShortfall {
+  ingredientId: string;
+  name: string;
+  needed: number;
+  onHand: number;
+  unit: 'g' | 'drops';
+}
+
+export interface OrderUsageComputation {
+  lines: WorkOrderUsageLine[];
+  /** Total raw-material cost of all priced lines (USD). */
+  materialCost: number;
+  /** Tracked ingredients whose stock would drop below zero. */
+  shortfalls: OrderUsageShortfall[];
+}
+
+/**
+ * Computes the exact fractional ingredient usage for a set of order items.
+ *
+ * Per-unit usage = recipe amount ÷ barsPerBatch (default 1), then × quantity.
+ * Weight ingredients are in grams, volume ingredients in drops — the same
+ * base units as `Ingredient.fractionalCost`, so cost is a simple multiply.
+ */
+export function computeOrderUsage(
+  items: Array<Pick<WorkOrderItem, 'recipeId' | 'quantity'>>,
+  recipes: Recipe[],
+  ingredients: Ingredient[],
+): OrderUsageComputation {
+  const recipeById = new Map(recipes.map((r) => [r.id, r]));
+  const ingredientById = new Map(ingredients.map((i) => [i.id, i]));
+  const totals = new Map<string, number>(); // ingredientId → base-unit amount
+
+  for (const item of items) {
+    const recipe = recipeById.get(item.recipeId);
+    if (!recipe || item.quantity <= 0) continue;
+    const amounts = recipe.ingredientAmounts ?? {};
+    const perBatch = recipe.barsPerBatch && recipe.barsPerBatch > 0 ? recipe.barsPerBatch : 1;
+    for (const [ingredientId, batchAmount] of Object.entries(amounts)) {
+      if (!batchAmount || batchAmount <= 0) continue;
+      const used = (batchAmount / perBatch) * item.quantity;
+      totals.set(ingredientId, (totals.get(ingredientId) ?? 0) + used);
+    }
+  }
+
+  const lines: WorkOrderUsageLine[] = [];
+  const shortfalls: OrderUsageShortfall[] = [];
+  let materialCost = 0;
+
+  for (const [ingredientId, rawAmount] of totals) {
+    const ing = ingredientById.get(ingredientId);
+    const amount = Math.round(rawAmount * 1000) / 1000; // avoid float dust
+    const unit = ing ? baseUnitOf(ing) : 'g';
+    const cost = ing?.fractionalCost !== undefined ? amount * ing.fractionalCost : undefined;
+    if (cost !== undefined) materialCost += cost;
+    const tracked = ing?.stockOnHand !== undefined;
+    lines.push({
+      ingredientId,
+      ingredientName: ing?.name ?? 'Unknown ingredient',
+      amount,
+      unit,
+      cost,
+      deducted: tracked,
+    });
+    if (ing && tracked && (ing.stockOnHand ?? 0) < amount) {
+      shortfalls.push({
+        ingredientId,
+        name: ing.name,
+        needed: amount,
+        onHand: ing.stockOnHand ?? 0,
+        unit,
+      });
+    }
+  }
+
+  lines.sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
+  return { lines, materialCost, shortfalls };
+}
+
+export interface NewWorkOrderItemInput {
+  recipeId: string;
+  recipeName: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export const workOrdersRepo = {
+  /** All orders, newest first. */
+  async all(): Promise<WorkOrder[]> {
+    const asc = await db.workOrders.orderBy('createdAt').toArray();
+    return asc.reverse();
+  },
+  get: (id: string) => db.workOrders.get(id),
+  items: (workOrderId: string) =>
+    db.workOrderItems.where('workOrderId').equals(workOrderId).sortBy('createdAt'),
+  /** Every item row across all orders (one query for the dashboard). */
+  allItems: () => db.workOrderItems.toArray(),
+
+  /** Next sequential human-friendly number: ORD-001, ORD-002, … (delete-safe). */
+  async nextOrderNumber(): Promise<string> {
+    const all = await db.workOrders.toArray();
+    const maxN = all.reduce((max, o) => {
+      const m = /^ORD-(\d+)$/.exec(o.orderNumber ?? '');
+      return m ? Math.max(max, parseInt(m[1], 10)) : max;
+    }, 0);
+    return `ORD-${String(maxN + 1).padStart(3, '0')}`;
+  },
+
+  /**
+   * Creates an open order plus its item rows in one transaction.
+   * The client is resolved (or created) from the typed name.
+   */
+  async create(input: {
+    clientName: string;
+    notes?: string;
+    items: NewWorkOrderItemInput[];
+  }): Promise<{ order: WorkOrder; items: WorkOrderItem[] }> {
+    const client = await clientsRepo.findOrCreateByName(input.clientName);
+    const orderNumber = await this.nextOrderNumber();
+    const now = Date.now();
+    const orderId = uid();
+
+    const items: WorkOrderItem[] = input.items
+      .filter((i) => i.quantity > 0)
+      .map((i, idx) => ({
+        id: uid(),
+        workOrderId: orderId,
+        recipeId: i.recipeId,
+        recipeName: i.recipeName,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        lineTotal: Math.round(i.quantity * i.unitPrice * 100) / 100,
+        createdAt: now + idx, // preserves row order on sortBy('createdAt')
+      }));
+
+    const subtotal = Math.round(items.reduce((s, i) => s + i.lineTotal, 0) * 100) / 100;
+    const order: WorkOrder = {
+      id: orderId,
+      orderNumber,
+      clientId: client.id,
+      clientName: client.name,
+      status: 'open',
+      notes: input.notes?.trim() || undefined,
+      subtotal,
+      total: subtotal,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.transaction('rw', db.workOrders, db.workOrderItems, async () => {
+      await db.workOrders.add(order);
+      await db.workOrderItems.bulkAdd(items);
+    });
+    return { order, items };
+  },
+
+  async update(id: string, patch: Partial<WorkOrder>) {
+    await db.workOrders.update(id, { ...patch, updatedAt: Date.now() });
+  },
+
+  /** Deletes the order and its item rows. */
+  async remove(id: string) {
+    await db.transaction('rw', db.workOrders, db.workOrderItems, async () => {
+      const itemIds = (await db.workOrderItems.where('workOrderId').equals(id).toArray()).map(
+        (i) => i.id,
+      );
+      await db.workOrderItems.bulkDelete(itemIds);
+      await db.workOrders.delete(id);
+    });
+  },
+
+  /**
+   * Marks an order Completed: computes the exact fractional ingredient usage,
+   * deducts every TRACKED ingredient's stockOnHand (clamped at 0), and stores
+   * the usage snapshot + material-cost (COGS) on the order.
+   */
+  async complete(id: string): Promise<OrderUsageComputation | null> {
+    const order = await db.workOrders.get(id);
+    if (!order || order.status === 'completed') return null;
+
+    const [items, recipes, ingredients] = await Promise.all([
+      this.items(id),
+      db.recipes.toArray(),
+      db.ingredients.toArray(),
+    ]);
+    const usage = computeOrderUsage(items, recipes, ingredients);
+    const now = Date.now();
+
+    await db.transaction('rw', db.workOrders, db.ingredients, async () => {
+      for (const line of usage.lines) {
+        if (!line.deducted) continue;
+        const ing = await db.ingredients.get(line.ingredientId);
+        if (!ing || ing.stockOnHand === undefined) continue;
+        const next = Math.max(0, Math.round((ing.stockOnHand - line.amount) * 1000) / 1000);
+        await db.ingredients.update(line.ingredientId, { stockOnHand: next, updatedAt: now });
+      }
+      await db.workOrders.update(id, {
+        status: 'completed',
+        completedAt: now,
+        updatedAt: now,
+        materialCost: Math.round(usage.materialCost * 100) / 100,
+        usageSnapshot: usage.lines,
+      });
+    });
+    return usage;
+  },
+
+  /**
+   * Reverts a completed order to open and restores exactly the stock that the
+   * completion deducted (using the stored snapshot — recipe edits made in the
+   * meantime cannot corrupt the restore).
+   */
+  async reopen(id: string) {
+    const order = await db.workOrders.get(id);
+    if (!order || order.status !== 'completed') return;
+    const now = Date.now();
+
+    await db.transaction('rw', db.workOrders, db.ingredients, async () => {
+      for (const line of order.usageSnapshot ?? []) {
+        if (!line.deducted) continue;
+        const ing = await db.ingredients.get(line.ingredientId);
+        if (!ing || ing.stockOnHand === undefined) continue;
+        const next = Math.round((ing.stockOnHand + line.amount) * 1000) / 1000;
+        await db.ingredients.update(line.ingredientId, { stockOnHand: next, updatedAt: now });
+      }
+      await db.workOrders.update(id, {
+        status: 'open',
+        completedAt: undefined,
+        materialCost: undefined,
+        usageSnapshot: undefined,
+        updatedAt: now,
+      });
+    });
+  },
 };
 
 // --- Settings --------------------------------------------------------------
