@@ -1,7 +1,7 @@
 {
   "name": "gaia-label-studio",
   "private": true,
-  "version": "2.0.32",
+  "version": "2.0.34",
   "description": "Gaia's Label Studio — an offline-first, Canva-like label & sticker editor with an Avery print-routing engine.",
   "author": "Gaia",
   "main": "electron/main.cjs",

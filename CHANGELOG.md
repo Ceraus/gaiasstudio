@@ -4,9 +4,27 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.0.34] - 2026-07-26
 
 ### Added
+- **Client Work Orders** — a new Orders screen for tracking client orders:
+  add line items from your recipes (pre-filled with retail price/bars-per-
+  batch), auto-compute ingredient usage against on-hand stock with shortfall
+  warnings, complete an order to deduct stock, and generate a PDF receipt
+  per order (Dexie v13: `clients`, `workOrders`, `workOrderItems`).
+- **Smart Pantry inventory redesign** — Inventory is now organized into
+  collapsible category shelves (Colorants, Essential & Fragrance Oils,
+  Carrier Oils & Butters, Botanicals & Additives, Soap Bases), an "in-use
+  only" toggle to hide anything not in a saved recipe, and "Quick Set" bulk
+  pricing per shelf.
+- **AI supplier URL importer** in Inventory — paste a supplier product
+  link and the app extracts total price + container size (local scraper
+  first, Gemini fallback) to prefill fractional-cost pricing.
+- **Stock-on-hand tracking** for ingredients — optional per-ingredient
+  stock levels that completed Work Orders deduct automatically.
+- **Multi-select layer grouping in the editor** — Ctrl/Cmd-click to toggle
+  layers into a multi-selection, Shift-click to select a range, then Group
+  them with one click; a single selected group can be Ungrouped again.
 - **Custom Materials & Packaging library** — a reusable, shared list of
   packaging/materials costs (bags, boxes, labels) with categories, cost and
   unit, active/inactive states (Dexie v11). Managed from a new card on the
