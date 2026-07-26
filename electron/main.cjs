@@ -1,6 +1,6 @@
 // Gaia's Label Studio — desktop shell (loads the Vite production build).
 // CommonJS on purpose: package.json uses "type":"module" for the web app.
-const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const bundledAi = require('./bundledAi.cjs');
@@ -348,11 +348,51 @@ app.whenReady().then(() => {
     return true;
   });
 
-  // Bundled local AI (copywriting assist) — runs entirely in this process via
-  // node-llama-cpp against the model shipped in resources/models. Zero setup,
-  // 100% offline. See electron/bundledAi.cjs.
+  // Bundled local AI — runs entirely in this process via node-llama-cpp
+  // against the model shipped in resources/models. Zero setup, 100% offline.
+  // `generate` powers the copywriting assist; `extract` is the supplier-link
+  // price importer's grammar-constrained JSON tier. See electron/bundledAi.cjs.
   ipcMain.handle('gaia:bundled-ai-status', () => bundledAi.getBundledAiStatus());
   ipcMain.handle('gaia:bundled-ai-generate', (_event, prompt) => bundledAi.generateBundledAi(String(prompt || '')));
+  ipcMain.handle('gaia:bundled-ai-extract', (_event, pageText) => bundledAi.extractBundledAi(String(pageText || '')));
+
+  // Supplier price importer — fetch a product page from the main process so
+  // the renderer is never blocked by shop CORS policies. Read-only GET.
+  ipcMain.handle('gaia:fetch-url', async (_event, url) => {
+    try {
+      const parsed = new URL(String(url));
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { ok: false, status: 0, text: '' };
+      }
+      const res = await net.fetch(parsed.toString(), {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      const text = await res.text();
+      return { ok: res.ok, status: res.status, text };
+    } catch (err) {
+      console.error('[Gaia] gaia:fetch-url failed:', err);
+      return { ok: false, status: 0, text: '' };
+    }
+  });
+
+  // Silent PDF save — writes base64 PDF bytes into a sub-folder of the
+  // portable save system (e.g. work_orders/Maria_Lopez_ORD-003.pdf) without
+  // any "Save As" dialog. Returns the absolute path for the success toast.
+  ipcMain.handle('gaia:save-pdf', async (_event, { base64, folder, filename }) => {
+    // Never allow path traversal out of the save system.
+    const safeFolder = String(folder || 'exports').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = safeBasename(filename || 'document.pdf');
+    const dir = path.join(saveSystemDir, safeFolder);
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, safeName.toLowerCase().endsWith('.pdf') ? safeName : `${safeName}.pdf`);
+    await fs.promises.writeFile(filePath, Buffer.from(String(base64), 'base64'));
+    return { path: filePath };
+  });
 
   createWindow();
 

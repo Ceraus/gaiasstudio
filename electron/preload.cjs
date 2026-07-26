@@ -104,4 +104,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bundledAiGenerate(prompt) {
     return ipcRenderer.invoke('gaia:bundled-ai-generate', prompt);
   },
+
+  /**
+   * Asks the bundled in-app AI model to extract product info (name, price,
+   * container size + unit) from supplier product-page text. Grammar-enforced
+   * JSON output; runs entirely offline in the main process.
+   * @param {string} pageText
+   * @returns {Promise<{ ok: boolean, result?: { productName: string, price: number, size: number, unit: string }, error?: string }>}
+   */
+  bundledAiExtract(pageText) {
+    return ipcRenderer.invoke('gaia:bundled-ai-extract', pageText);
+  },
+
+  /**
+   * Fetches a URL from the main process (bypasses renderer CORS).
+   * Used by the supplier price importer.
+   * @param {string} url
+   * @returns {Promise<{ok: boolean, status: number, text: string}>}
+   */
+  fetchUrl(url) {
+    return ipcRenderer.invoke('gaia:fetch-url', url);
+  },
+
+  /**
+   * Silently saves a PDF (base64 bytes) into a sub-folder of the portable
+   * save system, e.g. savePdf(b64, 'work_orders', 'Maria_ORD-003.pdf').
+   * @param {string} base64
+   * @param {string} folder
+   * @param {string} filename
+   * @returns {Promise<{path: string}>}
+   */
+  savePdf(base64, folder, filename) {
+    return ipcRenderer.invoke('gaia:save-pdf', { base64, folder, filename });
+  },
 });
