@@ -103,6 +103,8 @@ interface RecipeForm {
   color?: string;
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
   retailPrice: string;
+  /** How many bars one batch of the amounts yields (blank = 1). Work orders divide by this. */
+  barsPerBatch: string;
 }
 
 /** Max recipe rows shown per page in "Your Recipes" — chosen so the list's
@@ -132,6 +134,7 @@ const emptyForm: RecipeForm = {
   color: undefined,
   customCosts: [],
   retailPrice: '',
+  barsPerBatch: '',
 };
 
 export default function RecipesScreen() {
@@ -209,6 +212,7 @@ export default function RecipesScreen() {
       color: r.color,
       customCosts: r.customCosts ?? [],
       retailPrice: r.retailPrice !== undefined ? String(r.retailPrice) : '',
+      barsPerBatch: r.barsPerBatch !== undefined ? String(r.barsPerBatch) : '',
     });
     setHighlightMissing(false);
     setBenefitSuggestion(null);
@@ -253,6 +257,10 @@ export default function RecipesScreen() {
       customCosts: form.customCosts,
       retailPrice: (() => {
         const n = parseFloat(form.retailPrice);
+        return !isNaN(n) && n > 0 ? n : undefined;
+      })(),
+      barsPerBatch: (() => {
+        const n = parseFloat(form.barsPerBatch);
         return !isNaN(n) && n > 0 ? n : undefined;
       })(),
     };
@@ -762,6 +770,8 @@ export default function RecipesScreen() {
               materialCost={liveMaterialCogs}
               retailPrice={form.retailPrice}
               onRetailPriceChange={(val) => setForm((f) => ({ ...f, retailPrice: val }))}
+              barsPerBatch={form.barsPerBatch}
+              onBarsPerBatchChange={(val) => setForm((f) => ({ ...f, barsPerBatch: val }))}
               ingredients={ingredients}
               selectedIds={form.ingredientIds}
               amounts={form.ingredientAmounts}
@@ -1306,6 +1316,8 @@ function RevenueTrackerCard({
   selectedIds,
   amounts,
   customCosts,
+  barsPerBatch,
+  onBarsPerBatchChange,
 }: {
   materialCost: number;
   retailPrice: string;
@@ -1314,6 +1326,8 @@ function RevenueTrackerCard({
   selectedIds: string[];
   amounts: Record<string, string>;
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
+  barsPerBatch: string;
+  onBarsPerBatchChange: (val: string) => void;
 }) {
   const { t } = useTranslation();
   const [breakdownOpen, setBreakdownOpen] = useState(false);
@@ -1387,6 +1401,23 @@ function RevenueTrackerCard({
             />
           </div>
         </div>
+      </div>
+
+      {/* Bars per batch — powers Work Order stock deduction (amounts ÷ this × qty sold) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="label mb-0 text-[11px]">{t('recipes.barsPerBatch', 'Bars per batch')}</label>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          className="input w-24"
+          placeholder="1"
+          value={barsPerBatch}
+          onChange={(e) => onBarsPerBatchChange(e.target.value)}
+        />
+        <span className="text-[11px] text-slate-400">
+          {t('recipes.barsPerBatchHint', 'How many bars the ingredient amounts above make. Orders deduct amounts ÷ this per bar sold.')}
+        </span>
       </div>
 
       {hasRetail && grossProfit !== undefined && margin !== undefined && (

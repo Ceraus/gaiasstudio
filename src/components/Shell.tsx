@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BookOpen, FileStack, FlaskConical, Layers,
+  BookOpen, ClipboardList, FileStack, FlaskConical, Layers,
   Leaf, Loader2, Package, Plus, Receipt, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
 import { useAppStore, type Screen } from '@/store/useAppStore';
@@ -30,10 +30,12 @@ const ExportScreen = lazy(() => import('@/components/screens/ExportScreen'));
 // and pdf-lib, so it stays out of the initial bundle too.
 const BatchPrintScreen = lazy(() => import('@/components/screens/BatchPrintScreen'));
 const FinancesScreen = lazy(() => import('@/components/screens/FinancesScreen'));
+// Work Orders builds client receipts with pdf-lib — lazy-loaded like Finances.
+const WorkOrdersScreen = lazy(() => import('@/components/screens/WorkOrdersScreen'));
 
 /** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings). */
 const STEPPER_SCREENS: Screen[] = [
-  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances',
+  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances', 'orders',
 ];
 
 /** Library tabs shown in the center of the browsing-mode header. */
@@ -48,6 +50,7 @@ const BASE_LIBRARY_TABS: Array<{
   { id: 'recipes',     labelKey: 'nav.recipes',     defaultLabel: 'Recipes',     icon: BookOpen     },
   { id: 'ingredients', labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: FlaskConical },
   { id: 'inventory',   labelKey: 'nav.inventory',   defaultLabel: 'Inventory',   icon: Package      },
+  { id: 'orders',      labelKey: 'nav.orders',      defaultLabel: 'Orders',      icon: ClipboardList },
   { id: 'finances',    labelKey: 'nav.finances',    defaultLabel: 'Finances',    icon: Receipt      },
   { id: 'sets',        labelKey: 'nav.sets',        defaultLabel: 'Label Sets',  icon: Layers,      optional: true },
 ];
@@ -227,6 +230,7 @@ export default function Shell() {
           {screen === 'drafts'        && <DraftsScreen />}
           {screen === 'batch'         && <BatchPrintScreen />}
           {screen === 'finances'      && <FinancesScreen />}
+          {screen === 'orders'        && <WorkOrdersScreen />}
         </Suspense>
       </main>
 
