@@ -53,11 +53,17 @@ interface AppState {
 
   /** Designs queued from the Workspace for a mixed (ink-saving) print sheet. */
   batchDraftIds: string[];
+  /**
+   * Optional per-design starting quantities for the batch queue
+   * (draftId → count). Set by the Work Order "Print labels" bridge so the
+   * sheet opens pre-filled with exactly what the client ordered.
+   */
+  batchQuantities: Record<string, number>;
 
   goto: (screen: Screen) => void;
   setActiveRecipeId: (id: string | null) => void;
   setActiveDraftId: (id: string | null) => void;
-  setBatchDraftIds: (ids: string[]) => void;
+  setBatchDraftIds: (ids: string[], quantities?: Record<string, number>) => void;
   setPromptBuilderOutput: (prompt: string | null) => void;
   setBackgroundImageUrl: (url: string | null) => void;
   /** Persist a chosen template + context to the store without navigating to the editor.
@@ -86,11 +92,12 @@ export const useAppStore = create<AppState>((set) => ({
   promptBuilderOutput: null,
   backgroundImageUrl: null,
   batchDraftIds: [],
+  batchQuantities: {},
 
   goto: (screen) => set((s) => ({ previousScreen: s.screen, screen })),
   setActiveRecipeId: (id) => set({ activeRecipeId: id }),
   setActiveDraftId: (id) => set({ activeDraftId: id }),
-  setBatchDraftIds: (ids) => set({ batchDraftIds: ids }),
+  setBatchDraftIds: (ids, quantities = {}) => set({ batchDraftIds: ids, batchQuantities: quantities }),
   setPromptBuilderOutput: (prompt) => set({ promptBuilderOutput: prompt }),
   setBackgroundImageUrl: (url) => set({ backgroundImageUrl: url }),
   setTemplate: (template, context) => set({ template, context }),
