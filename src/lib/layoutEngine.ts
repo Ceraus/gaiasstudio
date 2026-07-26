@@ -38,6 +38,13 @@ function inciList(recipe: Recipe, ingredients: Ingredient[]): string {
 }
 
 /** Removes prior text/shape but keeps the user's background & logo images. */
+/**
+ * Kinds that survive an auto-layout: the user's background & logo images AND
+ * the structural 4-layer stack (white base + legibility overlay), so layout
+ * runs only regenerate the foreground content.
+ */
+const LAYOUT_KEEP_KINDS = ['background', 'logo', 'base', 'overlay'];
+
 function clearForLayout() {
   const canvas = editor.canvas;
   if (!canvas) return;
@@ -47,7 +54,7 @@ function clearForLayout() {
     .slice()
     .forEach((o) => {
       const kind = String((o as { gaiaKind?: string }).gaiaKind ?? '');
-      if (kind && !['background', 'logo'].includes(kind) && !kind.startsWith('__')) {
+      if (kind && !LAYOUT_KEEP_KINDS.includes(kind) && !kind.startsWith('__')) {
         canvas.remove(o);
       }
     });
@@ -172,8 +179,24 @@ function layoutFront(
   const cx = s.cx;
   const cy = s.cy;
 
-  // Sage-green base — shows through when no background image is loaded
+  // Sage-green base — shows through when no background image is loaded.
+  // The strict 4-layer stack keeps a structural white Base rect above the
+  // canvas background, so tint that layer too (when there's no real
+  // background image covering it); legacy designs without one still get the
+  // canvas backgroundColor.
   canvas.backgroundColor = '#c8d4c0';
+  const structuralBase = canvas
+    .getObjects()
+    .find((o) => (o as { gaiaKind?: string }).gaiaKind === 'base');
+  const hasBgImage = canvas
+    .getObjects()
+    .some((o) => {
+      const g = o as { gaiaKind?: string; gaiaPlaceholder?: boolean };
+      return g.gaiaKind === 'background' && !g.gaiaPlaceholder;
+    });
+  if (structuralBase && !hasBgImage) {
+    structuralBase.set('fill', '#c8d4c0');
+  }
 
   // ── Legibility circle ────────────────────────────────────────────────────
   // 33% of the label width leaves a ring roughly 0.28" wide on a 2" label,

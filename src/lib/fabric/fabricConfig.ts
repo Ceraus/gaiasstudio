@@ -30,6 +30,9 @@ export const CUSTOM_PROPS = [
   'hasControls',
   // Marks the auto-generated legibility overlay rect so it can be found/toggled.
   'isLegibilityOverlay',
+  // Marks the empty "Background" slot rect created by the strict 4-layer init;
+  // it is swapped out in place when a real background image arrives.
+  'gaiaPlaceholder',
 ];
 
 let configured = false;

@@ -1,16 +1,19 @@
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
   ChevronUp,
   Eye,
   EyeOff,
+  Group as GroupIcon,
   GripVertical,
   Image as ImageIcon,
   Lock,
   Shapes,
+  Square,
   Trash2,
   Type,
+  Ungroup as UngroupIcon,
   Unlock,
   Users,
 } from 'lucide-react';
@@ -20,6 +23,7 @@ import { useEditorStore } from '@/store/useEditorStore';
 function kindIcon(kind: string) {
   if (kind === 'text') return Type;
   if (kind === 'group') return Users;
+  if (kind === 'base' || kind === 'overlay') return Square;
   if (['image', 'photo', 'logo', 'ai', 'stock', 'background'].includes(kind)) return ImageIcon;
   return Shapes;
 }
@@ -28,14 +32,43 @@ export default function LayersPanel() {
   const { t } = useTranslation();
   const layers = useEditorStore((s) => s.layers);
   const activeIds = useEditorStore((s) => s.activeIds);
+  const selection = useEditorStore((s) => s.selection);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  // Shift-click range selection anchors from the last plainly-clicked row.
+  const [anchorId, setAnchorId] = useState<string | null>(null);
 
   if (layers.length === 0) {
     return <p className="p-4 text-center text-xs text-slate-400">{t('layers.empty')}</p>;
   }
+
+  /** Plain click selects; Ctrl/Cmd toggles into the set; Shift selects a range. */
+  const handleRowClick = (e: MouseEvent, id: string) => {
+    if (e.ctrlKey || e.metaKey) {
+      const next = activeIds.includes(id)
+        ? activeIds.filter((x) => x !== id)
+        : [...activeIds, id];
+      editor.selectLayers(next);
+      setAnchorId(id);
+      return;
+    }
+    if (e.shiftKey && anchorId) {
+      const a = layers.findIndex((l) => l.id === anchorId);
+      const b = layers.findIndex((l) => l.id === id);
+      if (a !== -1 && b !== -1) {
+        const [from, to] = a < b ? [a, b] : [b, a];
+        editor.selectLayers(layers.slice(from, to + 1).map((l) => l.id));
+        return;
+      }
+    }
+    editor.selectLayer(id);
+    setAnchorId(id);
+  };
+
+  const multiSelected = activeIds.length >= 2;
+  const singleGroupSelected = activeIds.length === 1 && !!selection?.isGroup;
 
   const endDrag = () => {
     setDragId(null);
@@ -58,6 +91,34 @@ export default function LayersPanel() {
   };
 
   return (
+    <div>
+      {/* ── Group / Ungroup action bar ─────────────────────────────────────── */}
+      <div className="flex items-center gap-1.5 border-b border-slate-100 px-2 py-1.5">
+        <button
+          className="btn-secondary px-2.5 py-1 text-xs"
+          disabled={!multiSelected}
+          title={t('layers.groupTitle', 'Group the selected layers (Ctrl+G)')}
+          onClick={() => editor.group()}
+        >
+          <GroupIcon className="h-3.5 w-3.5" />
+          {t('layers.group', 'Group')}
+        </button>
+        <button
+          className="btn-secondary px-2.5 py-1 text-xs"
+          disabled={!singleGroupSelected}
+          title={t('layers.ungroupTitle', 'Split the selected group back into layers')}
+          onClick={() => editor.ungroup()}
+        >
+          <UngroupIcon className="h-3.5 w-3.5" />
+          {t('layers.ungroup', 'Ungroup')}
+        </button>
+        <span className="ml-auto pr-1 text-[10px] leading-tight text-slate-400">
+          {multiSelected
+            ? t('layers.nSelected', '{{count}} selected', { count: activeIds.length })
+            : t('layers.multiHint', 'Ctrl-click: multi · drag: reorder')}
+        </span>
+      </div>
+
     <ul className="divide-y divide-slate-50" onDragLeave={() => setDropIndex(null)}>
       {layers.map((layer, idx) => {
         const Icon = kindIcon(layer.kind);
@@ -96,7 +157,7 @@ export default function LayersPanel() {
             />
             <button
               className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              onClick={() => editor.selectLayer(layer.id)}
+              onClick={(e) => handleRowClick(e, layer.id)}
             >
               <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-gaia-600' : 'text-slate-400'}`} />
               {editingId === layer.id ? (
@@ -171,5 +232,6 @@ export default function LayersPanel() {
         );
       })}
     </ul>
+    </div>
   );
 }
