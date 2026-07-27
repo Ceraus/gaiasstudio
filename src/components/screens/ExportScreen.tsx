@@ -4,6 +4,10 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Clipbo
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import { editor, parseTextObjectsFromJson } from '@/lib/fabric/editorController';
+import {
+  applyDynamicVariablesToCanvasJson,
+  resolveLatestLotCodeForRecipe,
+} from '@/lib/dynamicLabelVars';
 import { recipesRepo, ingredientsRepo, draftsRepo } from '@/db/repositories';
 import type { Ingredient, Recipe, AveryTemplate } from '@/types';
 import {
@@ -67,6 +71,8 @@ export default function ExportScreen() {
   const labelPng = useAppStore((s) => s.labelPng);
   const setPendingExportLang = useAppStore((s) => s.setPendingExportLang);
   const settings = useAppStore((s) => s.settings);
+  const designJson = useAppStore((s) => s.designJson);
+  const activeRecipeId = useAppStore((s) => s.activeRecipeId);
   const recipeName = useExportRecipeName();
 
   const [exportLang, setExportLang] = useState<LayoutLang>(() => settings.language ?? 'es');
@@ -104,17 +110,32 @@ export default function ExportScreen() {
 
   const pdfName = peekExportName(buildExportOpts(settings.filenamePrefix, recipeName));
 
+  useEffect(() => {
+    void (async () => {
+      const latest = await resolveLatestLotCodeForRecipe(activeRecipeId ?? undefined);
+      if (latest) setLotCode(latest);
+    })();
+  }, [activeRecipeId]);
+
   const exportPdf = async () => {
     setBusy(true);
     setDoneName('');
     setExportError('');
     try {
+      let png = previewPng;
+      const resolvedLot = await resolveLatestLotCodeForRecipe(activeRecipeId ?? undefined);
+      if (designJson && template) {
+        const resolvedJson = applyDynamicVariablesToCanvasJson(designJson, { lotCode: resolvedLot });
+        png = await editor.renderDesignPng(resolvedJson, template, settings);
+      }
+      if (!png) throw new Error('No label preview');
+      const stampLot = lotCode.trim() || resolvedLot || undefined;
       const bytes = await buildLabelSheetPdf({
         template,
-        pngDataUrl: previewPng,
+        pngDataUrl: png,
         quantity,
         fillSheet,
-        lotCode: lotCode.trim() || undefined,
+        lotCode: stampLot,
       });
       const opts = buildExportOpts(settings.filenamePrefix, recipeName);
       const name = peekExportName(opts);
@@ -218,6 +239,13 @@ export default function ExportScreen() {
                 />
                 <p className="mt-1 text-[11px] text-slate-400">
                   {t('export.lotCodeHint', 'Printed in tiny type inside the bottom edge of every label — know which batch (and cure date) each bar came from.')}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {t(
+                    'export.lotCodeDynamicHint',
+                    'Tip: add {{LOT_CODE}} as a text box in the editor — it auto-fills with the latest FDA lot code from completed work orders.',
+                    { LOT_CODE: '{{LOT_CODE}}' },
+                  )}
                 </p>
               </div>
               <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">

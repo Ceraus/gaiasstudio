@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Cloud, Database, Download, FolderOpen, GraduationCap, Instagram, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Share2, Smartphone, Star, Store, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Cloud, Database, Download, FolderOpen, GraduationCap, Instagram, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Share2, Smartphone, Star, Store, Trash2, Upload, WifiOff, X, ZoomIn, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { useLibraryStore } from '@/store/useLibraryStore';
@@ -66,6 +66,7 @@ export default function SettingsScreen() {
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncConflict, setSyncConflict] = useState(false);
   const [syncMeta, setSyncMeta] = useState<string | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
@@ -108,13 +109,25 @@ export default function SettingsScreen() {
   async function handleCloudPush() {
     setSyncBusy(true);
     setSyncMessage(null);
+    setSyncConflict(false);
     try {
       const result = await pushCloudBackup(settings);
       if (result.status === 'pushed') {
         const when = result.remoteExportedAt ?? new Date().toISOString();
-        await updateSettings({ cloudSyncLastPushedAt: when });
+        await updateSettings({
+          cloudSyncLastPushedAt: when,
+          cloudSyncLastPulledAt: when,
+        });
         setSyncMessage(t('settings.cloudSyncPushed', 'Uploaded to cloud.'));
         void refreshSyncMeta();
+      } else if (result.status === 'sync_conflict') {
+        setSyncConflict(true);
+        setSyncMessage(
+          t('settings.cloudSyncConflict', {
+            defaultValue:
+              'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
+          }),
+        );
       } else {
         setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
       }
@@ -148,11 +161,14 @@ export default function SettingsScreen() {
   async function handleCloudSyncNow() {
     setSyncBusy(true);
     setSyncMessage(null);
+    setSyncConflict(false);
     try {
       const result = await runCloudSync(settings, { autoPull: true, autoPush: true });
       if (result.status === 'pushed') {
+        const when = result.remoteExportedAt ?? new Date().toISOString();
         await updateSettings({
-          cloudSyncLastPushedAt: result.remoteExportedAt ?? new Date().toISOString(),
+          cloudSyncLastPushedAt: when,
+          cloudSyncLastPulledAt: when,
         });
         setSyncMessage(t('settings.cloudSyncPushed', 'Uploaded to cloud.'));
       } else if (result.status === 'pulled') {
@@ -162,6 +178,14 @@ export default function SettingsScreen() {
         setSyncMessage(t('settings.cloudSyncPulled', 'Downloaded from cloud — reloading…'));
         setTimeout(() => window.location.reload(), 1200);
         return;
+      } else if (result.status === 'sync_conflict') {
+        setSyncConflict(true);
+        setSyncMessage(
+          t('settings.cloudSyncConflict', {
+            defaultValue:
+              'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
+          }),
+        );
       } else if (result.status === 'in_sync') {
         setSyncMessage(t('settings.cloudSyncInSync', 'Already up to date.'));
       } else if (result.status === 'remote_newer') {
@@ -707,7 +731,17 @@ export default function SettingsScreen() {
               </button>
             </div>
             {syncMessage && (
-              <p className="mt-3 text-xs text-slate-500">{syncMessage}</p>
+              <p
+                className={`mt-3 flex items-start gap-2 text-xs ${
+                  syncConflict
+                    ? 'rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 font-medium text-rose-800'
+                    : 'text-slate-500'
+                }`}
+                role={syncConflict ? 'alert' : 'status'}
+              >
+                {syncConflict && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />}
+                <span>{syncMessage}</span>
+              </p>
             )}
           </section>
 

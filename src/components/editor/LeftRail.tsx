@@ -33,6 +33,7 @@ import {
   FlipVertical2,
   GripHorizontal,
   Group,
+  Hash,
   Image as ImageIcon,
   ImagePlus,
   Magnet,
@@ -55,6 +56,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { editor } from '@/lib/fabric/editorController';
+import { LOT_CODE_VARIABLE } from '@/lib/dynamicLabelVars';
 import { requestCanvasFit, useEditorStore } from '@/store/useEditorStore';
 import AddPanel from './AddPanel';
 import AssetsDrawer, { type AssetTab } from './AssetsDrawer';
@@ -310,6 +312,11 @@ function FloatingToolbar({
             {shapeOpen && <ShapeFlyout onClose={() => setShapeOpen(false)} />}
           </div>
           <FBtn icon={QrCode} title={t('editor.tools.addQr')} onClick={() => setQrOpen(true)} />
+          <FBtn
+            icon={Hash}
+            title={t('editor.tools.insertLotCodeVar', 'Insert lot code variable')}
+            onClick={() => editor.addText('body', LOT_CODE_VARIABLE)}
+          />
           <FSep />
 
           {/* Arrange */}
@@ -494,6 +501,11 @@ export default function LeftRail() {
                   {shapeOpen && <ShapeFlyout onClose={() => setShapeOpen(false)} />}
                 </div>
                 <ToolBtn icon={QrCode} title={t('editor.tools.addQr')} onClick={() => setQrOpen(true)} />
+                <ToolBtn
+                  icon={Hash}
+                  title={t('editor.tools.insertLotCodeVar', 'Insert lot code variable')}
+                  onClick={() => editor.addText('body', LOT_CODE_VARIABLE)}
+                />
                 {/* Background with pulse dot */}
                 <div className="relative">
                   <ToolBtn

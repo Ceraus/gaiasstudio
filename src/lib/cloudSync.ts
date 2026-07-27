@@ -13,6 +13,7 @@ export type CloudSyncStatus =
   | 'pushed'
   | 'pulled'
   | 'remote_newer'
+  | 'sync_conflict'
   | 'error';
 
 export interface CloudSyncResult {
@@ -61,11 +62,38 @@ export async function fetchCloudSyncMeta(settings: AppSettings): Promise<CloudSy
     headers: syncHeaders(token),
   });
   if (!res.ok) return null;
-  const data = (await res.json()) as CloudSyncMeta;
+  const data = (await res.json()) as CloudSyncMeta & { lastModified?: string };
+  const exportedAt = data.exportedAt ?? data.lastModified ?? null;
   return {
-    exportedAt: data.exportedAt ?? null,
+    exportedAt,
     size: Number(data.size ?? 0),
   };
+}
+
+/**
+ * Returns a conflict result when the cloud has data newer than this device's
+ * last successful pull — pushing would overwrite changes Rosa never received.
+ */
+export async function detectSyncConflict(settings: AppSettings): Promise<CloudSyncResult | null> {
+  const meta = await fetchCloudSyncMeta(settings);
+  if (!meta?.exportedAt) return null;
+
+  const remoteTs = Date.parse(meta.exportedAt);
+  if (!Number.isFinite(remoteTs)) return null;
+
+  const lastPulled = settings.cloudSyncLastPulledAt
+    ? Date.parse(settings.cloudSyncLastPulledAt)
+    : 0;
+
+  if (remoteTs > lastPulled + 2000) {
+    return {
+      status: 'sync_conflict',
+      remoteExportedAt: meta.exportedAt,
+      message:
+        'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
+    };
+  }
+  return null;
 }
 
 export async function pushCloudBackup(settings: AppSettings): Promise<CloudSyncResult> {
@@ -74,6 +102,9 @@ export async function pushCloudBackup(settings: AppSettings): Promise<CloudSyncR
   if (!settings.cloudSyncEnabled || !url || !token) {
     return { status: 'disabled', message: 'Cloud sync is not configured.' };
   }
+
+  const conflict = await detectSyncConflict(settings);
+  if (conflict) return conflict;
 
   try {
     const backup = await buildBackup();
@@ -154,6 +185,8 @@ export async function runCloudSync(
     }
 
     if (localTs > remoteTs + 30_000 && autoPush) {
+      const conflict = await detectSyncConflict(settings);
+      if (conflict) return conflict;
       return pushCloudBackup(settings);
     }
 

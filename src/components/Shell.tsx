@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   BarChart3, BookOpen, ChevronDown, ClipboardList, FileStack, FlaskConical, HelpCircle, Layers,
-  Loader2, Package, Plus, Receipt, Settings as SettingsIcon, ShoppingBag, Sparkles, Store,
+  Loader2, Package, Plus, Receipt, Settings as SettingsIcon, ShoppingBag, Sparkles, Store, AlertTriangle,
 } from 'lucide-react';
 import brandIcon from '@/assets/icon.png';
 import { useAppStore, type Screen } from '@/store/useAppStore';
@@ -95,6 +95,7 @@ export default function Shell() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [openNavGroup, setOpenNavGroup] = useState<NavGroup | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [cloudSyncConflict, setCloudSyncConflict] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
 
   const streamlinedMobile = useStreamlinedMobile(settings);
@@ -160,9 +161,19 @@ export default function Shell() {
       const s = useAppStore.getState().settings;
       if (!s.cloudSyncEnabled || !s.cloudSyncUrl?.trim() || !s.cloudSyncToken?.trim()) return;
       const result = await runCloudSync(s, { autoPull: false, autoPush: true });
+      if (result.status === 'sync_conflict') {
+        setCloudSyncConflict(
+          t('settings.cloudSyncConflict', {
+            defaultValue:
+              'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
+          }),
+        );
+        return;
+      }
       if (result.status === 'pushed') {
         await updateSettings({
           cloudSyncLastPushedAt: result.remoteExportedAt ?? new Date().toISOString(),
+          cloudSyncLastPulledAt: result.remoteExportedAt ?? new Date().toISOString(),
         });
         return;
       }
@@ -247,6 +258,22 @@ export default function Shell() {
 
   return (
     <div className="flex h-full flex-col">
+      {cloudSyncConflict && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 border-b border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-900"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />
+          <p className="flex-1">{cloudSyncConflict}</p>
+          <button
+            type="button"
+            className="shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+            onClick={() => setCloudSyncConflict(null)}
+          >
+            {t('common.dismiss', 'Dismiss')}
+          </button>
+        </div>
+      )}
 
       {/* ── Header (classic responsive + desktop; hidden on streamlined phone) ─ */}
       {!streamlinedMobile && (

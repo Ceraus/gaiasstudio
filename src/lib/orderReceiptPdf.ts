@@ -170,7 +170,7 @@ export async function buildReceiptPdf({ order, items, settings }: ReceiptData): 
   drawTableHeader();
 
   items.forEach((item, idx) => {
-    ensureRoom(ROW_H);
+    ensureRoom(item.lotCode ? ROW_H + 10 : ROW_H);
     if (idx % 2 === 1) {
       page.drawRectangle({
         x: MARGIN, y: y - 6, width: PAGE_W - MARGIN * 2, height: ROW_H - 4, color: ROW_TINT,
@@ -179,6 +179,13 @@ export async function buildReceiptPdf({ order, items, settings }: ReceiptData): 
     page.drawText(fitText(item.recipeName, font, 10, COL_QTY - COL_ITEM - 60), {
       x: COL_ITEM, y, size: 10, font, color: INK,
     });
+    if (item.lotCode?.trim()) {
+      const lotPrefix = settings.language === 'es' ? 'Lote:' : 'Lot:';
+      const lotLabel = `${lotPrefix} ${item.lotCode.trim()}`;
+      page.drawText(fitText(lotLabel, font, 7.5, COL_QTY - COL_ITEM - 60), {
+        x: COL_ITEM, y: y - 11, size: 7.5, font, color: MUTED,
+      });
+    }
     const td = (val: string, rightX: number, useBold = false) => {
       const f = useBold ? bold : font;
       page.drawText(val, { x: rightX - f.widthOfTextAtSize(val, 10), y, size: 10, font: f, color: INK });
@@ -186,7 +193,7 @@ export async function buildReceiptPdf({ order, items, settings }: ReceiptData): 
     td(String(item.quantity), COL_QTY);
     td(money(item.unitPrice), COL_UNIT);
     td(money(item.lineTotal), COL_AMT, true);
-    y -= ROW_H;
+    y -= item.lotCode?.trim() ? ROW_H + 10 : ROW_H;
   });
 
   // Rule under the table

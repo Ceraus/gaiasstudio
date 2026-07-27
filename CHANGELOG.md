@@ -4,6 +4,32 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.1] - 2026-07-27
+
+### Added
+- **FDA lot code workflow** — completing a work order now generates an FDA-format
+  batch code per recipe (`GE-XX-YYMMDD-NNN`), saves it on the order and line
+  items, prints it on the client receipt PDF, and supports `{{LOT_CODE}}` dynamic
+  text in the label editor (resolved at export/batch print from the latest lot
+  for each recipe).
+- **Cloud sync conflict guard** — push is blocked when the cloud backup is newer
+  than this device's last pull; Shell and Settings show a critical warning instead
+  of silently overwriting Rosa's data at a craft fair.
+- **At-rest API key encryption** — `googleAiApiKey` and Etsy OAuth tokens are
+  encrypted in IndexedDB via Web Crypto (AES-GCM); plaintext values migrate on
+  the next save.
+
+### Changed
+- **Hybrid local AI** (from 3.0.0) — Ollama-first with bundled ~700 MB fallback;
+  Settings uses Tailscale HTTPS helper copy instead of a backend picker.
+- **Content Security Policy** — `connect-src` allows Tailscale Ollama (`http://100.*:*`);
+  `frame-src` locks Prompt Builder embeds to Google AI Studio / Gemini only.
+
+### Security
+- **SSRF hardening** — Electron supplier fetch now blocks Tailscale CGNAT (`100.*`)
+  in addition to private LAN ranges.
+- **Dependency audit** — `npm audit fix` applied (non-breaking updates in lockfile).
+
 ## [2.0.43] - 2026-07-26
 
 ### Fixed

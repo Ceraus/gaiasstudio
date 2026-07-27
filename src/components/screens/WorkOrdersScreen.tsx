@@ -171,6 +171,11 @@ export default function WorkOrdersScreen() {
       setCompleteTarget(null);
       await reload();
       const fresh = await workOrdersRepo.get(order.id);
+      if (fresh?.lotCode) {
+        showToast(
+          t('orders.lotCodeAssigned', 'FDA lot code assigned: {{code}}', { code: fresh.lotCode }),
+        );
+      }
       if (fresh) await generateReceipt(fresh);
     } catch (err) {
       console.error('[Orders] Completion failed:', err);
@@ -499,8 +504,13 @@ function OrderCard({
       {expanded && (
         <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3">
           {items.map((item) => (
-            <div key={item.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
+            <div key={item.id} className="flex flex-wrap items-center justify-between gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
               <span className="max-w-[50%] truncate font-medium text-slate-600">{item.recipeName}</span>
+              {item.lotCode && (
+                <span className="shrink-0 font-mono text-[10px] text-emerald-700">
+                  {t('orders.lotCodeLabel', 'Lot')}: {item.lotCode}
+                </span>
+              )}
               <span className="shrink-0 text-[11px] text-slate-400">
                 {item.quantity} × {fmtMoney(item.unitPrice)}
               </span>

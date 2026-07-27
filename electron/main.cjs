@@ -96,6 +96,8 @@ function isAllowedSupplierFetchUrl(parsed) {
   if (host === 'metadata.google.internal' || host.startsWith('169.254.')) return false;
   // IPv4 private / link-local ranges
   if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
+  // Tailscale CGNAT (100.64.0.0/10) — block supplier fetches into private tailnet
+  if (/^100\./.test(host)) return false;
   return true;
 }
 

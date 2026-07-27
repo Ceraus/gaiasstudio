@@ -23,10 +23,15 @@ import type {
 
 import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs } from '@/lib/inventoryMath';
 import { uid } from '@/lib/id';
+import { createLotCodeForRecipe, lotCodesRepo } from '@/lib/lotCodes';
 import {
   hydrateSettingsFromStorage,
   prepareSettingsForStorage,
 } from '@/lib/secretVault';
+import {
+  decryptSettingsFromStorage,
+  encryptSettingsForStorage,
+} from '@/lib/crypto';
 import { migrateTrainingSettings } from '@/lib/trainingMode';
 
 function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
@@ -690,7 +695,20 @@ export const workOrdersRepo = {
     const usage = computeOrderUsage(items, recipes, ingredients);
     const now = Date.now();
 
-    await db.transaction('rw', db.workOrders, db.ingredients, async () => {
+    const lotCodesByRecipe = new Map<string, string>();
+    const seenRecipeIds = new Set<string>();
+    for (const item of items) {
+      if (seenRecipeIds.has(item.recipeId)) continue;
+      seenRecipeIds.add(item.recipeId);
+      const recipe = recipes.find((r) => r.id === item.recipeId);
+      if (!recipe) continue;
+      const lotRec = await createLotCodeForRecipe(recipe, undefined, { productionDate: new Date(now) });
+      await lotCodesRepo.linkOrder(lotRec.id, id);
+      lotCodesByRecipe.set(item.recipeId, lotRec.code);
+    }
+    const orderLotCode = [...lotCodesByRecipe.values()].join(', ') || undefined;
+
+    await db.transaction('rw', db.workOrders, db.workOrderItems, db.ingredients, async () => {
       for (const line of usage.lines) {
         if (!line.deducted) continue;
         const ing = await db.ingredients.get(line.ingredientId);
@@ -698,12 +716,17 @@ export const workOrdersRepo = {
         const next = Math.max(0, Math.round((ing.stockOnHand - line.amount) * 1000) / 1000);
         await db.ingredients.update(line.ingredientId, { stockOnHand: next, updatedAt: now });
       }
+      for (const item of items) {
+        const code = lotCodesByRecipe.get(item.recipeId);
+        if (code) await db.workOrderItems.update(item.id, { lotCode: code });
+      }
       await db.workOrders.update(id, {
         status: 'completed',
         completedAt: now,
         updatedAt: now,
         materialCost: Math.round(usage.materialCost * 100) / 100,
         usageSnapshot: usage.lines,
+        lotCode: orderLotCode,
       });
     });
     return usage;
@@ -719,7 +742,7 @@ export const workOrdersRepo = {
     if (!order || order.status !== 'completed') return;
     const now = Date.now();
 
-    await db.transaction('rw', db.workOrders, db.ingredients, async () => {
+    await db.transaction('rw', db.workOrders, db.workOrderItems, db.ingredients, async () => {
       for (const line of order.usageSnapshot ?? []) {
         if (!line.deducted) continue;
         const ing = await db.ingredients.get(line.ingredientId);
@@ -727,11 +750,22 @@ export const workOrdersRepo = {
         const next = Math.round((ing.stockOnHand + line.amount) * 1000) / 1000;
         await db.ingredients.update(line.ingredientId, { stockOnHand: next, updatedAt: now });
       }
+      const itemRows = await db.workOrderItems.where('workOrderId').equals(id).toArray();
+      for (const row of itemRows) {
+        if (row.lotCode) await db.workOrderItems.update(row.id, { lotCode: undefined });
+      }
+      const linkedLots = await db.lotCodes
+        .filter((lc) => (lc.linkedOrderIds ?? []).includes(id))
+        .toArray();
+      for (const lc of linkedLots) {
+        await lotCodesRepo.unlinkOrder(lc.id, id);
+      }
       await db.workOrders.update(id, {
         status: 'open',
         completedAt: undefined,
         materialCost: undefined,
         usageSnapshot: undefined,
+        lotCode: undefined,
         updatedAt: now,
       });
     });
@@ -767,13 +801,16 @@ export const settingsRepo = {
       existing ? { ...DEFAULT_SETTINGS, ...existing } : DEFAULT_SETTINGS,
     );
     if (!existing) await db.settings.put(DEFAULT_SETTINGS);
-    return hydrateSettingsFromStorage(merged);
+    const decrypted = await decryptSettingsFromStorage(merged);
+    return hydrateSettingsFromStorage(decrypted);
   },
   async update(patch: Partial<AppSettings>) {
     const current = await this.get();
     const next = { ...current, ...patch, id: 'app' as const };
-    const stored = await prepareSettingsForStorage(next);
+    const pinPrepared = await prepareSettingsForStorage(next);
+    const stored = await encryptSettingsForStorage(pinPrepared);
     await db.settings.put(stored);
-    return hydrateSettingsFromStorage(stored);
+    const decrypted = await decryptSettingsFromStorage(stored);
+    return hydrateSettingsFromStorage(decrypted);
   },
 };

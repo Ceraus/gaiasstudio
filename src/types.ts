@@ -432,6 +432,8 @@ export interface WorkOrderItem {
   unitPrice: number;
   /** quantity × unitPrice, stored for cheap receipt/summary rendering. */
   lineTotal: number;
+  /** FDA lot code assigned when the parent work order is completed. */
+  lotCode?: string;
   createdAt: number;
 }
 
@@ -468,6 +470,8 @@ export interface WorkOrder {
   materialCost?: number;
   /** Exact ingredient deductions applied at completion. */
   usageSnapshot?: WorkOrderUsageLine[];
+  /** FDA lot code(s) for this production batch (comma-separated when multi-recipe). */
+  lotCode?: string;
   createdAt: number;
   updatedAt: number;
   completedAt?: number;

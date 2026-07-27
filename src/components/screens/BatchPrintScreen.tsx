@@ -33,6 +33,10 @@ import {
   type ExportNameOptions,
 } from '@/lib/pdfExport';
 import { footprintHeightIn, footprintWidthIn, slotPositionIn } from '@/lib/units';
+import {
+  applyDynamicVariablesToCanvasJson,
+  resolveLatestLotCodeForRecipe,
+} from '@/lib/dynamicLabelVars';
 
 const templates = (averyData as AveryDataset).templates;
 
@@ -123,7 +127,11 @@ export default function BatchPrintScreen() {
       const { editor } = await import('@/lib/fabric/editorController');
       const items: BatchItem[] = [];
       for (const entry of printable) {
-        const png = await editor.renderDesignPng(entry.draft.designJson, template, settings);
+        const resolvedLot = await resolveLatestLotCodeForRecipe(entry.draft.recipeId);
+        const designJson = applyDynamicVariablesToCanvasJson(entry.draft.designJson, {
+          lotCode: resolvedLot,
+        });
+        const png = await editor.renderDesignPng(designJson, template, settings);
         items.push({ pngDataUrl: png, quantity: entry.quantity });
       }
       const bytes = await buildMixedSheetPdf({ template, items });
