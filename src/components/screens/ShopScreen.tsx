@@ -244,7 +244,7 @@ export default function ShopScreen() {
         )}
 
         {/* Stats Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <div className="flex items-center gap-2 text-slate-500 mb-2">
               <ShoppingBag className="h-4 w-4" />
@@ -355,7 +355,11 @@ export default function ShopScreen() {
                           listing.state === 'draft' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
                           'bg-slate-100 text-slate-700 border border-slate-200'
                         }`}>
-                          {listing.state.charAt(0).toUpperCase() + listing.state.slice(1)}
+                          {listing.state === 'active'
+                            ? t('shop.stateActive', 'Active')
+                            : listing.state === 'draft'
+                              ? t('shop.stateDraft', 'Draft')
+                              : t('shop.stateInactive', 'Inactive')}
                         </span>
                       </div>
                     </div>
@@ -407,11 +411,22 @@ export default function ShopScreen() {
                 <div className="space-y-4">
                   {logs.slice(0, 15).map(log => {
                     const ok = log.errors.length === 0;
-                    const operation = `${log.direction === 'push' ? 'Push' : 'Pull'} · ${log.entity}`;
+                    const operation = t(
+                      log.direction === 'push' ? 'shop.syncPush' : 'shop.syncPull',
+                      log.direction === 'push' ? 'Push' : 'Pull',
+                    ) + ' · ' + t(
+                      log.entity === 'orders' ? 'shop.syncEntityOrders' : 'shop.syncEntityListings',
+                      log.entity === 'orders' ? 'orders' : 'listings',
+                    );
                     const message =
                       log.entity === 'orders'
-                        ? `${log.ordersImported} order(s) imported`
-                        : `${log.listingsCreated} created, ${log.listingsUpdated} updated`;
+                        ? t('shop.syncOrdersImported', '{{count}} order(s) imported', {
+                            count: log.ordersImported,
+                          })
+                        : t('shop.syncListingsSummary', '{{created}} created, {{updated}} updated', {
+                            created: log.listingsCreated,
+                            updated: log.listingsUpdated,
+                          });
                     const details = log.errors.length ? log.errors.join('; ') : undefined;
                     return (
                     <div key={log.id} className="relative pl-4 border-l-2 border-slate-100 pb-4 last:pb-0">

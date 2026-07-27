@@ -340,8 +340,8 @@ function ProductCardComponent({
               : 'bg-slate-100 text-slate-500'
         }`}>
           <Store className="h-3 w-3" />
-          {product.etsyState === 'active' ? 'Listed' :
-           product.etsyState === 'draft' ? 'Draft' : 'Not Listed'}
+          {product.etsyState === 'active' ? t('products.etsyListed', 'Listed') :
+           product.etsyState === 'draft' ? t('products.etsyDraft', 'Draft') : t('products.etsyNotListed', 'Not Listed')}
         </span>
       </div>
 
@@ -480,7 +480,7 @@ function AddProductModal({
               <option value="">{t('products.pickRecipe', '— Select a recipe —')}</option>
               {recipes.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name} {r.retailPrice ? `(${fmtMoney(r.retailPrice)})` : '(no price)'}
+                  {r.name} {r.retailPrice ? `(${fmtMoney(r.retailPrice)})` : `(${t('products.noPrice', 'no price')})`}
                 </option>
               ))}
             </select>
@@ -494,7 +494,7 @@ function AddProductModal({
                 <div className="mt-2 flex gap-4 text-xs text-slate-500">
                   <span>
                     <DollarSign className="mr-0.5 inline-block h-3 w-3" />
-                    {selectedRecipe.retailPrice ? fmtMoney(selectedRecipe.retailPrice) : 'No price'}
+                    {selectedRecipe.retailPrice ? fmtMoney(selectedRecipe.retailPrice) : t('products.noPrice', 'No price')}
                   </span>
                   {selectedRecipe.cogsTotal !== undefined && (
                     <span>COGS: {fmtMoney(selectedRecipe.cogsTotal)}</span>

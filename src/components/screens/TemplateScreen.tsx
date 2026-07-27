@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, ChevronDown, Circle, Layers, Search, Square, Sticker, Zap } from 'lucide-react';
+import { ArrowRight, ChevronDown, Circle, Layers, Library, Search, Square, Star, Sticker, Zap } from 'lucide-react';
 import averyData from '@/data/averyTemplates.json';
 import type { AveryDataset, AveryTemplate, LabelContext, LabelShape } from '@/types';
 import { describeSize } from '@/lib/units';
@@ -8,6 +8,14 @@ import { useAppStore } from '@/store/useAppStore';
 import ShapeThumb from '@/components/common/ShapeThumb';
 import SheetMiniPreview from '@/components/common/SheetMiniPreview';
 import WorkflowNav from '@/components/WorkflowNav';
+import TemplateFavoritesSetup from '@/components/screens/TemplateFavoritesSetup';
+import {
+  consumeTemplatePickerView,
+  getFavoriteIds,
+  isFavoritesConfigured,
+  resolveFavoriteTemplates,
+  toggleFavoriteId,
+} from '@/lib/templateFavorites';
 
 // ---------------------------------------------------------------------------
 // Size helpers
@@ -83,21 +91,50 @@ function TemplateCard({
   tpl,
   isSelected,
   onClick,
+  isFavorite,
+  onToggleFavorite,
+  showFavoriteToggle,
 }: {
   tpl: AveryTemplate;
   isSelected: boolean;
   onClick: () => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
+  showFavoriteToggle?: boolean;
 }) {
   const { t } = useTranslation();
   return (
     <button
       onClick={onClick}
-      className={`group flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 text-center ring-1 transition ${
+      className={`group relative flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 text-center ring-1 transition ${
         isSelected
           ? 'ring-2 ring-gaia-500 shadow-sm'
           : 'ring-slate-100 hover:ring-gaia-200'
       }`}
     >
+      {showFavoriteToggle && onToggleFavorite && (
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label={isFavorite ? t('template.removeFavorite') : t('template.addFavorite')}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleFavorite();
+            }
+          }}
+          className={`absolute right-1.5 top-1.5 rounded-full p-1.5 transition ${
+            isFavorite ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'
+          }`}
+        >
+          <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
+        </span>
+      )}
       <ShapeThumb template={tpl} />
       {/* Size — most prominent */}
       <span className="mt-0.5 text-sm font-bold leading-tight text-gaia-700">
@@ -118,18 +155,46 @@ function TemplateCard({
 // ---------------------------------------------------------------------------
 
 export default function TemplateScreen() {
+  const settings = useAppStore((s) => s.settings);
+
+  if (!isFavoritesConfigured(settings)) {
+    return <TemplateFavoritesSetup />;
+  }
+
+  return <TemplatePickerMain />;
+}
+
+function TemplatePickerMain() {
   const { t } = useTranslation();
   const startNewDesign = useAppStore((s) => s.startNewDesign);
   const setTemplate    = useAppStore((s) => s.setTemplate);
   const goto           = useAppStore((s) => s.goto);
+  const settings       = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+
+  const favoriteIds = useMemo(() => new Set(getFavoriteIds(settings)), [settings]);
+
+  const [viewMode, setViewMode] = useState<'mine' | 'catalog'>(() => consumeTemplatePickerView() ?? 'mine');
+
+  const favoriteTemplates = useMemo(
+    () => resolveFavoriteTemplates(dataset.templates, settings),
+    [settings],
+  );
+
+  const defaultSelectedId = favoriteTemplates[0]?.id ?? 'round-2';
 
   const [shape,       setShape]       = useState<LabelShape | 'all'>('all');
   const [sizeFilter,  setSizeFilter]  = useState<SizeCategory>('all');
   const [query,       setQuery]       = useState('');
   const [activePreset, setActivePreset] = useState<number | null>(null);
-  const [selectedId,  setSelectedId]  = useState<string>('round-2');
+  const [selectedId,  setSelectedId]  = useState<string>(defaultSelectedId);
   const [context,     setContext]     = useState<LabelContext>('front');
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
+
+  async function handleToggleFavorite(templateId: string) {
+    const patch = toggleFavoriteId(settings, templateId);
+    if (Object.keys(patch).length) await updateSettings(patch);
+  }
 
   // When a preset chip is toggled, clear other filters (or restore them on deactivate)
   function handlePreset(idx: number) {
@@ -149,6 +214,10 @@ export default function TemplateScreen() {
 
   // ── Filtered list ──────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
+    if (viewMode === 'mine' && activePreset === null && !query.trim()) {
+      return favoriteTemplates;
+    }
+
     // If a size preset is active, show only its templates
     if (activePreset !== null) {
       const ids = new Set(COMMON_SIZES[activePreset].ids);
@@ -156,11 +225,11 @@ export default function TemplateScreen() {
     }
 
     const q = query.trim().toLowerCase();
-    return dataset.templates.filter((tpl) => {
+    const pool = viewMode === 'mine' ? favoriteTemplates : dataset.templates;
+    return pool.filter((tpl) => {
       if (shape !== 'all' && tpl.shape !== shape) return false;
       if (sizeFilter !== 'all' && getSizeCategory(tpl) !== sizeFilter) return false;
       if (!q) return true;
-      // Search by size description, name, Avery code, or dimension (e.g. "2x4" or "3 inch")
       const sizeStr = describeSize(tpl).toLowerCase();
       const dimStr  = `${tpl.labelWidthIn}x${tpl.labelHeightIn} ${tpl.labelWidthIn}in ${tpl.labelHeightIn}in`;
       return (
@@ -170,7 +239,7 @@ export default function TemplateScreen() {
         dimStr.includes(q)
       );
     });
-  }, [shape, sizeFilter, query, activePreset]);
+  }, [shape, sizeFilter, query, activePreset, viewMode, favoriteTemplates]);
 
   const selected = useMemo(
     () => dataset.templates.find((tpl) => tpl.id === selectedId) ?? filtered[0] ?? dataset.templates[0],
@@ -178,7 +247,12 @@ export default function TemplateScreen() {
   );
 
   // ── Grouped view (only when no filters are active) ────────────────────────
-  const showGrouped = shape === 'all' && sizeFilter === 'all' && !query.trim() && activePreset === null;
+  const showGrouped =
+    viewMode === 'catalog' &&
+    shape === 'all' &&
+    sizeFilter === 'all' &&
+    !query.trim() &&
+    activePreset === null;
 
   const sizeGroups = useMemo(() => {
     if (!showGrouped) return null;
@@ -204,6 +278,7 @@ export default function TemplateScreen() {
 
   // ── Template grid renderer ────────────────────────────────────────────────
   function TemplateGrid({ templates }: { templates: AveryTemplate[] }) {
+    const showStars = viewMode === 'catalog';
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4" data-tour="template-grid">
         {templates.map((tpl) => (
@@ -212,6 +287,9 @@ export default function TemplateScreen() {
             tpl={tpl}
             isSelected={selected?.id === tpl.id}
             onClick={() => setSelectedId(tpl.id)}
+            showFavoriteToggle={showStars}
+            isFavorite={favoriteIds.has(tpl.id)}
+            onToggleFavorite={() => void handleToggleFavorite(tpl.id)}
           />
         ))}
       </div>
@@ -224,7 +302,43 @@ export default function TemplateScreen() {
       <div className="flex-1 overflow-y-auto bg-gaia-50">
         <div className="mx-auto max-w-6xl px-6 py-8">
           <h1 className="text-3xl font-semibold text-gaia-900">{t('template.title')}</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-600">{t('template.subtitle')}</p>
+          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            {viewMode === 'mine' ? t('template.subtitleMine') : t('template.subtitleCatalog')}
+          </p>
+
+          {/* My sizes ↔ full catalog */}
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode('mine');
+                clearPreset();
+                setQuery('');
+                setShape('all');
+                setSizeFilter('all');
+              }}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                viewMode === 'mine'
+                  ? 'bg-gaia-600 text-white'
+                  : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
+              }`}
+            >
+              <Star className={`h-4 w-4 ${viewMode === 'mine' ? 'fill-current' : ''}`} />
+              {t('template.mySizes', { count: favoriteTemplates.length })}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('catalog')}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                viewMode === 'catalog'
+                  ? 'bg-gaia-600 text-white'
+                  : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
+              }`}
+            >
+              <Library className="h-4 w-4" />
+              {t('template.browseCatalog', { count: dataset.count })}
+            </button>
+          </div>
 
           {/* Quick starts */}
           <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -259,6 +373,8 @@ export default function TemplateScreen() {
           <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
             {/* ── Left: Templates grid ────────────────────────────────────── */}
             <div>
+              {viewMode === 'catalog' && (
+              <>
               {/* Popular sizes quick-pick */}
               <div className="mb-4">
                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
@@ -392,6 +508,20 @@ export default function TemplateScreen() {
                   </div>
                 )}
               </div>
+              </>
+              )}
+
+              {viewMode === 'mine' && (
+                <div className="relative mb-4 w-full sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    className="input pl-9"
+                    placeholder={t('template.searchPlaceholder')}
+                    value={query}
+                    onChange={(e) => { setQuery(e.target.value); clearPreset(); }}
+                  />
+                </div>
+              )}
 
               {/* Active preset banner */}
               {activePreset !== null && (
@@ -411,9 +541,20 @@ export default function TemplateScreen() {
 
               {/* Template list: grouped or flat */}
               {filtered.length === 0 ? (
-                <p className="rounded-xl bg-white p-8 text-center text-sm text-slate-500 ring-1 ring-slate-100">
-                  {t('template.noResults')}
-                </p>
+                <div className="rounded-xl bg-white p-8 text-center ring-1 ring-slate-100">
+                  <p className="text-sm text-slate-500">
+                    {viewMode === 'mine' ? t('template.noFavorites') : t('template.noResults')}
+                  </p>
+                  {viewMode === 'mine' && (
+                    <button
+                      type="button"
+                      className="btn-secondary mt-4"
+                      onClick={() => setViewMode('catalog')}
+                    >
+                      {t('template.browseCatalogCta')}
+                    </button>
+                  )}
+                </div>
               ) : showGrouped && sizeGroups ? (
                 <div className="space-y-8">
                   {sizeGroups.map((group) => (
@@ -488,15 +629,16 @@ export default function TemplateScreen() {
       </div>
 
       <WorkflowNav
-        nextLabel={t('workflow.nextRecipe')}
+        nextLabel={t('workflow.nextIngredients', 'Next: Manage Ingredients')}
         canProceed={!!selected}
         hint={t('workflow.hintSelectTemplate')}
+        trainingHint={t('trainingMode.hintNextIngredients', 'Click here to activate your ingredients')}
         onNext={() => {
           if (selected) {
             const ctx = selected.contexts.includes(context) ? context : selected.contexts[0];
             setTemplate(selected, ctx);
           }
-          goto('recipes');
+          goto('ingredients');
         }}
       />
     </div>

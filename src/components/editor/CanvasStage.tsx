@@ -73,6 +73,50 @@ export default function CanvasStage() {
     return () => window.removeEventListener('resize', onResize);
   }, [fit]);
 
+  // Pinch-to-zoom on touch devices (classic responsive editor).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let lastDistance = 0;
+
+    const distance = (touches: TouchList) => {
+      if (touches.length < 2) return 0;
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) lastDistance = distance(e.touches);
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || lastDistance <= 0) return;
+      e.preventDefault();
+      const d = distance(e.touches);
+      const factor = d / lastDistance;
+      lastDistance = d;
+      const current = useEditorStore.getState().zoom;
+      useEditorStore.getState().set({ zoom: clamp(current * factor, 0.05, 3) });
+    };
+
+    const onTouchEnd = () => {
+      lastDistance = 0;
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [template?.id]);
+
   // Keyboard shortcuts (ignored while typing or editing text on the canvas).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

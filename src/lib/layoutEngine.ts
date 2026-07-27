@@ -12,6 +12,11 @@ import {
 } from '@/lib/circleLabelTemplate';
 import { EDITOR_PPI, ptToPx } from '@/lib/units';
 import { loadFont } from '@/lib/fontManager';
+import {
+  localizeRecipeBenefit,
+  localizeRecipeDirections,
+  localizeRecipeWarnings,
+} from '@/lib/recipeI18n';
 
 const HEADING_FONT = 'Playfair Display';
 const BODY_FONT = 'Montserrat';
@@ -149,6 +154,14 @@ export async function applyAutoLayout(
 
   const str = LABEL_STRINGS[resolvedLang] ?? LABEL_STRINGS.en;
 
+  const t = i18next.t.bind(i18next);
+  const localizedRecipe: Recipe = {
+    ...recipe,
+    benefit: localizeRecipeBenefit(recipe.name, recipe.benefit, t),
+    directions: localizeRecipeDirections(recipe.directions, t),
+    warnings: localizeRecipeWarnings(recipe.warnings, t),
+  };
+
   const isRound = template.shape === 'circle' || template.shape === 'oval';
 
   await Promise.all([
@@ -162,13 +175,13 @@ export async function applyAutoLayout(
   // Every circle/oval uses the same Avery-style stack: background ring,
   // inner legibility disc, and full formatted regulatory text.
   if (isRound) {
-    layoutCircleLabel(recipe, ingredients, str, settings, resolvedLang);
+    layoutCircleLabel(localizedRecipe, ingredients, str, settings, resolvedLang);
   } else if (context === 'front') {
-    layoutFront(recipe, str, settings, false);
+    layoutFront(localizedRecipe, str, settings, false);
   } else if (context === 'back') {
-    layoutBack(recipe, ingredients, str);
+    layoutBack(localizedRecipe, ingredients, str);
   } else {
-    layoutSide(recipe, str);
+    layoutSide(localizedRecipe, str);
   }
 
   canvas.requestRenderAll();

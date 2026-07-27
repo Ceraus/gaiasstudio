@@ -1,0 +1,8 @@
+<?php
+/**
+ * Copy to config.php and set a long random token (32+ chars).
+ * Never commit config.php — add sync/config.php to .gitignore on the server.
+ */
+return [
+    'token' => 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET',
+];

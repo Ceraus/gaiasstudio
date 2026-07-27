@@ -11,6 +11,12 @@ import {
 } from '@/lib/inventoryMath';
 import { suggestBenefitStatement, suggestRemixRecipe } from '@/lib/localAi';
 import { getIngredientDisplayName } from '@/lib/ingredientI18n';
+import {
+  localizeRecipeBenefit,
+  localizeRecipeDirections,
+  localizeRecipeWarnings,
+  relocalizeRecipeFormFields,
+} from '@/lib/recipeI18n';
 import { useAppStore } from '@/store/useAppStore';
 import WorkflowNav from '@/components/WorkflowNav';
 import BenefitPicker from '@/components/screens/BenefitPicker';
@@ -70,7 +76,7 @@ const emptyForm: RecipeForm = {
 };
 
 export default function RecipesScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const goto            = useAppStore((s) => s.goto);
   const setActiveRecipeId = useAppStore((s) => s.setActiveRecipeId);
   const activeRecipeId  = useAppStore((s) => s.activeRecipeId);
@@ -112,6 +118,29 @@ export default function RecipesScreen() {
     void reload();
   }, []);
 
+  useEffect(() => {
+    if (!editingId) return;
+    const recipe = recipes.find((r) => r.id === editingId);
+    if (!recipe) return;
+    setForm((current) => ({
+      ...current,
+      ...relocalizeRecipeFormFields(
+        recipe.name,
+        {
+          benefit: current.benefit,
+          directions: current.directions,
+          warnings: current.warnings,
+        },
+        {
+          benefit: recipe.benefit,
+          directions: recipe.directions,
+          warnings: recipe.warnings,
+        },
+        t,
+      ),
+    }));
+  }, [i18n.language, editingId, recipes, t]);
+
   const recipeTotalPages = Math.max(1, Math.ceil(recipes.length / RECIPES_PER_PAGE));
 
   // Keep the current page in range if recipes are deleted out from under it.
@@ -135,10 +164,10 @@ export default function RecipesScreen() {
     }
     setForm({
       name: r.name,
-      benefit: r.benefit,
+      benefit: localizeRecipeBenefit(r.name, r.benefit, t),
       netWeight: r.netWeight ?? '',
-      directions: r.directions || 'Lather with water and apply to skin. Rinse thoroughly.',
-      warnings: r.warnings || 'For external use only. Avoid contact with eyes.',
+      directions: localizeRecipeDirections(r.directions, t),
+      warnings: localizeRecipeWarnings(r.warnings, t),
       footer: r.footer ?? '',
       ingredientIds: r.ingredientIds,
       ingredientAmounts: amounts,
@@ -796,10 +825,12 @@ export default function RecipesScreen() {
       </div>
     </div>
       <WorkflowNav
-        prevScreen="template"
+        prevScreen="ingredients"
+        prevLabel={t('workflow.backToIngredients', 'Back: Manage Ingredients')}
         nextLabel={t('workflow.nextBackground', 'Next: Choose Background')}
         canProceed={!!template}
         hint={!template ? t('workflow.needTemplate') : t('workflow.hintSelectRecipe')}
+        trainingHint={t('trainingMode.hintNextBackground', 'Click here to pick a background')}
         onNext={handleNext}
       />
 

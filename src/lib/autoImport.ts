@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { useLibraryStore } from '@/store/useLibraryStore';
+import i18n from '@/i18n';
 
 interface ElectronAPI {
   onImageDownloaded(
@@ -66,7 +67,7 @@ export function startAutoImport(): () => void {
     try {
       const { addFromDataUrl } = useLibraryStore.getState();
       await addFromDataUrl(dataUrl, 'ai', filename);
-      emitToast(`Image "${filename}" imported from AI!`);
+      emitToast(i18n.t('assets.autoImportSuccess', 'Image "{{filename}}" imported from AI!', { filename }));
     } catch (err) {
       console.error('[Gaia] Auto-import failed:', err);
     }

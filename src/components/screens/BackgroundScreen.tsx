@@ -138,6 +138,7 @@ export default function BackgroundScreen() {
         prevScreen="recipes"
         nextScreen="editor"
         nextLabel={t('workflow.nextRefine', 'Next: Refine & Design')}
+        trainingHint={t('trainingMode.hintNextEditor', 'Click here to refine your label design')}
         onNext={() => { setBackgroundImageUrl(null); goto('editor'); }}
       />
     </div>

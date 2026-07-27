@@ -67,7 +67,7 @@ function clamp(v: number, min: number, max: number) {
 
 // ── Group divider ─────────────────────────────────────────────────────────────
 function GridSep() {
-  return <div className="mx-2 my-0.5 h-px bg-gray-700" />;
+  return <div className="mx-2 my-0.5 h-px shrink-0 bg-gray-700 max-sm:mx-0.5 max-sm:h-8 max-sm:w-px" />;
 }
 
 // ── Icon button for the 3-col grid ────────────────────────────────────────────
@@ -405,17 +405,17 @@ export default function LeftRail() {
 
   // ── Normal (docked) mode ───────────────────────────────────────────────────
   return (
-    <aside className="flex shrink-0 flex-row" data-tour="editor-rail">
+    <aside className="flex shrink-0 flex-col max-sm:w-full sm:flex-row" data-tour="editor-rail">
 
-      {/* ── 80px icon strip ──────────────────────────────────────────────────── */}
-      <div className="relative flex w-20 shrink-0 flex-col overflow-y-auto bg-gray-900 py-1.5">
+      {/* ── Icon strip — vertical dock / horizontal scroll on phone ─────────── */}
+      <div className="relative flex w-20 shrink-0 flex-col overflow-y-auto bg-gray-900 py-1.5 max-sm:w-full max-sm:flex-row max-sm:overflow-x-auto max-sm:overflow-y-hidden max-sm:py-1">
 
         {qrOpen && <QrCodeModal open={qrOpen} onClose={() => setQrOpen(false)} />}
 
         {simpleMode ? (
           /* ── Simple mode: 2 rows × 3 essential tools ──────────────────────── */
-          <div className="px-1 py-1">
-            <div className="grid grid-cols-3 gap-0.5">
+          <div className="px-1 py-1 max-sm:flex max-sm:shrink-0 max-sm:gap-0.5">
+            <div className="grid grid-cols-3 gap-0.5 max-sm:flex max-sm:grid-cols-none">
               {/* Row 1 */}
               <ToolBtn
                 icon={Type}
@@ -460,10 +460,10 @@ export default function LeftRail() {
           </div>
         ) : (
           /* ── Full mode: all groups ─────────────────────────────────────────── */
-          <>
+          <div className="max-sm:flex max-sm:flex-row max-sm:items-center">
             {/* G1: Select & Transform */}
-            <div className="px-1 py-1">
-              <div className="grid grid-cols-3 gap-0.5">
+            <div className="shrink-0 px-1 py-1">
+              <div className="grid grid-cols-3 gap-0.5 max-sm:flex max-sm:grid-cols-none">
                 <ToolBtn icon={MousePointer2}  title={t('editor.tools.select')} onClick={() => {}} />
                 <ToolBtn icon={FlipHorizontal2} title={t('editor.flipH')} disabled={!has} onClick={() => editor.flip('h')} />
                 <ToolBtn icon={FlipVertical2}   title={t('editor.flipV')} disabled={!has} onClick={() => editor.flip('v')} />
@@ -550,11 +550,11 @@ export default function LeftRail() {
                 <ToolBtn icon={Maximize2} title={t('editor.fit')}     onClick={() => requestCanvasFit()} />
               </div>
             </div>
-          </>
+          </div>
         )}
 
         {/* ── Bottom controls ───────────────────────────────────────────────── */}
-        <div className="mt-auto flex flex-col gap-0.5 px-1 pb-1 pt-2">
+        <div className="mt-auto flex flex-col gap-0.5 px-1 pb-1 pt-2 max-sm:hidden">
           <GridSep />
           {/* Simple / Full toggle */}
           <button

@@ -22,11 +22,11 @@ export default function Modal({ open, onClose, title, children, footer, width = 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 max-sm:p-0 sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-panel"
+        className="flex max-h-[92vh] w-full max-sm:max-h-[90vh] max-sm:rounded-t-2xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-panel safe-bottom sm:max-h-[88vh] sm:rounded-2xl"
         style={{ maxWidth: width }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -39,7 +39,7 @@ export default function Modal({ open, onClose, title, children, footer, width = 
           </div>
         )}
         <div className="flex-1 overflow-y-auto p-5">{children}</div>
-        {footer && <div className="border-t border-slate-100 px-5 py-3">{footer}</div>}
+        {footer && <div className="border-t border-slate-100 px-5 py-3 safe-bottom">{footer}</div>}
       </div>
     </div>
   );

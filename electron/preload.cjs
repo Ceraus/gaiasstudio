@@ -126,4 +126,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bundledAiGenerate(prompt) {
     return ipcRenderer.invoke('gaia:bundled-ai-generate', prompt);
   },
+
+  /**
+   * Writes a full-database JSON backup into Gaia's Save System/backups/.
+   * @param {string} json
+   * @param {string} filename
+   * @returns {Promise<{ path: string }>}
+   */
+  saveBackup(json, filename) {
+    return ipcRenderer.invoke('gaia:save-backup', { json, filename });
+  },
 });

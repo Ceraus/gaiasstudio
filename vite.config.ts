@@ -14,6 +14,10 @@ export default defineConfig({
   server: {
     port: 5273,
     host: true,
+    watch: {
+      // dist.zip is often locked by Explorer/archivers on Windows — ignore it.
+      ignored: ['**/dist/**', '**/*.zip'],
+    },
   },
   build: {
     outDir: 'dist',

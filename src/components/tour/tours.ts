@@ -60,14 +60,14 @@ export const TOURS: TourDefinition[] = [
         target: 'new-label',
         titleKey: 'gs3Title', titleDefault: 'Start a label any time',
         bodyKey: 'gs3Body',
-        bodyDefault: 'This button begins the guided 5-step flow: pick a real Avery shape, choose a recipe, pick a background, refine the design, then print. The app does all the math.',
+        bodyDefault: 'This button begins the guided label flow: pick a real Avery shape, activate your ingredients, choose a recipe, pick a background, refine the design, then print. The app does all the math.',
       },
       {
         screen: 'template',
         target: 'workflow-steps',
-        titleKey: 'gs4Title', titleDefault: 'The five steps, always visible',
+        titleKey: 'gs4Title', titleDefault: 'The steps, always visible',
         bodyKey: 'gs4Body',
-        bodyDefault: 'Wherever you are in the flow, this bar shows the step you\u2019re on. You can click any step to jump — nothing is ever locked away.',
+        bodyDefault: 'Wherever you are in the flow, this bar shows the step you\u2019re on — including Step 1.5 to manage ingredients. Click any step to jump — nothing is ever locked away.',
       },
       {
         screen: 'inventory',

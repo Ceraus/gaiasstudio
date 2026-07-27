@@ -1,0 +1,12 @@
+Avery catalog bookmarklet (for Rosa)
+====================================
+
+1. Create a new browser bookmark (any name, e.g. "Export Avery catalog").
+2. Paste this ENTIRE line as the bookmark URL:
+
+javascript:(async()=>{try{const[h]=document.querySelectorAll('h1');const[blank,labels]=await Promise.all([fetch('/rest/blank/default/labels').then(r=>r.json()),fetch('/rest/labels').then(r=>r.json())]);const blob=new Blob([JSON.stringify({blank,labels,fetchedAt:new Date().toISOString(),via:'bookmarklet'},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='avery-catalog.json';a.click();alert('Saved avery-catalog.json — run: npm run avery:scrape -- --from-file path/to/avery-catalog.json');}catch(e){alert('Failed: '+e);}})();
+
+3. Go to https://www.avery.com/templates
+4. Click the bookmark → downloads avery-catalog.json
+5. In Gaia project folder run:
+   npm run avery:scrape -- --from-file path/to/avery-catalog.json

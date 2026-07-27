@@ -1664,6 +1664,79 @@ class EditorController {
   getObjectsByKind(kind: string) {
     return (this.canvas?.getObjects() ?? []).filter((o) => (o as Gaia).gaiaKind === kind);
   }
+
+  // -- mobile editor (3-layer controls) ---------------------------------------
+
+  getMobileLegibilityState(): { opacity: number; tone: 'light' | 'dark'; visible: boolean } {
+    const overlays = (this.canvas?.getObjects() ?? []).filter((o) => (o as Gaia).isLegibilityOverlay);
+    const first = overlays[0];
+    if (!first) {
+      return { opacity: 0.15, tone: 'light', visible: this.legibilityOverlayVisible };
+    }
+    const fill = String(first.fill ?? '#ffffff').toLowerCase();
+    const tone = fill === '#000000' || fill === 'black' || fill === '#000' ? 'dark' : 'light';
+    return {
+      opacity: (first.opacity as number) ?? 0.15,
+      tone,
+      visible: this.legibilityOverlayVisible,
+    };
+  }
+
+  setMobileLegibilityOpacity(opacity: number) {
+    if (!this.canvas) return;
+    const v = Math.max(0, Math.min(1, opacity));
+    this.canvas
+      .getObjects()
+      .filter((o) => (o as Gaia).isLegibilityOverlay)
+      .forEach((o) => o.set('opacity', v));
+    this.canvas.requestRenderAll();
+    this.refreshLayers();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  setMobileLegibilityTone(tone: 'light' | 'dark') {
+    if (!this.canvas) return;
+    const fill = tone === 'dark' ? '#000000' : '#ffffff';
+    this.canvas
+      .getObjects()
+      .filter((o) => (o as Gaia).isLegibilityOverlay)
+      .forEach((o) => o.set('fill', fill));
+    this.canvas.requestRenderAll();
+    this.refreshLayers();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  getMobileTextFill(): string {
+    const texts = (this.canvas?.getObjects() ?? []).filter(isTextObject);
+    if (!texts.length) return '#1e293b';
+    return String(texts[0].fill ?? '#1e293b');
+  }
+
+  /** Multiplies every text object's font size (call with ratio, e.g. 1.05 / 0.95). */
+  scaleAllTextBy(factor: number) {
+    if (!this.canvas || factor <= 0 || !Number.isFinite(factor)) return;
+    this.canvas.getObjects().filter(isTextObject).forEach((o) => {
+      const tb = o as fabric.Textbox;
+      const size = (tb.fontSize as number) ?? 14;
+      tb.set('fontSize', Math.max(6, size * factor));
+      tb.initDimensions();
+    });
+    this.canvas.requestRenderAll();
+    this.syncSelection();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
+
+  setAllTextFill(color: string) {
+    if (!this.canvas) return;
+    this.canvas.getObjects().filter(isTextObject).forEach((o) => o.set('fill', color));
+    this.canvas.requestRenderAll();
+    this.syncSelection();
+    this.scheduleHistory();
+    this.scheduleAutosave();
+  }
 }
 
 export function isTextObject(o: fabric.FabricObject): boolean {

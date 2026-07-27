@@ -1,8 +1,9 @@
 // Gaia's Label Studio — bundled local AI (main process).
 //
-// Runs a small instruction-tuned GGUF model in-process via node-llama-cpp so
-// the "Suggest" copywriting assist works out of the box, with zero separate
-// installs. Model: Qwen2.5-0.5B-Instruct (Apache-2.0), quantized to Q4_K_M,
+// Lightweight ~700MB fallback when Ollama (e.g. over Tailscale HTTPS) is
+// unreachable. Runs a small instruction-tuned GGUF model in-process via
+// node-llama-cpp so copywriting assist works out of the box in the desktop app.
+// Model: Qwen2.5-0.5B-Instruct (Apache-2.0), quantized to Q4_K_M,
 // shipped as an extraResource (see package.json's `build.extraResources`).
 //
 // node-llama-cpp is an ESM-only native-addon package; this file stays

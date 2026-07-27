@@ -17,6 +17,7 @@ import {
   Trash2,
   X,
   Zap,
+  ClipboardPaste,
 } from 'lucide-react';
 import type { Ingredient, IngredientCategory } from '@/types';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
@@ -27,6 +28,7 @@ import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } fr
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
 import WorkflowNav from '@/components/WorkflowNav';
 import Modal from '@/components/common/Modal';
+import SmartPasteModal from '@/components/common/SmartPasteModal';
 import { useAppStore } from '@/store/useAppStore';
 
 const emptyForm = {
@@ -98,6 +100,7 @@ export default function IngredientsScreen() {
   const [trimPreview, setTrimPreview] = useState<{ deactivate: number; keep: number; recipeCount: number } | null>(null);
   const [trimming, setTrimming] = useState(false);
   const [trimDone, setTrimDone] = useState<number | null>(null);
+  const [smartPasteOpen, setSmartPasteOpen] = useState(false);
 
   const reload = async () => {
     const items = await ingredientsRepo.all();
@@ -265,6 +268,16 @@ export default function IngredientsScreen() {
     <div className="flex-1 overflow-y-auto bg-gaia-50">
       <div className="mx-auto max-w-6xl px-4 py-6">
 
+        {/* ── Workflow hint (Step 1.5) ──────────────────────────────────────── */}
+        {!cameFromRecipes && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gaia-50 px-5 py-4 ring-1 ring-gaia-200">
+            <div className="flex items-start gap-3">
+              <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-gaia-600" />
+              <p className="text-sm text-slate-700">{t('ingredients.workflowHint', 'Step 1.5 — activate the ingredients you use. They power your recipes and label text.')}</p>
+            </div>
+          </div>
+        )}
+
         {/* ── Context banner when arriving from Recipes ───────────────────── */}
         {cameFromRecipes && (
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gaia-50 px-5 py-4 ring-1 ring-gaia-200">
@@ -312,6 +325,14 @@ export default function IngredientsScreen() {
                   {catalogMissing}
                 </span>
               )}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setSmartPasteOpen(true)}
+            >
+              <ClipboardPaste className="h-4 w-4" />
+              {t('inventory.smartPaste', 'Smart Paste (Temu/Amazon)')}
             </button>
             <button
               className="btn-primary"
@@ -586,8 +607,11 @@ export default function IngredientsScreen() {
       )}
     </div>
       <WorkflowNav
-        prevScreen="recipes"
-        prevLabel={t('workflow.backToRecipes')}
+        prevScreen="template"
+        prevLabel={t('workflow.backToShape', 'Back: Choose Shape')}
+        nextScreen="recipes"
+        nextLabel={t('workflow.nextRecipe', 'Next: Choose Recipe')}
+        trainingHint={t('trainingMode.hintNextRecipe', 'Click here to choose your recipe')}
       />
 
       <Modal
@@ -662,6 +686,12 @@ export default function IngredientsScreen() {
       >
         <p className="text-sm text-slate-600">{t('common.confirmDeleteBody')}</p>
       </Modal>
+
+      <SmartPasteModal
+        open={smartPasteOpen}
+        onClose={() => setSmartPasteOpen(false)}
+        onSaved={() => void reload()}
+      />
     </div>
   );
 }

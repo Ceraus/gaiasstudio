@@ -18,7 +18,7 @@
 // written to the database — the importer never silently overwrites pricing.
 // ---------------------------------------------------------------------------
 
-import { extractSupplierProduct, type LocalAiSettingsSlice } from '@/lib/localAi';
+import { extractSupplierProduct, type LocalAiSettingsSlice, type SupplierTextExtractionResult, extractSupplierTextWithOllama } from '@/lib/localAi';
 
 export interface SupplierParseResult {
   /** Total price of the container in USD. */
@@ -348,4 +348,12 @@ export async function importFromSupplierUrl(
   throw new Error(
     'No price or container size found on that page. Type them manually below — it only takes a second.',
   );
+}
+
+/** Parses raw Temu/Amazon paste text via Ollama (Settings must use Ollama backend). */
+export async function importFromSupplierText(
+  text: string,
+  settings: LocalAiSettingsSlice,
+): Promise<SupplierTextExtractionResult> {
+  return extractSupplierTextWithOllama(text, settings);
 }

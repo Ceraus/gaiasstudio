@@ -1,11 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, Instagram, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Share2, Smartphone, Store, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Cloud, Database, Download, FolderOpen, GraduationCap, Instagram, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Share2, Smartphone, Star, Store, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { useLibraryStore } from '@/store/useLibraryStore';
-import { checkLocalAiStatus, type LocalAiStatus } from '@/lib/localAi';
+import { testLocalAiConnection, type LocalAiStatus } from '@/lib/localAi';
 import { exportBackup, restoreBackup } from '@/lib/backup';
+import {
+  fetchCloudSyncMeta,
+  pullCloudBackup,
+  pushCloudBackup,
+  runCloudSync,
+} from '@/lib/cloudSync';
+import averyData from '@/data/averyTemplates.json';
+import type { AveryDataset } from '@/types';
+import { describeSize } from '@/lib/units';
+import {
+  queueTemplatePickerCatalogView,
+  resolveFavoriteTemplates,
+  toggleFavoriteId,
+} from '@/lib/templateFavorites';
 import {
   getConnectionStatus,
   startEtsyConnect,
@@ -22,6 +36,7 @@ import { activateVaultFromPin, clearVaultKey } from '@/lib/secretVault';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
+const averyDataset = averyData as AveryDataset;
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -38,12 +53,20 @@ export default function SettingsScreen() {
   }, []);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const setTrainingMode = useAppStore((s) => s.setTrainingMode);
   const loadSettings = useAppStore((s) => s.loadSettings);
+  const goto = useAppStore((s) => s.goto);
   const loadLibrary = useLibraryStore((s) => s.load);
+
+  const favoriteTemplates = resolveFavoriteTemplates(averyDataset.templates, settings);
+  const usageCounts = settings.templateUsageCounts ?? {};
 
   // ── Backup & Restore ───────────────────────────────────────────────────────
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncMeta, setSyncMeta] = useState<string | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const handleExportBackup = async () => {
@@ -62,6 +85,95 @@ export default function SettingsScreen() {
       setBackupBusy(false);
     }
   };
+
+  async function refreshSyncMeta() {
+    if (!settings.cloudSyncEnabled) {
+      setSyncMeta(null);
+      return;
+    }
+    const meta = await fetchCloudSyncMeta(settings);
+    setSyncMeta(
+      meta?.exportedAt
+        ? t('settings.cloudSyncMeta', 'Cloud copy: {{when}}', {
+            when: new Date(meta.exportedAt).toLocaleString(),
+          })
+        : t('settings.cloudSyncMetaEmpty', 'No cloud copy yet.'),
+    );
+  }
+
+  useEffect(() => {
+    void refreshSyncMeta();
+  }, [settings.cloudSyncEnabled, settings.cloudSyncUrl, settings.cloudSyncToken]);
+
+  async function handleCloudPush() {
+    setSyncBusy(true);
+    setSyncMessage(null);
+    try {
+      const result = await pushCloudBackup(settings);
+      if (result.status === 'pushed') {
+        const when = result.remoteExportedAt ?? new Date().toISOString();
+        await updateSettings({ cloudSyncLastPushedAt: when });
+        setSyncMessage(t('settings.cloudSyncPushed', 'Uploaded to cloud.'));
+        void refreshSyncMeta();
+      } else {
+        setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
+      }
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  async function handleCloudPull() {
+    if (!window.confirm(t('settings.cloudSyncPullConfirm'))) return;
+    setSyncBusy(true);
+    setSyncMessage(null);
+    try {
+      const result = await pullCloudBackup(settings);
+      if (result.status === 'pulled') {
+        await updateSettings({
+          cloudSyncLastPulledAt: result.remoteExportedAt ?? new Date().toISOString(),
+        });
+        setSyncMessage(t('settings.cloudSyncPulled', 'Downloaded from cloud — reloading…'));
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
+        setSyncBusy(false);
+      }
+    } catch (err) {
+      setSyncMessage(String(err instanceof Error ? err.message : err));
+      setSyncBusy(false);
+    }
+  }
+
+  async function handleCloudSyncNow() {
+    setSyncBusy(true);
+    setSyncMessage(null);
+    try {
+      const result = await runCloudSync(settings, { autoPull: true, autoPush: true });
+      if (result.status === 'pushed') {
+        await updateSettings({
+          cloudSyncLastPushedAt: result.remoteExportedAt ?? new Date().toISOString(),
+        });
+        setSyncMessage(t('settings.cloudSyncPushed', 'Uploaded to cloud.'));
+      } else if (result.status === 'pulled') {
+        await updateSettings({
+          cloudSyncLastPulledAt: result.remoteExportedAt ?? new Date().toISOString(),
+        });
+        setSyncMessage(t('settings.cloudSyncPulled', 'Downloaded from cloud — reloading…'));
+        setTimeout(() => window.location.reload(), 1200);
+        return;
+      } else if (result.status === 'in_sync') {
+        setSyncMessage(t('settings.cloudSyncInSync', 'Already up to date.'));
+      } else if (result.status === 'remote_newer') {
+        setSyncMessage(t('settings.cloudSyncRemoteNewer', 'Cloud copy is newer — use Download from cloud.'));
+      } else {
+        setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
+      }
+      void refreshSyncMeta();
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   const handleRestoreFile = async (file: File) => {
     if (!window.confirm(t('settings.restoreConfirm',
@@ -185,6 +297,83 @@ export default function SettingsScreen() {
           </section>
 
           <section className="card">
+            <p className="label flex items-center gap-2">
+              <GraduationCap className="h-4 w-4" /> {t('settings.trainingMode', 'Training Mode')}
+            </p>
+            <p className="mb-3 text-xs text-slate-400">{t('settings.trainingModeHint')}</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-700">
+                  {settings.isTrainingMode === true
+                    ? t('settings.trainingModeOn', 'Training Mode is on')
+                    : t('settings.trainingModeOff', 'Full Studio unlocked')}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {settings.isTrainingMode === true
+                    ? t('settings.trainingModeOnDetail', 'Business tools hidden · sequential workflow enforced')
+                    : t('settings.trainingModeOffDetail', 'All navigation and free step jumping enabled')}
+                </p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={settings.isTrainingMode === true}
+                onClick={() => void setTrainingMode(settings.isTrainingMode !== true)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gaia-500 ${
+                  settings.isTrainingMode === true ? 'bg-emerald-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    settings.isTrainingMode === true ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </section>
+
+          <section className="card">
+            <p className="label flex items-center gap-2">
+              <Smartphone className="h-4 w-4" /> {t('settings.mobileLayout', 'Phone layout')}
+            </p>
+            <p className="mb-3 text-xs text-slate-400">
+              {t(
+                'settings.mobileLayoutHint',
+                'Choose how Gaia behaves on a phone. Streamlined focuses on the 5-step label workflow; Classic keeps the full app with responsive layout.',
+              )}
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                aria-pressed={(settings.mobileLayout ?? 'classic') === 'streamlined' || (settings.mobileLayout as string) === 'auto'}
+                className={`btn flex-1 text-left ${
+                  (settings.mobileLayout ?? 'classic') === 'streamlined' || (settings.mobileLayout as string) === 'auto'
+                    ? 'btn-primary'
+                    : 'btn-secondary'
+                }`}
+                onClick={() => void updateSettings({ mobileLayout: 'streamlined' })}
+              >
+                <span className="block font-semibold">{t('settings.mobileLayoutStreamlined', 'Streamlined')}</span>
+                <span className="mt-0.5 block text-[11px] font-normal opacity-80">
+                  {t('settings.mobileLayoutStreamlinedHint', 'Bottom tabs + simple 3-layer editor')}
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={(settings.mobileLayout ?? 'classic') === 'classic'}
+                className={`btn flex-1 text-left ${
+                  (settings.mobileLayout ?? 'classic') === 'classic' ? 'btn-primary' : 'btn-secondary'
+                }`}
+                onClick={() => void updateSettings({ mobileLayout: 'classic' })}
+              >
+                <span className="block font-semibold">{t('settings.mobileLayoutClassic', 'Classic')}</span>
+                <span className="mt-0.5 block text-[11px] font-normal opacity-80">
+                  {t('settings.mobileLayoutClassicHint', 'Full app — scrollable nav & responsive editor')}
+                </span>
+              </button>
+            </div>
+          </section>
+
+          <section className="card">
             <label className="label">{t('settings.filenamePrefix')}</label>
             <input
               className="input max-w-xs"
@@ -275,7 +464,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.businessName', 'Business / Maker Name')}</label>
               <input
                 className="input"
-                placeholder="e.g. Gaia's Essences"
+                placeholder={t('settings.businessNamePlaceholder', "e.g. Gaia's Essences")}
                 value={settings.businessName ?? ''}
                 onChange={(e) => void updateSettings({ businessName: e.target.value })}
               />
@@ -284,7 +473,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.businessAddress', 'Business Address')}</label>
               <input
                 className="input"
-                placeholder="e.g. 1836 Westchester Ave, Unit #282, Bronx, NY 10472"
+                placeholder={t('settings.businessAddressPlaceholder', 'e.g. 1836 Westchester Ave, Unit #282, Bronx, NY 10472')}
                 value={settings.businessAddress ?? ''}
                 onChange={(e) => void updateSettings({ businessAddress: e.target.value })}
               />
@@ -293,7 +482,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.contact', 'Contact Info')}</label>
               <input
                 className="input"
-                placeholder="e.g. Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/"
+                placeholder={t('settings.contactPlaceholder', 'e.g. Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/')}
                 value={settings.contact ?? ''}
                 onChange={(e) => void updateSettings({ contact: e.target.value })}
               />
@@ -331,7 +520,7 @@ export default function SettingsScreen() {
                       const next = (settings.brandColors ?? []).filter((_, j) => j !== i);
                       void updateSettings({ brandColors: next });
                     }}
-                    title="Remove"
+                    title={t('common.remove', 'Remove')}
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>
@@ -386,6 +575,140 @@ export default function SettingsScreen() {
                 />
               </div>
             </div>
+          </section>
+
+          <section className="card">
+            <p className="label flex items-center gap-2">
+              <Star className="h-4 w-4" /> {t('settings.labelSizes')}
+            </p>
+            <p className="mb-3 text-xs text-slate-400">{t('settings.labelSizesHint')}</p>
+            {favoriteTemplates.length === 0 ? (
+              <p className="text-sm text-slate-500">{t('settings.labelSizesEmpty')}</p>
+            ) : (
+              <ul className="mb-3 divide-y divide-slate-100 rounded-xl ring-1 ring-slate-100">
+                {favoriteTemplates.map((tpl) => (
+                  <li key={tpl.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">{describeSize(tpl)}</p>
+                      <p className="truncate text-xs text-slate-500">
+                        {tpl.averyCode ? `Avery ${tpl.averyCode}` : tpl.name}
+                        {(usageCounts[tpl.id] ?? 0) > 0 && (
+                          <span className="text-slate-400">
+                            {' '}
+                            · {t('settings.labelSizesUsage', { count: usageCounts[tpl.id] })}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                      title={t('settings.labelSizesRemove')}
+                      onClick={() => void updateSettings(toggleFavoriteId(settings, tpl.id))}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  queueTemplatePickerCatalogView();
+                  goto('template');
+                }}
+              >
+                {t('settings.labelSizesBrowse')}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  if (
+                    !window.confirm(t('settings.labelSizesEditSetupConfirm'))
+                  ) {
+                    return;
+                  }
+                  void updateSettings({ templateFavoritesConfigured: false });
+                  goto('template');
+                }}
+              >
+                {t('settings.labelSizesEditSetup')}
+              </button>
+            </div>
+          </section>
+
+          <section className="card">
+            <p className="label flex items-center gap-2">
+              <Cloud className="h-4 w-4" /> {t('settings.cloudSync')}
+            </p>
+            <p className="mb-3 text-xs text-slate-400">{t('settings.cloudSyncHint')}</p>
+            <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                className="rounded border-slate-300 text-gaia-600 focus:ring-gaia-500"
+                checked={settings.cloudSyncEnabled ?? false}
+                onChange={(e) => void updateSettings({ cloudSyncEnabled: e.target.checked })}
+              />
+              {t('settings.cloudSyncEnable')}
+            </label>
+            <div className="space-y-3">
+              <div>
+                <label className="label">{t('settings.cloudSyncUrl')}</label>
+                <input
+                  className="input font-mono text-xs"
+                  placeholder={t('settings.cloudSyncUrlPlaceholder', 'https://gaiasessences.com/studio/sync/sync.php')}
+                  value={settings.cloudSyncUrl ?? ''}
+                  onChange={(e) => void updateSettings({ cloudSyncUrl: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">{t('settings.cloudSyncToken')}</label>
+                <input
+                  type="password"
+                  className="input font-mono text-xs"
+                  placeholder="••••••••"
+                  value={settings.cloudSyncToken ?? ''}
+                  onChange={(e) => void updateSettings({ cloudSyncToken: e.target.value })}
+                />
+              </div>
+            </div>
+            {syncMeta && (
+              <p className="mt-3 text-xs text-slate-500">{syncMeta}</p>
+            )}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={syncBusy || !settings.cloudSyncEnabled}
+                onClick={() => void handleCloudSyncNow()}
+              >
+                {syncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
+                {t('settings.cloudSyncNow')}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={syncBusy || !settings.cloudSyncEnabled}
+                onClick={() => void handleCloudPush()}
+              >
+                <Upload className="h-4 w-4" /> {t('settings.cloudSyncPush')}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={syncBusy || !settings.cloudSyncEnabled}
+                onClick={() => void handleCloudPull()}
+              >
+                <Download className="h-4 w-4" /> {t('settings.cloudSyncPull')}
+              </button>
+            </div>
+            {syncMessage && (
+              <p className="mt-3 text-xs text-slate-500">{syncMessage}</p>
+            )}
           </section>
 
           <section className="card">
@@ -525,7 +848,7 @@ export default function SettingsScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Local AI (optional) — bundled offline copywriting assist (desktop app only).
+// Local AI — Ollama first (Tailscale HTTPS), bundled ~700MB fallback.
 // ---------------------------------------------------------------------------
 function LocalAiSection() {
   const { t } = useTranslation();
@@ -534,16 +857,51 @@ function LocalAiSection() {
 
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  };
 
   useEffect(() => {
     setStatus(null);
-  }, [settings.localAiEnabled, settings.localAiBackend, settings.ollamaUrl, settings.ollamaModel]);
+  }, [settings.localAiEnabled, settings.ollamaUrl, settings.ollamaModel]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
 
   const testConnection = async () => {
     setTesting(true);
     setStatus(null);
-    const result = await checkLocalAiStatus(settings);
-    setStatus(result);
+    const result = await testLocalAiConnection(settings);
+
+    if (result.effective === 'ollama') {
+      setStatus(result.ollama);
+      showToast(t('settings.localAiTestOllamaOk', 'Ollama is ready.'));
+    } else if (result.effective === 'bundled') {
+      setStatus(result.bundled);
+      if (settings.ollamaUrl?.trim()) {
+        showToast(
+          t('settings.localAiTestOllamaFallback', 'Ollama unreachable, but bundled AI is ready.'),
+        );
+      } else {
+        showToast(t('settings.localAiTestBundledOnly', 'Using bundled AI (Ollama URL not set).'));
+      }
+    } else {
+      setStatus({
+        state: 'unreachable',
+        message: result.ollama.message ?? result.bundled.message,
+      });
+      showToast(
+        t('settings.localAiTestBothFail', 'Neither Ollama nor the bundled model is available.'),
+      );
+    }
     setTesting(false);
   };
 
@@ -578,57 +936,39 @@ function LocalAiSection() {
 
       <p className="text-xs text-slate-400">
         {t(
-          'settings.localAiBundledHint',
-          'Uses a small model built into the desktop app — nothing to install. In the browser dev preview, AI stays offline until you run the packaged app.',
+          'settings.localAiHybridHint',
+          'The app tries your Ollama server first for best quality, then falls back to a ~700MB built-in model in the desktop app if Ollama is unreachable.',
         )}
       </p>
 
       {settings.localAiEnabled && (
         <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-          <div>
-            <label className="label">{t('settings.localAiBackend', 'AI backend')}</label>
-            <select
-              className="input"
-              value={settings.localAiBackend ?? 'bundled'}
-              onChange={(e) =>
-                void updateSettings({
-                  localAiBackend: e.target.value as 'bundled' | 'ollama',
-                })
-              }
-            >
-              <option value="bundled">{t('settings.localAiBundled', 'Built-in (desktop app)')}</option>
-              <option value="ollama">{t('settings.localAiOllama', 'Ollama (network / local)')}</option>
-            </select>
-          </div>
-
-          {settings.localAiBackend === 'ollama' && (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div>
-                <label className="label">{t('settings.ollamaUrl', 'Ollama URL')}</label>
-                <input
-                  className="input font-mono text-sm"
-                  placeholder="http://192.168.1.10:11434"
-                  value={settings.ollamaUrl ?? 'http://localhost:11434'}
-                  onChange={(e) => void updateSettings({ ollamaUrl: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">{t('settings.ollamaModel', 'Model')}</label>
-                <input
-                  className="input font-mono text-sm"
-                  placeholder="llama3.2"
-                  value={settings.ollamaModel ?? 'llama3.2'}
-                  onChange={(e) => void updateSettings({ ollamaModel: e.target.value })}
-                />
-              </div>
-              <p className="sm:col-span-2 text-[11px] text-slate-400">
-                {t(
-                  'settings.ollamaNetworkHint',
-                  'For another PC on your network, run Ollama with OLLAMA_HOST=0.0.0.0 and use its IP here.',
-                )}
-              </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div>
+              <label className="label">{t('settings.ollamaUrl', 'Ollama URL')}</label>
+              <input
+                className="input font-mono text-sm"
+                placeholder={t('settings.ollamaUrlPlaceholder', 'https://gaming-pc.tail0123.ts.net')}
+                value={settings.ollamaUrl ?? ''}
+                onChange={(e) => void updateSettings({ ollamaUrl: e.target.value })}
+              />
             </div>
-          )}
+            <div>
+              <label className="label">{t('settings.ollamaModel', 'Model')}</label>
+              <input
+                className="input font-mono text-sm"
+                placeholder={t('settings.ollamaModelPlaceholder', 'llama3.1:8b')}
+                value={settings.ollamaModel ?? 'llama3.1:8b'}
+                onChange={(e) => void updateSettings({ ollamaModel: e.target.value })}
+              />
+            </div>
+            <p className="sm:col-span-2 text-[11px] text-slate-400">
+              {t(
+                'settings.ollamaTailscaleHint',
+                'Enter your Tailscale MagicDNS URL with HTTPS (e.g., https://gaming-pc.tail0123.ts.net). The app will attempt to use this powerful server first. If it is unreachable, it will seamlessly fall back to the bundled 700MB local model.',
+              )}
+            </p>
+          </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -644,13 +984,17 @@ function LocalAiSection() {
             {status?.state === 'connected' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                {t('settings.localAiBundledConnected', 'Built-in model is ready.')}
+                {status.backend === 'ollama'
+                  ? t('settings.localAiOllamaConnected', 'Ollama is ready.')
+                  : settings.ollamaUrl?.trim()
+                    ? t('settings.localAiFallbackConnected', 'Using bundled fallback model.')
+                    : t('settings.localAiBundledConnected', 'Built-in model is ready.')}
               </span>
             )}
             {status?.state === 'unreachable' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-rose-600">
                 <WifiOff className="h-4 w-4 shrink-0" />
-                {status.message ?? t('settings.localAiBundledUnreachable', "Couldn't reach the built-in model.")}
+                {status.message ?? t('settings.localAiTestBothFail', 'Neither Ollama nor the bundled model is available.')}
               </span>
             )}
             {status?.state === 'loading' && (
@@ -661,6 +1005,12 @@ function LocalAiSection() {
             )}
           </div>
         </div>
+      )}
+
+      {toast && (
+        <p className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-white shadow-lg" role="status">
+          {toast}
+        </p>
       )}
     </section>
   );
@@ -846,7 +1196,7 @@ function EtsySection() {
           <input
             type="password"
             className="input font-mono text-sm"
-            placeholder="your-etsy-keystring"
+            placeholder={t('settings.etsyApiKeyPlaceholder', 'your-etsy-keystring')}
             value={shop.apiKey ?? ''}
             onChange={(e) => patchShop({ apiKey: e.target.value })}
           />
@@ -865,7 +1215,7 @@ function EtsySection() {
           <label className="label">{t('settings.etsyShopId', 'Shop ID')}</label>
           <input
             className="input font-mono text-sm"
-            placeholder="12345678"
+            placeholder={t('settings.etsyShopIdPlaceholder', '12345678')}
             value={shop.shopId ?? ''}
             onChange={(e) => patchShop({ shopId: e.target.value.replace(/\D/g, '') })}
           />
@@ -874,7 +1224,7 @@ function EtsySection() {
           <label className="label">{t('settings.etsyShopName', 'Shop name (display)')}</label>
           <input
             className="input"
-            placeholder="GaiasEssences"
+            placeholder={t('settings.etsyShopNamePlaceholder', 'GaiasEssences')}
             value={shop.shopName ?? ''}
             onChange={(e) => patchShop({ shopName: e.target.value })}
           />
@@ -933,13 +1283,13 @@ function SocialSection() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="label flex items-center gap-1.5">
-            <Instagram className="h-3.5 w-3.5" /> Instagram
+            <Instagram className="h-3.5 w-3.5" /> {t('settings.instagram', 'Instagram')}
           </label>
           <div className="flex">
             <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-sm text-slate-500">@</span>
             <input
               className="input rounded-l-none"
-              placeholder="gaiasessences"
+              placeholder={t('settings.socialHandlePlaceholder', 'gaiasessences')}
               value={settings.instagramHandle ?? ''}
               onChange={(e) =>
                 void updateSettings({ instagramHandle: e.target.value.replace(/^@/, '').trim() })
@@ -948,12 +1298,12 @@ function SocialSection() {
           </div>
         </div>
         <div>
-          <label className="label">TikTok</label>
+          <label className="label">{t('settings.tiktok', 'TikTok')}</label>
           <div className="flex">
             <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-sm text-slate-500">@</span>
             <input
               className="input rounded-l-none"
-              placeholder="gaiasessences"
+              placeholder={t('settings.socialHandlePlaceholder', 'gaiasessences')}
               value={settings.tiktokHandle ?? ''}
               onChange={(e) =>
                 void updateSettings({ tiktokHandle: e.target.value.replace(/^@/, '').trim() })

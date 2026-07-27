@@ -27,6 +27,7 @@ import {
   hydrateSettingsFromStorage,
   prepareSettingsForStorage,
 } from '@/lib/secretVault';
+import { migrateTrainingSettings } from '@/lib/trainingMode';
 
 function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
   const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
@@ -762,7 +763,9 @@ export const productListingsRepo = {
 export const settingsRepo = {
   async get(): Promise<AppSettings> {
     const existing = await db.settings.get('app');
-    const merged = existing ? { ...DEFAULT_SETTINGS, ...existing } : DEFAULT_SETTINGS;
+    const merged = migrateTrainingSettings(
+      existing ? { ...DEFAULT_SETTINGS, ...existing } : DEFAULT_SETTINGS,
+    );
     if (!existing) await db.settings.put(DEFAULT_SETTINGS);
     return hydrateSettingsFromStorage(merged);
   },

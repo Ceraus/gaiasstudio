@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Screen } from '@/store/useAppStore';
 import { useAppStore } from '@/store/useAppStore';
+import { isTrainingModeActive } from '@/lib/trainingMode';
 
 interface WorkflowNavProps {
   /** Screen to navigate back to. Omit to hide the Back button. */
@@ -22,6 +23,8 @@ interface WorkflowNavProps {
   hint?: string;
   /** Custom handler for the Next button (overrides simple goto(nextScreen)). */
   onNext?: () => void;
+  /** Shown as a guide bubble above Next when Training Mode is on. */
+  trainingHint?: string;
 }
 
 export default function WorkflowNav({
@@ -32,9 +35,12 @@ export default function WorkflowNav({
   canProceed = true,
   hint,
   onNext,
+  trainingHint,
 }: WorkflowNavProps) {
   const { t } = useTranslation();
   const goto = useAppStore((s) => s.goto);
+  const settings = useAppStore((s) => s.settings);
+  const trainingMode = isTrainingModeActive(settings);
 
   // Flash the tooltip on click when canProceed is false (CSS hover alone gives no feedback on tap/click).
   const [hintFlash, setHintFlash] = useState(false);
@@ -82,9 +88,18 @@ export default function WorkflowNav({
         )}
       </div>
 
-      <div>
+      <div className="relative">
         {hasNext && (
           <>
+            {trainingMode && trainingHint && (
+              <div
+                role="note"
+                className="pointer-events-none absolute bottom-full right-0 z-10 mb-2 max-w-[14rem] rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 shadow-sm"
+              >
+                {trainingHint}
+                <span className="absolute -bottom-1.5 right-6 h-3 w-3 rotate-45 border-b border-r border-emerald-200 bg-emerald-50" />
+              </div>
+            )}
             <button
               className={`btn-primary flex items-center gap-2 px-5 py-2.5 text-sm transition-opacity ${
                 !canProceed ? 'opacity-60' : ''

@@ -33,6 +33,7 @@ export interface AveryTemplate {
   /** When true the design canvas is landscape but printed rotated 90° (wrap ribbons). */
   rotateForPrint: boolean;
   contexts: LabelContext[];
+  geometrySource?: string;
 }
 
 export interface AveryDataset {
@@ -216,6 +217,29 @@ export interface AppSettings {
   debugMode?: boolean;
   /** Show/hide the Label Sets tab in navigation (default: false). */
   showLabelSets?: boolean;
+
+  /** Phone layout: streamlined bottom tabs vs full classic app. */
+  mobileLayout?: 'classic' | 'streamlined' | 'auto';
+
+  /** User-picked Avery template ids for quick access. */
+  favoriteTemplateIds?: string[];
+  templateFavoritesConfigured?: boolean;
+  templateUsageCounts?: Record<string, number>;
+
+  /** Cloud backup sync (Hostinger JSON endpoint). */
+  cloudSyncEnabled?: boolean;
+  cloudSyncUrl?: string;
+  cloudSyncToken?: string;
+  cloudSyncLastPushedAt?: string;
+  cloudSyncLastPulledAt?: string;
+
+  /**
+   * Training Mode — simplified UI and sequential workflow enforcement.
+   * ON by default for new installs; persisted so Rosa can turn it off later.
+   */
+  isTrainingMode?: boolean;
+  /** First-run Training Mode welcome popup dismissed. */
+  hasSeenTrainingWelcome?: boolean;
 
   // ── Local AI (optional, 100% offline) ────────────────────────────────────
   /**

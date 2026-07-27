@@ -251,7 +251,7 @@ export default function ReportsScreen() {
   };
 
   const handleExportSales = () => {
-    const headers = ['Order Number', 'Date', 'Client', 'Total'];
+    const headers = t('reports.exportSalesHeaders', 'Order Number,Date,Client,Total').split(',');
     const rows = completedOrders.map(o => [
       o.orderNumber || '',
       new Date(o.completedAt!).toLocaleDateString(),
@@ -263,7 +263,7 @@ export default function ReportsScreen() {
   };
 
   const handleExportExpenses = () => {
-    const headers = ['Date', 'Supplier', 'Category', 'Total'];
+    const headers = t('reports.exportExpensesHeaders', 'Date,Supplier,Category,Total').split(',');
     const rows = receipts.map(r => [
       new Date(r.date).toLocaleDateString(),
       r.vendor || '',
@@ -275,7 +275,7 @@ export default function ReportsScreen() {
   };
 
   const handleExportInventory = () => {
-    const headers = ['Ingredient', 'Stock On Hand', 'Unit Cost', 'Total Value'];
+    const headers = t('reports.exportInventoryHeaders', 'Ingredient,Stock On Hand,Unit Cost,Total Value').split(',');
     const rows = ingredients.map(i => [
       i.name,
       (i.stockOnHand || 0).toString(),

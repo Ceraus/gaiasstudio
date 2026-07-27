@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist.zip
 *.tsbuildinfo
 # Electron builder output — exe files are too large for GitHub (>100 MB)
 release/
@@ -8,3 +9,8 @@ release/
 resources/models/*.gguf
 # Raw output from the live Avery scraper
 scripts/avery-raw.json
+scripts/avery-docs/
+scripts/avery-docx-log.json
+scripts/_*.html
+scripts/_*-template.*
+public/sync/config.php

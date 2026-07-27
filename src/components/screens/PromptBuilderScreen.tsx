@@ -720,7 +720,7 @@ export default function PromptBuilderScreen({
 
         {/* ── Recipe switcher dropdown ───────────────────────────────────── */}
         <div className="mt-4 flex items-center gap-2">
-          <span className="whitespace-nowrap text-xs font-medium text-gray-500">Recipe:</span>
+          <span className="whitespace-nowrap text-xs font-medium text-gray-500">{t('promptBuilder.recipeLabel', 'Recipe:')}</span>
           {recipes.length === 0 ? (
             <p className="text-xs italic text-slate-400">
               {t('promptBuilder.noRecipesHint', 'No recipes yet — create one in Recipes')}
@@ -838,7 +838,7 @@ export default function PromptBuilderScreen({
               <label
                 htmlFor="colorPicker"
                 className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-md ring-1 ring-slate-200 hover:ring-gaia-400"
-                title="Pick custom colour"
+                title={t('promptBuilder.pickCustomColor', 'Pick custom colour')}
               >
                 <span className="block h-full w-full" style={{ backgroundColor: hexCode }} />
               </label>
@@ -1122,8 +1122,8 @@ export default function PromptBuilderScreen({
                 }`}
               >
                 {copied
-                  ? <><Check className="h-3.5 w-3.5" /> Copied! ✓</>
-                  : <><ClipboardCopy className="h-3.5 w-3.5" /> Copy</>
+                  ? <><Check className="h-3.5 w-3.5" /> {t('promptBuilder.copied', 'Copied! ✓')}</>
+                  : <><ClipboardCopy className="h-3.5 w-3.5" /> {t('promptBuilder.copy', 'Copy')}</>
                 }
               </button>
 
@@ -1178,7 +1178,7 @@ export default function PromptBuilderScreen({
                   type="button"
                   onClick={() => webviewRef.current?.reload()}
                   className="shrink-0 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
-                  title="Reload"
+                  title={t('promptBuilder.webviewReload', 'Reload')}
                 >
                   ⟳
                 </button>

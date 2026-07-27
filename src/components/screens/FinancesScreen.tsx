@@ -450,7 +450,7 @@ function NewReceiptForm({
         </p>
         <div className="space-y-2">
           {computedLines.map((li) => (
-            <div key={li.id} className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-6">
+            <div key={li.id} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-6">
               <div className="col-span-2">
                 <label className="mb-1 block text-[10px] font-medium text-slate-500">
                   {t('finances.linkTo', 'Link to')}

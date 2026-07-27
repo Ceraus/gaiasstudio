@@ -14,7 +14,17 @@ import HelpHub from '@/components/HelpHub';
 import TourOverlay from '@/components/tour/TourOverlay';
 import { startAutoImport, onAutoImportToast } from '@/lib/autoImport';
 import { maybeRunAutoBackup } from '@/lib/backup';
+import { pullCloudBackup, runCloudSync } from '@/lib/cloudSync';
 import LocalAiStatusBadge from '@/components/LocalAiStatusBadge';
+import MobileWorkflowTabs from '@/components/MobileWorkflowTabs';
+import MobileMenuDrawer from '@/components/MobileMenuDrawer';
+import TrainingModeToggle from '@/components/TrainingModeToggle';
+import TrainingBlockModal from '@/components/TrainingBlockModal';
+import TrainingModeWelcome from '@/components/TrainingModeWelcome';
+import { TRAINING_ALLOWED_SCREENS, isTrainingModeActive } from '@/lib/trainingMode';
+import { useStreamlinedMobile } from '@/hooks/useMobileLayout';
+
+const WORKFLOW_TAB_SCREENS: Screen[] = ['template', 'ingredients', 'recipes', 'background', 'editor'];
 
 const TemplateScreen = lazy(() => import('@/components/screens/TemplateScreen'));
 const BackgroundScreen = lazy(() => import('@/components/screens/BackgroundScreen'));
@@ -84,11 +94,23 @@ export default function Shell() {
   const { t }          = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
   const [openNavGroup, setOpenNavGroup] = useState<NavGroup | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
 
-  const LIBRARY_TABS = BASE_LIBRARY_TABS.filter(
-    (tab) => !tab.optional || settings?.showLabelSets
-  );
+  const streamlinedMobile = useStreamlinedMobile(settings);
+  const trainingMode = isTrainingModeActive(settings);
+
+  const LIBRARY_TABS = BASE_LIBRARY_TABS.filter((tab) => {
+    if (tab.optional && !settings?.showLabelSets) return false;
+    if (trainingMode) {
+      return tab.group === 'design' && (tab.id === 'drafts' || tab.id === 'sets');
+    }
+    return true;
+  });
+
+  const visibleNavGroups = trainingMode
+    ? NAV_GROUPS.filter((g) => g.id === 'design')
+    : NAV_GROUPS;
 
   const tabsByGroup = useMemo(() => {
     const grouped: Record<NavGroup, typeof LIBRARY_TABS> = {
@@ -124,11 +146,46 @@ export default function Shell() {
   }, [openNavGroup]);
 
   useEffect(() => {
+    if (!trainingMode) return;
+    if (!TRAINING_ALLOWED_SCREENS.includes(screen)) {
+      goto('template');
+    }
+  }, [trainingMode, screen, goto]);
+
+  useEffect(() => {
     const cleanup = startAutoImport();
     void import('@/data/recipeSeed').then(({ seedRecipes }) => seedRecipes());
-    void maybeRunAutoBackup();
+    void (async () => {
+      await maybeRunAutoBackup();
+      const s = useAppStore.getState().settings;
+      if (!s.cloudSyncEnabled || !s.cloudSyncUrl?.trim() || !s.cloudSyncToken?.trim()) return;
+      const result = await runCloudSync(s, { autoPull: false, autoPush: true });
+      if (result.status === 'pushed') {
+        await updateSettings({
+          cloudSyncLastPushedAt: result.remoteExportedAt ?? new Date().toISOString(),
+        });
+        return;
+      }
+      if (result.status === 'remote_newer' && result.remoteExportedAt) {
+        const when = new Date(result.remoteExportedAt).toLocaleString();
+        const ok = window.confirm(
+          t('settings.cloudSyncBootConfirm', {
+            when,
+            defaultValue: `A newer copy exists on the website (${when}). Download it now? Your current data will be replaced.`,
+          }),
+        );
+        if (!ok) return;
+        const pull = await pullCloudBackup(s);
+        if (pull.status === 'pulled') {
+          await updateSettings({
+            cloudSyncLastPulledAt: pull.remoteExportedAt ?? new Date().toISOString(),
+          });
+          window.location.reload();
+        }
+      }
+    })();
     return cleanup;
-  }, []);
+  }, [t, updateSettings]);
 
   // Keep in-app navigation on the browser Back/Forward buttons instead of leaving the app.
   useEffect(() => {
@@ -147,7 +204,11 @@ export default function Shell() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [screen]);
 
-  const showStepper = STEPPER_SCREENS.includes(screen);
+  const showStepper = STEPPER_SCREENS.includes(screen) && !streamlinedMobile;
+  const showMobileTabs = streamlinedMobile && screen !== 'welcome';
+  const menuTabActive =
+    mobileMenuOpen ||
+    (streamlinedMobile && !WORKFLOW_TAB_SCREENS.includes(screen) && screen !== 'welcome');
 
   /** Language toggle. */
   const LangSwitcher = () => (
@@ -187,22 +248,44 @@ export default function Shell() {
   return (
     <div className="flex h-full flex-col">
 
-      {/* ── Unified header — identical on every screen ────────────────────────── */}
-      {/* The inner div shares the same full-width px-6 container as the
-          WorkflowStepper below, so the nav tabs and stepper steps share the
-          same horizontal reference. It intentionally has no max-w cap — that
-          used to force the tabs to fight over a fixed ~1024px budget even on
-          wide windows, which is what made a tab's label get scroll-clipped. */}
-      <header className={`relative border-b border-slate-200 bg-white/90 backdrop-blur ${openNavGroup ? 'z-40' : 'z-20'}`}>
-        <div className="flex flex-nowrap items-center gap-2 px-6 py-2">
+      {/* ── Header (classic responsive + desktop; hidden on streamlined phone) ─ */}
+      {!streamlinedMobile && (
+      <header className={`relative border-b border-slate-200 bg-white/90 backdrop-blur safe-top ${openNavGroup ? 'z-40' : 'z-20'}`}>
+        <div className="flex flex-col gap-0 sm:flex-row sm:flex-nowrap sm:items-center sm:gap-2 sm:px-6 sm:py-2">
+        <div className="flex flex-nowrap items-center justify-between gap-2 px-3 py-2 sm:contents">
 
         {/* Left: Logo */}
         <LogoButton />
 
-        {/* Center: grouped nav — Design | Business | Connect with submenus */}
-        <div ref={navRef} className="min-w-0 flex-1">
-          <nav className="flex items-center justify-start gap-1" data-tour="nav-tabs">
-            {NAV_GROUPS.map(({ id, labelKey, defaultLabel }) => {
+        {/* Center: Training Mode toggle (desktop/tablet) */}
+        <div className="hidden shrink-0 sm:flex sm:flex-1 sm:justify-center">
+          <TrainingModeToggle />
+        </div>
+
+        {/* Right cluster on phone — settings row */}
+        <div className="flex shrink-0 items-center gap-1 sm:hidden">
+          <TrainingModeToggle compact />
+          <button
+            onClick={() => goto('template')}
+            className="btn btn-primary shrink-0 p-2"
+            aria-label={t('nav.newLabel', 'New Label')}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button onClick={() => setHelpOpen(true)} className="btn btn-ghost shrink-0 p-2" aria-label={t('nav.help')}>
+            <HelpCircle className="h-4 w-4" />
+          </button>
+          <button onClick={() => goto('settings')} className="btn btn-ghost shrink-0 p-2" aria-label={t('nav.settings')}>
+            <SettingsIcon className="h-4 w-4" />
+          </button>
+          <LangSwitcher />
+        </div>
+        </div>
+
+        {/* Center: grouped nav — horizontal scroll on phone */}
+        <div ref={navRef} className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap no-scrollbar hide-scrollbar border-t border-slate-100 px-2 py-1.5 sm:border-0 sm:px-0 sm:py-0">
+          <nav className="inline-flex w-max min-w-full items-center gap-1 sm:w-auto" data-tour="nav-tabs">
+            {visibleNavGroups.map(({ id, labelKey, defaultLabel }) => {
               const tabs = tabsByGroup[id];
               if (!tabs.length) return null;
 
@@ -263,7 +346,7 @@ export default function Shell() {
                             {hasDraftWip && (
                               <span
                                 className="h-2 w-2 shrink-0 rounded-full bg-orange-500"
-                                aria-label="Active draft in progress"
+                                aria-label={t('drafts.ariaActiveDraft', 'Active draft in progress')}
                               />
                             )}
                           </button>
@@ -277,11 +360,8 @@ export default function Shell() {
           </nav>
         </div>
 
-        {/* Right: Rosa greeting, + New Label CTA, AI Prompt icon, Settings icon, Language.
-            shrink-0 + whitespace-nowrap on every item guarantees this cluster
-            always renders fully and on one line — it's the nav band (above)
-            that gives up space first. */}
-        <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
+        {/* Right: desktop / tablet actions */}
+        <div className="hidden shrink-0 flex-nowrap items-center justify-end gap-2 whitespace-nowrap sm:flex sm:px-0">
           <span className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-gaia-50 px-3 py-1 text-xs font-medium text-gaia-700 ring-1 ring-gaia-100 lg:inline-flex">
             <span>🌹 {t('common.greeting', 'Hi Rosa')}</span>
             <LocalAiStatusBadge settings={settings} />
@@ -294,6 +374,7 @@ export default function Shell() {
             <Plus className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline">{t('nav.newLabel', 'New Label')}</span>
           </button>
+          {!trainingMode && (
           <button
             onClick={() => goto('promptBuilder')}
             title={t('nav.promptBuilder', 'AI Prompt')}
@@ -306,6 +387,7 @@ export default function Shell() {
             <Sparkles className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline">{t('nav.promptBuilder', 'AI Prompt')}</span>
           </button>
+          )}
           <button
             onClick={() => setHelpOpen(true)}
             title={t('nav.help', 'Help & walkthroughs')}
@@ -323,12 +405,42 @@ export default function Shell() {
           >
             <SettingsIcon className="h-4 w-4" />
           </button>
-          <div className="shrink-0">
+          <div className="shrink-0 max-sm:hidden">
             <LangSwitcher />
           </div>
         </div>
         </div>
       </header>
+      )}
+
+      {/* ── Streamlined phone header ───────────────────────────────────────── */}
+      {streamlinedMobile && (
+        <header className="relative z-20 border-b border-slate-200 bg-white/90 backdrop-blur safe-top">
+          <div className="flex items-center justify-between gap-2 px-4 py-2">
+            <LogoButton />
+            <TrainingModeToggle compact />
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setHelpOpen(true)}
+                title={t('nav.help', 'Help & walkthroughs')}
+                aria-label={t('nav.help', 'Help & walkthroughs')}
+                className="btn btn-ghost shrink-0 p-2"
+              >
+                <HelpCircle className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => goto('settings')}
+                title={t('nav.settings', 'Settings')}
+                aria-label={t('nav.settings', 'Settings')}
+                className="btn btn-ghost shrink-0 p-2"
+              >
+                <SettingsIcon className="h-4 w-4" />
+              </button>
+              <LangSwitcher />
+            </div>
+          </div>
+        </header>
+      )}
 
       {/* ── Stepper sub-header (all workflow screens, including editor) ───────── */}
       {/* relative + z-30 ensures the stepper's absolutely-positioned tooltips
@@ -336,7 +448,7 @@ export default function Shell() {
           stack above BOTH the header (z-20) and the <main> element below. */}
       {showStepper && <div className="relative z-30"><WorkflowStepper /></div>}
 
-      <main className="relative flex-1 overflow-hidden">
+      <main className={`relative flex-1 overflow-hidden ${showMobileTabs ? 'pb-mobile-nav' : ''}`}>
         <Suspense fallback={<ScreenLoader label={t('common.loading')} />}>
           {screen === 'welcome'       && <WelcomeScreen />}
           {screen === 'template'      && <TemplateScreen />}
@@ -359,7 +471,33 @@ export default function Shell() {
         </Suspense>
       </main>
 
+      {showMobileTabs && (
+        <>
+          <MobileWorkflowTabs
+            screen={screen}
+            onNavigate={(s) => {
+              setMobileMenuOpen(false);
+              goto(s);
+            }}
+            onMenuOpen={() => setMobileMenuOpen(true)}
+            menuActive={menuTabActive}
+          />
+          <MobileMenuDrawer
+            open={mobileMenuOpen}
+            onClose={() => setMobileMenuOpen(false)}
+            currentScreen={screen}
+            trainingMode={trainingMode}
+            onNavigate={(s) => {
+              setMobileMenuOpen(false);
+              goto(s);
+            }}
+          />
+        </>
+      )}
+
       <OnboardingCoach />
+      <TrainingModeWelcome />
+      <TrainingBlockModal />
       <HelpHub open={helpOpen} onClose={() => setHelpOpen(false)} />
       <TourOverlay />
       <AutoImportToast />
@@ -390,7 +528,7 @@ function AutoImportToast() {
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gaia-700 px-5 py-2.5 text-sm font-medium text-white shadow-lg"
+      className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gaia-700 px-5 py-2.5 text-sm font-medium text-white shadow-lg max-sm:bottom-[calc(4.5rem+env(safe-area-inset-bottom))]"
     >
       {message}
     </div>

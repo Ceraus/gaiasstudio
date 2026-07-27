@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, Check, ChevronDown, ChevronUp, Database, DollarSign,
   Link as LinkIcon, Loader2, MinusCircle, Package, PackageCheck, PackagePlus, Plus,
-  Search, ShoppingBag, Sparkles, Tags, Trash2, X, Zap,
+  Search, ShoppingBag, Sparkles, Tags, Trash2, X, Zap, ClipboardPaste,
 } from 'lucide-react';
 import type { CustomMaterial, Ingredient, IngredientCategory, MaterialCategory, Recipe, SetPurchase } from '@/types';
 import {
@@ -39,6 +39,7 @@ import { importFromSupplierUrl, type SupplierParseResult } from '@/lib/supplierI
 import IngredientIcon from '@/components/common/IngredientIcon';
 import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
 import Modal from '@/components/common/Modal';
+import SmartPasteModal from '@/components/common/SmartPasteModal';
 import { useAppStore } from '@/store/useAppStore';
 
 // ---------------------------------------------------------------------------
@@ -215,6 +216,7 @@ export default function InventoryScreen() {
   const [inUseOnly, setInUseOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [smartPasteOpen, setSmartPasteOpen] = useState(false);
   const inUseInitialized = useRef(false);
 
   const reload = async () => {
@@ -347,6 +349,14 @@ export default function InventoryScreen() {
                 {t('inventory.subtitle', 'Everything is grouped into shelves. Open a shelf, set prices once (or paste a supplier link), and your recipe costs calculate themselves.')}
               </p>
             </div>
+            <button
+              type="button"
+              className="btn-secondary shrink-0"
+              onClick={() => setSmartPasteOpen(true)}
+            >
+              <ClipboardPaste className="h-4 w-4" />
+              {t('inventory.smartPaste', 'Smart Paste (Temu/Amazon)')}
+            </button>
           </div>
 
           {/* ── Filter bar: prominent In-Use toggle + search ─────────────────── */}
@@ -494,6 +504,12 @@ export default function InventoryScreen() {
 
         </div>
       </div>
+
+      <SmartPasteModal
+        open={smartPasteOpen}
+        onClose={() => setSmartPasteOpen(false)}
+        onSaved={() => void reload()}
+      />
     </div>
   );
 }
@@ -884,7 +900,7 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
                     </div>
                     <button
                       onClick={() => void handleDelete(sp.id)}
-                      aria-label="Delete set purchase"
+                      aria-label={t('inventory.ariaDeleteSetPurchase', 'Delete set purchase')}
                       className="shrink-0 mt-0.5"
                     >
                       <Trash2 className="h-4 w-4 text-slate-300 hover:text-rose-500 transition-colors" />
@@ -913,7 +929,7 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
                 <button
                   onClick={() => { setShowForm(false); setForm(emptySetForm); }}
                   className="text-slate-400 hover:text-slate-600"
-                  aria-label="Cancel"
+                  aria-label={t('common.cancel', 'Cancel')}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -933,7 +949,7 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
               </div>
 
               {/* Price + Count in one row */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
                     {t('inventory.totalPricePaid', 'Total price paid')}
@@ -1145,7 +1161,7 @@ function CustomMaterialsLibraryCard({
                   >
                     <MinusCircle className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-amber-500" />
                   </button>
-                  <button onClick={() => void handleDelete(m.id)} aria-label="Remove material" className="shrink-0">
+                  <button onClick={() => void handleDelete(m.id)} aria-label={t('materials.ariaRemove', 'Remove material')} className="shrink-0">
                     <Trash2 className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-rose-500" />
                   </button>
                 </div>
@@ -1179,7 +1195,7 @@ function CustomMaterialsLibraryCard({
                       >
                         {t('materials.activate', 'Activate')}
                       </button>
-                      <button onClick={() => void handleDelete(m.id)} aria-label="Remove material" className="shrink-0">
+                      <button onClick={() => void handleDelete(m.id)} aria-label={t('materials.ariaRemove', 'Remove material')} className="shrink-0">
                         <Trash2 className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-rose-500" />
                       </button>
                     </div>
@@ -1189,7 +1205,7 @@ function CustomMaterialsLibraryCard({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:items-end">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-5 sm:items-end">
             <div className="col-span-2 sm:col-span-1">
               <label className="mb-1 block text-[11px] font-medium text-slate-500">
                 {t('materials.name', 'Item name')}
@@ -1525,7 +1541,7 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
       </div>
 
       {/* Two-field entry row */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
         {/* Total purchase cost */}
         <div>
@@ -1765,7 +1781,7 @@ function SupplierImportRow({ ing, onSaved }: SupplierImportRowProps) {
         <input
           type="url"
           className="input min-w-0 flex-1 text-sm"
-          placeholder="https://…"
+          placeholder={t('inventory.supplierUrlPlaceholder', 'https://…')}
           value={url}
           onChange={(e) => { setUrl(e.target.value); setError(null); }}
           onKeyDown={(e) => { if (e.key === 'Enter' && url.trim() && !busy) void runImport(); }}

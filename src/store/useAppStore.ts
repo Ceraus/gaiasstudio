@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '@/db/db';
 import { settingsRepo } from '@/db/repositories';
 import { uid } from '@/lib/id';
 import { touchSessionUnlock } from '@/lib/appLock';
+import { bumpTemplateUsage } from '@/lib/templateFavorites';
 import i18n from '@/i18n';
 
 export type Screen =
@@ -74,6 +75,8 @@ interface AppState {
   setLabelPng: (png: string | null) => void;
   loadSettings: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  /** Toggle Training Mode (persisted in AppSettings). */
+  setTrainingMode: (active: boolean) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -110,28 +113,38 @@ export const useAppStore = create<AppState>((set) => ({
   setTemplate: (template, context) => set({ template, context }),
 
   startNewDesign: (template, context) =>
-    set((s) => ({
-      template,
-      context,
-      designId: uid(),
-      designJson: null,
-      labelPng: null,
-      activeDraftId: null,
-      previousScreen: s.screen,
-      screen: 'editor',
-    })),
+    set((s) => {
+      const usagePatch = bumpTemplateUsage(template.id, s.settings);
+      void settingsRepo.update(usagePatch);
+      return {
+        settings: { ...s.settings, ...usagePatch },
+        template,
+        context,
+        designId: uid(),
+        designJson: null,
+        labelPng: null,
+        activeDraftId: null,
+        previousScreen: s.screen,
+        screen: 'editor',
+      };
+    }),
 
   loadDraft: (draft, template) =>
-    set((s) => ({
-      template,
-      context: draft.context,
-      designId: uid(),
-      designJson: draft.designJson,
-      labelPng: null,
-      activeDraftId: draft.id,
-      previousScreen: s.screen,
-      screen: 'editor',
-    })),
+    set((s) => {
+      const usagePatch = bumpTemplateUsage(template.id, s.settings);
+      void settingsRepo.update(usagePatch);
+      return {
+        settings: { ...s.settings, ...usagePatch },
+        template,
+        context: draft.context,
+        designId: uid(),
+        designJson: draft.designJson,
+        labelPng: null,
+        activeDraftId: draft.id,
+        previousScreen: s.screen,
+        screen: 'editor',
+      };
+    }),
 
   setDesignJson: (designJson) => set({ designJson }),
   setLabelPng: (labelPng) => set({ labelPng }),
@@ -158,6 +171,11 @@ export const useAppStore = create<AppState>((set) => ({
       document.documentElement.lang = patch.language;
     }
     if (patch.uiScale !== undefined) applyUiScale(next.uiScale);
+    set({ settings: next });
+  },
+
+  setTrainingMode: async (active) => {
+    const next = await settingsRepo.update({ isTrainingMode: active });
     set({ settings: next });
   },
 }));
