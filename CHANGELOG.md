@@ -4,6 +4,25 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.2] - 2026-07-27
+
+### Added
+- **FDA ingredient order** — auto-layout and `{{INGREDIENTS}}` resolve INCI names in
+  descending weight predominance (grams / drop→ml conversion for volume items).
+- **Labor COGS** — configurable hourly rate in Settings, batch minutes per recipe,
+  and per-bar COGS + margin in Products, Reports, and the recipe profit tracker.
+- **Internal production runs** — Work Orders can record Etsy/inventory stock
+  production: deducts raw materials on complete and adds yield to product
+  inventory (no client receipt PDF).
+- **PWA auto-backup** — browser builds download `gaias-studio-backup-[DATE].json`
+  at most once every 24 hours on boot (Electron still saves silently).
+- **Label barcodes** — editor sidebar Barcode tool (JsBarcode CODE128) drops a
+  resizable SKU image on the canvas.
+
+### Fixed
+- **Workflow stepper** — removed the stray "Manage Ingredients" Step 1.5 pill;
+  navigation is restored to a clean 1–5 label design flow.
+
 ## [3.0.1] - 2026-07-27
 
 ### Added

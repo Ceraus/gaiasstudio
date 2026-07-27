@@ -67,6 +67,78 @@ export function containerBaseUnits(
   return purchaseSizeToGrams(ing.purchaseSize, ing.purchaseUnit);
 }
 
+/** Approximate density (g/ml) for volume ingredients when sorting by weight predominance. */
+const VOLUME_DENSITY_G_PER_ML = 0.95;
+
+/** Convert a recipe ingredient amount to grams for FDA predominance sorting. */
+export function ingredientAmountInGrams(
+  amount: number,
+  ing: Pick<Ingredient, 'measurementType' | 'category'>,
+): number {
+  if (isVolumeIngredient(ing)) {
+    return (amount / DROPS_PER_ML) * VOLUME_DENSITY_G_PER_ML;
+  }
+  return amount;
+}
+
+/** Ingredient IDs sorted by descending weight predominance (FDA label order). */
+export function sortedIngredientIdsByPredominance(
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts'>,
+  ingredients: Ingredient[],
+): string[] {
+  const byId = new Map(ingredients.map((i) => [i.id, i]));
+  const amounts = recipe.ingredientAmounts ?? {};
+  const ids = recipe.ingredientIds.filter((id) => {
+    const amt = amounts[id];
+    return amt !== undefined && amt > 0;
+  });
+  return ids.sort((a, b) => {
+    const ingA = byId.get(a);
+    const ingB = byId.get(b);
+    const gA = ingA ? ingredientAmountInGrams(amounts[a]!, ingA) : 0;
+    const gB = ingB ? ingredientAmountInGrams(amounts[b]!, ingB) : 0;
+    return gB - gA;
+  });
+}
+
+/** Comma-separated INCI list in FDA descending-weight order. */
+export function buildSortedInciList(
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts'>,
+  ingredients: Ingredient[],
+): string {
+  const byId = new Map(ingredients.map((i) => [i.id, i]));
+  return sortedIngredientIdsByPredominance(recipe, ingredients)
+    .map((id) => byId.get(id))
+    .filter((i): i is Ingredient => !!i)
+    .map((i) => (i.inci?.trim() ? i.inci : i.name))
+    .join(', ');
+}
+
+export const DEFAULT_BASE_LABOR_RATE = 20;
+
+/** Labor cost per finished unit: (rate/60 × minutes) ÷ batch yield. */
+export function calculateLaborCostPerUnit(
+  recipe: Pick<Recipe, 'laborMinutes' | 'barsPerBatch'>,
+  baseLaborRate: number = DEFAULT_BASE_LABOR_RATE,
+): number {
+  const minutes = recipe.laborMinutes ?? 0;
+  if (minutes <= 0 || baseLaborRate <= 0) return 0;
+  const yieldCount = recipe.barsPerBatch && recipe.barsPerBatch > 0 ? recipe.barsPerBatch : 1;
+  return ((baseLaborRate / 60) * minutes) / yieldCount;
+}
+
+/** Per-unit COGS: material (batch ÷ yield) + labor. */
+export function calculateRecipeUnitCogs(
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'customCosts' | 'laborMinutes' | 'barsPerBatch'>,
+  ingredients: Ingredient[],
+  baseLaborRate: number = DEFAULT_BASE_LABOR_RATE,
+): number {
+  const materialBatch = calculateRecipeMaterialCogs(recipe, ingredients);
+  const yieldCount = recipe.barsPerBatch && recipe.barsPerBatch > 0 ? recipe.barsPerBatch : 1;
+  const materialPerUnit = materialBatch / yieldCount;
+  return materialPerUnit + calculateLaborCostPerUnit(recipe, baseLaborRate);
+}
+
 /** Sum raw material COGS for a recipe from ingredient amounts × fractional costs. */
 export function calculateRecipeMaterialCogs(
   recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'customCosts'>,

@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import {
   AlignHorizontalJustifyCenter,
   AlignVerticalJustifyCenter,
+  Barcode,
   ChevronRight,
   Circle,
   Copy,
@@ -56,10 +57,11 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { editor } from '@/lib/fabric/editorController';
-import { LOT_CODE_VARIABLE } from '@/lib/dynamicLabelVars';
+import { LOT_CODE_VARIABLE, INGREDIENTS_VARIABLE } from '@/lib/dynamicLabelVars';
 import { requestCanvasFit, useEditorStore } from '@/store/useEditorStore';
 import AddPanel from './AddPanel';
 import AssetsDrawer, { type AssetTab } from './AssetsDrawer';
+import BarcodeModal from './BarcodeModal';
 import QrCodeModal from './QrCodeModal';
 
 // ── Clamp helper ──────────────────────────────────────────────────────────────
@@ -210,6 +212,7 @@ function FloatingToolbar({
   const origin = useRef({ mx: 0, my: 0, px: 0, py: 0 });
   const [shapeOpen, setShapeOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [barcodeOpen, setBarcodeOpen] = useState(false);
   const { trigger: addImageFile, Input: ImageInput } = useFileImageAdder();
 
   const onGripDown = (e: React.MouseEvent) => {
@@ -275,6 +278,7 @@ function FloatingToolbar({
     <>
       {ImageInput}
       {qrOpen && <QrCodeModal open={qrOpen} onClose={() => setQrOpen(false)} />}
+      {barcodeOpen && <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />}
       <div
         className="fixed z-50 select-none rounded-xl bg-gray-900 shadow-2xl ring-1 ring-gray-600"
         style={{ left: pos.x, top: pos.y }}
@@ -312,10 +316,16 @@ function FloatingToolbar({
             {shapeOpen && <ShapeFlyout onClose={() => setShapeOpen(false)} />}
           </div>
           <FBtn icon={QrCode} title={t('editor.tools.addQr')} onClick={() => setQrOpen(true)} />
+          <FBtn icon={Barcode} title={t('editor.tools.addBarcode')} onClick={() => setBarcodeOpen(true)} />
           <FBtn
             icon={Hash}
             title={t('editor.tools.insertLotCodeVar', 'Insert lot code variable')}
             onClick={() => editor.addText('body', LOT_CODE_VARIABLE)}
+          />
+          <FBtn
+            icon={Type}
+            title={t('editor.tools.insertIngredientsVar', 'Insert ingredients variable')}
+            onClick={() => editor.addText('body', INGREDIENTS_VARIABLE)}
           />
           <FSep />
 
@@ -375,6 +385,7 @@ export default function LeftRail() {
   const [activeAssetTab, setActiveAssetTab] = useState<AssetTab>('myPhotos');
   const [shapeOpen,      setShapeOpen]      = useState(false);
   const [qrOpen,         setQrOpen]         = useState(false);
+  const [barcodeOpen,    setBarcodeOpen]    = useState(false);
   const [simpleMode,     setSimpleMode]     = useState(false);
   const [floating,       setFloating]       = useState(false);
 
@@ -418,6 +429,7 @@ export default function LeftRail() {
       <div className="relative flex w-20 shrink-0 flex-col overflow-y-auto bg-gray-900 py-1.5 max-sm:w-full max-sm:flex-row max-sm:overflow-x-auto max-sm:overflow-y-hidden max-sm:py-1">
 
         {qrOpen && <QrCodeModal open={qrOpen} onClose={() => setQrOpen(false)} />}
+        {barcodeOpen && <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />}
 
         {simpleMode ? (
           /* ── Simple mode: 2 rows × 3 essential tools ──────────────────────── */
@@ -501,10 +513,16 @@ export default function LeftRail() {
                   {shapeOpen && <ShapeFlyout onClose={() => setShapeOpen(false)} />}
                 </div>
                 <ToolBtn icon={QrCode} title={t('editor.tools.addQr')} onClick={() => setQrOpen(true)} />
+                <ToolBtn icon={Barcode} title={t('editor.tools.addBarcode')} onClick={() => setBarcodeOpen(true)} />
                 <ToolBtn
                   icon={Hash}
                   title={t('editor.tools.insertLotCodeVar', 'Insert lot code variable')}
                   onClick={() => editor.addText('body', LOT_CODE_VARIABLE)}
+                />
+                <ToolBtn
+                  icon={Type}
+                  title={t('editor.tools.insertIngredientsVar', 'Insert ingredients variable')}
+                  onClick={() => editor.addText('body', INGREDIENTS_VARIABLE)}
                 />
                 {/* Background with pulse dot */}
                 <div className="relative">

@@ -14,8 +14,8 @@
 //   • restoreBackup(json)  — validates the file, then clears + reimports every
 //     recognized table inside ONE read-write transaction: all-or-nothing, a
 //     half-restored database is impossible.
-//   • maybeRunAutoBackup() — desktop-only daily safety net, called on boot.
-//     Rosa never has to remember to back up.
+//   • maybeRunAutoBackup() — daily safety net on boot (Electron silent save or
+//     PWA browser download). Rosa never has to remember to back up.
 // ---------------------------------------------------------------------------
 
 import { db } from '@/db/db';
@@ -61,6 +61,12 @@ export function backupFilename(prefix = 'Gaia_Backup', now = new Date()): string
     `${prefix}_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
     `_${pad(now.getHours())}${pad(now.getMinutes())}.json`
   );
+}
+
+/** PWA auto-backup filename: gaias-studio-backup-YYYY-MM-DD.json */
+export function pwaAutoBackupFilename(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `gaias-studio-backup-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}.json`;
 }
 
 /**
@@ -140,30 +146,49 @@ export async function restoreBackup(json: string): Promise<RestoreSummary> {
 }
 
 // ---------------------------------------------------------------------------
-// Automatic daily backup (desktop only)
+// Automatic daily backup (Electron + PWA)
 // ---------------------------------------------------------------------------
 
-const AUTO_BACKUP_STAMP_KEY = 'gaia.lastAutoBackup';
-/** 20h instead of 24h so the backup drifts earlier, never later, each day. */
-const AUTO_BACKUP_INTERVAL_MS = 20 * 60 * 60 * 1000;
+const LAST_BACKUP_DATE_KEY = 'lastBackupDate';
+const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function triggerBrowserDownload(json: string, filename: string): void {
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
 
 /**
- * Writes a silent automatic backup at most once per day. No-op in the
- * browser build or when one was taken recently. Never throws — a failed
+ * Writes an automatic backup at most once per 24 hours. Electron saves
+ * silently; PWA triggers a browser download. Never throws — a failed
  * auto-backup must not break app startup.
  */
 export async function maybeRunAutoBackup(): Promise<void> {
-  const api = electronApi();
-  if (!api?.saveBackup) return;
-
   try {
-    const last = Number(localStorage.getItem(AUTO_BACKUP_STAMP_KEY) ?? 0);
-    if (Date.now() - last < AUTO_BACKUP_INTERVAL_MS) return;
+    const lastRaw = localStorage.getItem(LAST_BACKUP_DATE_KEY);
+    const last = lastRaw ? Date.parse(lastRaw) : 0;
+    if (last && Date.now() - last < AUTO_BACKUP_INTERVAL_MS) return;
 
     const backup = await buildBackup();
-    const { path } = await api.saveBackup(JSON.stringify(backup), backupFilename('Gaia_AutoBackup'));
-    localStorage.setItem(AUTO_BACKUP_STAMP_KEY, String(Date.now()));
-    console.info(`[Gaia] Automatic backup saved: ${path}`);
+    const json = JSON.stringify(backup);
+    const api = electronApi();
+
+    if (api?.saveBackup) {
+      const { path } = await api.saveBackup(json, backupFilename('Gaia_AutoBackup'));
+      localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date().toISOString());
+      console.info(`[Gaia] Automatic backup saved: ${path}`);
+      return;
+    }
+
+    triggerBrowserDownload(json, pwaAutoBackupFilename());
+    localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date().toISOString());
+    console.info('[Gaia] Automatic PWA backup downloaded');
   } catch (err) {
     console.warn('[Gaia] Automatic backup failed:', err);
   }

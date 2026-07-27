@@ -17,6 +17,7 @@ import {
   localizeRecipeDirections,
   localizeRecipeWarnings,
 } from '@/lib/recipeI18n';
+import { buildSortedInciList } from '@/lib/inventoryMath';
 
 const HEADING_FONT = 'Playfair Display';
 const BODY_FONT = 'Montserrat';
@@ -42,12 +43,7 @@ function safeRect(): SafeRect {
 }
 
 function inciList(recipe: Recipe, ingredients: Ingredient[]): string {
-  const byId = new Map(ingredients.map((i) => [i.id, i]));
-  return recipe.ingredientIds
-    .map((id) => byId.get(id))
-    .filter((i): i is Ingredient => !!i)
-    .map((i) => (i.inci?.trim() ? i.inci : i.name))
-    .join(', ');
+  return buildSortedInciList(recipe, ingredients);
 }
 
 /** Removes prior text/shape but keeps the user's background & logo images. */

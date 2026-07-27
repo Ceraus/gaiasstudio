@@ -1,7 +1,7 @@
 {
   "name": "gaia-studio",
   "private": true,
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Gaia's Studio — an offline-first business hub for Gaia's Essences: labels, recipes, inventory, orders, finances, and Etsy integration.",
   "author": "Rosa Suarez (Gaia's Essences)",
   "main": "electron/main.cjs",
@@ -42,6 +42,7 @@
     "dexie": "^4.0.10",
     "fabric": "^6.5.4",
     "i18next": "^23.16.8",
+    "jsbarcode": "^3.12.3",
     "lucide-react": "^0.468.0",
     "node-llama-cpp": "^3.19.1",
     "pdf-lib": "^1.17.1",

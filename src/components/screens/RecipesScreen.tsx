@@ -6,6 +6,7 @@ import { customMaterialsRepo, ingredientsRepo, recipesRepo } from '@/db/reposito
 import {
   calculateProfitMargin,
   calculateRecipeMaterialCogs,
+  calculateRecipeUnitCogs,
   marginHealth,
   MARGIN_HEALTH_CLASSES,
 } from '@/lib/inventoryMath';
@@ -40,6 +41,7 @@ interface RecipeForm {
   retailPrice: string;
   /** How many bars one batch of the amounts yields (blank = 1). Work orders divide by this. */
   barsPerBatch: string;
+  laborMinutes: string;
 }
 
 /** Max recipe rows shown per page in "Your Recipes" — chosen so the list's
@@ -73,6 +75,7 @@ const emptyForm: RecipeForm = {
   customCosts: [],
   retailPrice: '',
   barsPerBatch: '',
+  laborMinutes: '',
 };
 
 export default function RecipesScreen() {
@@ -175,6 +178,7 @@ export default function RecipesScreen() {
       customCosts: r.customCosts ?? [],
       retailPrice: r.retailPrice !== undefined ? String(r.retailPrice) : '',
       barsPerBatch: r.barsPerBatch !== undefined ? String(r.barsPerBatch) : '',
+      laborMinutes: r.laborMinutes !== undefined ? String(r.laborMinutes) : '',
     });
     setHighlightMissing(false);
     setBenefitSuggestion(null);
@@ -224,6 +228,10 @@ export default function RecipesScreen() {
       barsPerBatch: (() => {
         const n = parseFloat(form.barsPerBatch);
         return !isNaN(n) && n > 0 ? n : undefined;
+      })(),
+      laborMinutes: (() => {
+        const n = parseFloat(form.laborMinutes);
+        return !isNaN(n) && n >= 0 ? n : undefined;
       })(),
     };
     if (editingId) await recipesRepo.update(editingId, payload);
@@ -793,6 +801,9 @@ export default function RecipesScreen() {
               onRetailPriceChange={(val) => setForm((f) => ({ ...f, retailPrice: val }))}
               barsPerBatch={form.barsPerBatch}
               onBarsPerBatchChange={(val) => setForm((f) => ({ ...f, barsPerBatch: val }))}
+              laborMinutes={form.laborMinutes}
+              onLaborMinutesChange={(val) => setForm((f) => ({ ...f, laborMinutes: val }))}
+              baseLaborRate={settings.baseLaborRate ?? 20}
               ingredients={ingredients}
               selectedIds={form.ingredientIds}
               amounts={form.ingredientAmounts}
@@ -1341,6 +1352,9 @@ function RevenueTrackerCard({
   customCosts,
   barsPerBatch,
   onBarsPerBatchChange,
+  laborMinutes,
+  onLaborMinutesChange,
+  baseLaborRate,
 }: {
   materialCost: number;
   retailPrice: string;
@@ -1351,14 +1365,40 @@ function RevenueTrackerCard({
   customCosts: Array<{ id: string; name: string; cost: number; unit?: string }>;
   barsPerBatch: string;
   onBarsPerBatchChange: (val: string) => void;
+  laborMinutes: string;
+  onLaborMinutesChange: (val: string) => void;
+  baseLaborRate: number;
 }) {
   const { t } = useTranslation();
   const [breakdownOpen, setBreakdownOpen] = useState(false);
 
+  const draftRecipe = useMemo(() => ({
+    ingredientIds: selectedIds,
+    ingredientAmounts: Object.fromEntries(
+      Object.entries(amounts)
+        .map(([k, v]) => [k, parseFloat(v)])
+        .filter(([, v]) => !isNaN(v as number) && (v as number) > 0),
+    ),
+    customCosts,
+    barsPerBatch: (() => {
+      const n = parseFloat(barsPerBatch);
+      return !isNaN(n) && n > 0 ? n : undefined;
+    })(),
+    laborMinutes: (() => {
+      const n = parseFloat(laborMinutes);
+      return !isNaN(n) && n >= 0 ? n : undefined;
+    })(),
+  }), [selectedIds, amounts, customCosts, barsPerBatch, laborMinutes]);
+
+  const unitCogs = useMemo(
+    () => calculateRecipeUnitCogs(draftRecipe, ingredients, baseLaborRate),
+    [draftRecipe, ingredients, baseLaborRate],
+  );
+
   const retail = parseFloat(retailPrice);
   const hasRetail = !isNaN(retail) && retail > 0;
-  const grossProfit = hasRetail ? retail - materialCost : undefined;
-  const margin = hasRetail ? calculateProfitMargin(retail, materialCost) : undefined;
+  const grossProfit = hasRetail ? retail - unitCogs : undefined;
+  const margin = hasRetail ? calculateProfitMargin(retail, unitCogs) : undefined;
   const health = marginHealth(margin);
 
   interface LineItem {
@@ -1442,6 +1482,28 @@ function RevenueTrackerCard({
           {t('recipes.barsPerBatchHint', 'How many bars the ingredient amounts above make. Orders deduct amounts ÷ this per bar sold.')}
         </span>
       </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="label mb-0 text-[11px]">{t('recipes.laborMinutes', 'Time to produce batch (minutes)')}</label>
+        <input
+          type="number"
+          min={0}
+          step={1}
+          className="input w-24"
+          placeholder="0"
+          value={laborMinutes}
+          onChange={(e) => onLaborMinutesChange(e.target.value)}
+        />
+        <span className="text-[11px] text-slate-400">
+          {t('recipes.laborMinutesHint', 'Labor COGS uses your hourly rate from Settings ÷ batch yield.')}
+        </span>
+      </div>
+
+      {unitCogs > 0 && (
+        <p className="text-xs text-slate-500">
+          {t('recipes.unitCogs', 'COGS per bar (materials + labor)')}: <span className="font-semibold">${unitCogs.toFixed(2)}</span>
+        </p>
+      )}
 
       {hasRetail && grossProfit !== undefined && margin !== undefined && (
         <div className="grid grid-cols-2 gap-3">

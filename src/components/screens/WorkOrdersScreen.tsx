@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, ClipboardList,
-  Copy, DollarSign, FileDown, Loader2, Package, Plus, Printer, ReceiptText,
+  Copy, DollarSign, Factory, FileDown, Loader2, Package, Plus, Printer, ReceiptText,
   RotateCcw, Trash2, UserRound, X,
 } from 'lucide-react';
 import type { Client, Ingredient, Recipe, WorkOrder, WorkOrderItem } from '@/types';
@@ -66,6 +66,7 @@ export default function WorkOrdersScreen() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
 
   const [showNewOrder, setShowNewOrder] = useState(false);
+  const [showProductionRun, setShowProductionRun] = useState(false);
   const [repeatSeed, setRepeatSeed] = useState<RepeatSeed | null>(null);
   const [clientFilter, setClientFilter] = useState<string>(''); // '' = all clients
   const [completeTarget, setCompleteTarget] = useState<WorkOrder | null>(null);
@@ -176,7 +177,11 @@ export default function WorkOrdersScreen() {
           t('orders.lotCodeAssigned', 'FDA lot code assigned: {{code}}', { code: fresh.lotCode }),
         );
       }
-      if (fresh) await generateReceipt(fresh);
+      if (fresh?.type === 'internal') {
+        showToast(t('orders.productionComplete', 'Production run completed — stock added to product inventory.'));
+      } else if (fresh) {
+        await generateReceipt(fresh);
+      }
     } catch (err) {
       console.error('[Orders] Completion failed:', err);
       showToast(t('orders.completeFailed', 'Could not complete the order.'));
@@ -261,10 +266,16 @@ export default function WorkOrdersScreen() {
                 {t('orders.subtitle', 'Track what each client ordered. Completing an order deducts your ingredient stock and creates a PDF receipt automatically.')}
               </p>
             </div>
-            <button className="btn-primary" onClick={() => setShowNewOrder(true)} data-tour="new-order">
-              <Plus className="h-4 w-4" />
-              {t('orders.newOrder', 'New Order')}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-secondary" onClick={() => setShowProductionRun(true)}>
+                <Factory className="h-4 w-4" />
+                {t('orders.newProductionRun', 'New Production Run')}
+              </button>
+              <button className="btn-primary" onClick={() => setShowNewOrder(true)} data-tour="new-order">
+                <Plus className="h-4 w-4" />
+                {t('orders.newOrder', 'New Order')}
+              </button>
+            </div>
           </div>
 
           <TipBanner
@@ -382,11 +393,25 @@ export default function WorkOrdersScreen() {
         clients={clients}
         recipes={recipes}
         seed={repeatSeed}
+        mode="client"
         onCreated={async (orderNumber) => {
           setShowNewOrder(false);
           setRepeatSeed(null);
           await reload();
           showToast(t('orders.created', '{{n}} saved. Mark it Completed when the soaps are handed over.', { n: orderNumber }));
+        }}
+      />
+
+      <NewOrderModal
+        open={showProductionRun}
+        onClose={() => setShowProductionRun(false)}
+        clients={clients}
+        recipes={recipes}
+        mode="internal"
+        onCreated={async (orderNumber) => {
+          setShowProductionRun(false);
+          await reload();
+          showToast(t('orders.productionCreated', '{{n}} saved. Mark it Completed to deduct ingredients and add stock.', { n: orderNumber }));
         }}
       />
 
@@ -464,6 +489,7 @@ function OrderCard({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const isCompleted = order.status === 'completed';
+  const isInternal = order.type === 'internal';
 
   const itemsSummary = items.map((i) => `${i.recipeName} ×${i.quantity}`).join(' · ');
 
@@ -471,12 +497,17 @@ function OrderCard({
     <div className={`rounded-2xl bg-white px-5 py-4 ring-1 transition ${isCompleted ? 'ring-emerald-200' : 'ring-amber-200'} ${busy ? 'opacity-60' : ''}`}>
       {/* Top row */}
       <div className="flex items-center gap-3">
-        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isCompleted ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-          <UserRound className="h-[18px] w-[18px]" />
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isCompleted ? 'bg-emerald-50 text-emerald-600' : isInternal ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>
+          {isInternal ? <Factory className="h-[18px] w-[18px]" /> : <UserRound className="h-[18px] w-[18px]" />}
         </span>
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-2 font-semibold text-slate-800">
             <span className="truncate">{order.clientName}</span>
+            {isInternal && (
+              <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 ring-1 ring-violet-200">
+                {t('orders.internalBadge', 'Production')}
+              </span>
+            )}
             <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
               {order.orderNumber}
             </span>
@@ -554,10 +585,12 @@ function OrderCard({
             {t('orders.markCompleted', 'Mark Completed')}
           </button>
         )}
-        <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={onReceipt}>
-          <ReceiptText className="h-3.5 w-3.5" />
-          {t('orders.receiptPdf', 'Receipt PDF')}
-        </button>
+        {!isInternal && (
+          <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={onReceipt}>
+            <ReceiptText className="h-3.5 w-3.5" />
+            {t('orders.receiptPdf', 'Receipt PDF')}
+          </button>
+        )}
         <button
           className="btn-secondary px-3 py-1.5 text-xs"
           disabled={busy}
@@ -567,15 +600,17 @@ function OrderCard({
           <Printer className="h-3.5 w-3.5" />
           {t('orders.printLabels', 'Print labels')}
         </button>
-        <button
-          className="btn-ghost px-3 py-1.5 text-xs"
-          disabled={busy}
-          onClick={onRepeat}
-          title={t('orders.repeatTitle', 'Start a new order with the same client and soaps')}
-        >
-          <Copy className="h-3.5 w-3.5" />
-          {t('orders.repeat', 'Repeat')}
-        </button>
+        {!isInternal && (
+          <button
+            className="btn-ghost px-3 py-1.5 text-xs"
+            disabled={busy}
+            onClick={onRepeat}
+            title={t('orders.repeatTitle', 'Start a new order with the same client and soaps')}
+          >
+            <Copy className="h-3.5 w-3.5" />
+            {t('orders.repeat', 'Repeat')}
+          </button>
+        )}
         {isCompleted && (
           <button className="btn-ghost px-3 py-1.5 text-xs" disabled={busy} onClick={onReopen}>
             <RotateCcw className="h-3.5 w-3.5" />
@@ -622,11 +657,13 @@ interface NewOrderModalProps {
   recipes: Recipe[];
   /** Pre-fill from "Repeat order" (client + items at their original prices). */
   seed?: RepeatSeed | null;
+  mode?: 'client' | 'internal';
   onCreated: (orderNumber: string) => void | Promise<void>;
 }
 
-function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: NewOrderModalProps) {
+function NewOrderModal({ open, onClose, clients, recipes, seed, mode = 'client', onCreated }: NewOrderModalProps) {
   const { t } = useTranslation();
+  const isInternal = mode === 'internal';
   const [clientName, setClientName] = useState('');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<ItemDraft[]>([]);
@@ -647,7 +684,12 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
       } else {
         setClientName(seed?.clientName ?? '');
         setNotes('');
-        setItems([{ key: newItemKey(), recipeId: recipes[0]?.id ?? '', quantity: '1', unitPrice: priceOf(recipes[0]) }]);
+        setItems([{
+          key: newItemKey(),
+          recipeId: recipes[0]?.id ?? '',
+          quantity: '1',
+          unitPrice: isInternal ? '0' : priceOf(recipes[0]),
+        }]);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -686,16 +728,19 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
   }, [items, recipes]);
 
   const subtotal = parsedItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-  const canSave = clientName.trim().length > 0 && parsedItems.length > 0 && !saving;
+  const canSave = (isInternal || clientName.trim().length > 0) && parsedItems.length > 0 && !saving;
 
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
       const { order } = await workOrdersRepo.create({
-        clientName: clientName.trim(),
+        clientName: isInternal
+          ? t('orders.internalClient', 'Internal Production')
+          : clientName.trim(),
         notes,
         items: parsedItems,
+        type: isInternal ? 'internal' : 'client',
       });
       await onCreated(order.orderNumber);
     } catch (err) {
@@ -712,21 +757,29 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
       width={620}
       title={
         <span className="flex items-center gap-2">
-          <ClipboardList className="h-4 w-4 text-gaia-600" />
-          {t('orders.newOrderTitle', 'New Work Order')}
+          {isInternal ? <Factory className="h-4 w-4 text-violet-600" /> : <ClipboardList className="h-4 w-4 text-gaia-600" />}
+          {isInternal
+            ? t('orders.productionRunTitle', 'New Production Run')
+            : t('orders.newOrderTitle', 'New Work Order')}
         </span>
       }
       footer={
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm text-slate-500">
-            {t('orders.orderTotal', 'Total')}{' '}
-            <span className="text-lg font-bold text-slate-800">{fmtMoney(subtotal)}</span>
-          </p>
+          {!isInternal ? (
+            <p className="text-sm text-slate-500">
+              {t('orders.orderTotal', 'Total')}{' '}
+              <span className="text-lg font-bold text-slate-800">{fmtMoney(subtotal)}</span>
+            </p>
+          ) : (
+            <span />
+          )}
           <div className="flex gap-2">
             <button className="btn-ghost" onClick={onClose}>{t('common.cancel', 'Cancel')}</button>
             <button className="btn-primary" disabled={!canSave} onClick={() => void save()}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              {t('orders.saveOrder', 'Save Order')}
+              {isInternal
+                ? t('orders.saveProductionRun', 'Save Production Run')
+                : t('orders.saveOrder', 'Save Order')}
             </button>
           </div>
         </div>
@@ -738,7 +791,13 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
         </p>
       ) : (
         <div className="space-y-4">
-          {/* Client */}
+          {isInternal && (
+            <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 ring-1 ring-violet-100">
+              {t('orders.productionRunHint', 'Record stock you made for Etsy or inventory. Completing deducts raw ingredients and adds finished units to product inventory — no client receipt.')}
+            </p>
+          )}
+
+          {!isInternal && (
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">
               {t('orders.clientName', "Client's name")}
@@ -760,19 +819,22 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
               </p>
             )}
           </div>
+          )}
 
           {/* Items */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-500">
-              {t('orders.soapsSold', 'Soaps sold')}
+              {isInternal
+                ? t('orders.productionItems', 'Recipes to produce')
+                : t('orders.soapsSold', 'Soaps sold')}
             </label>
             <div className="space-y-2">
               {items.map((draft) => {
                 const qty = parseFloat(draft.quantity);
                 const price = parseFloat(draft.unitPrice);
-                const line = !isNaN(qty) && !isNaN(price) ? qty * price : null;
+                const line = !isInternal && !isNaN(qty) && !isNaN(price) ? qty * price : null;
                 return (
-                  <div key={draft.key} className="grid grid-cols-[1fr_64px_88px_72px_28px] items-center gap-1.5">
+                  <div key={draft.key} className={`grid items-center gap-1.5 ${isInternal ? 'grid-cols-[1fr_64px_28px]' : 'grid-cols-[1fr_64px_88px_72px_28px]'}`}>
                     <select
                       className="input min-w-0 text-sm"
                       value={draft.recipeId}
@@ -780,8 +842,7 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
                         const recipe = recipes.find((r) => r.id === e.target.value);
                         setItem(draft.key, {
                           recipeId: e.target.value,
-                          // Re-prefill the price when switching recipes.
-                          unitPrice: priceOf(recipe),
+                          unitPrice: isInternal ? '0' : priceOf(recipe),
                         });
                       }}
                     >
@@ -798,6 +859,8 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
                       value={draft.quantity}
                       onChange={(e) => setItem(draft.key, { quantity: e.target.value })}
                     />
+                    {!isInternal && (
+                    <>
                     <div className="relative">
                       <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">$</span>
                       <input
@@ -813,6 +876,8 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, onCreated }: New
                     <span className="truncate text-right text-xs font-semibold text-slate-600">
                       {line !== null ? fmtMoney(line) : '—'}
                     </span>
+                    </>
+                    )}
                     <button
                       className="text-slate-300 transition hover:text-rose-500"
                       onClick={() => removeItem(draft.key)}

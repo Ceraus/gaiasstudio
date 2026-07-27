@@ -153,6 +153,8 @@ export interface Recipe {
    * Undefined/0 is treated as 1 (amounts are per single unit).
    */
   barsPerBatch?: number;
+  /** Minutes Rosa spends producing one batch — used for labor COGS. */
+  laborMinutes?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -206,6 +208,8 @@ export interface AppSettings {
   businessName?: string;
   /** Business address — required on FDA-compliant cosmetic labels. */
   businessAddress?: string;
+  /** Hourly labor rate (USD) for COGS / margin calculations. Default 20. */
+  baseLaborRate?: number;
   /** Contact info (email, phone, or website) printed on back labels. */
   contact?: string;
   /**
@@ -453,10 +457,14 @@ export interface WorkOrderUsageLine {
   deducted: boolean;
 }
 
+export type WorkOrderType = 'client' | 'internal';
+
 export interface WorkOrder {
   id: string;
   /** Human-friendly sequential number, e.g. "ORD-007". */
   orderNumber: string;
+  /** Client sale vs internal stock production (Etsy restock). */
+  type?: WorkOrderType;
   clientId: string;
   /** Denormalized so the dashboard renders without a join. */
   clientName: string;
@@ -542,6 +550,8 @@ export interface ProductListing {
   etsyListingId?: string;
   description?: string;
   price?: number;
+  /** Finished units on hand (incremented by internal production runs). */
+  inventoryCount?: number;
   active: boolean;
   createdAt: number;
   updatedAt: number;

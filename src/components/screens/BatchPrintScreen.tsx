@@ -35,8 +35,10 @@ import {
 import { footprintHeightIn, footprintWidthIn, slotPositionIn } from '@/lib/units';
 import {
   applyDynamicVariablesToCanvasJson,
+  resolveIngredientsForRecipe,
   resolveLatestLotCodeForRecipe,
 } from '@/lib/dynamicLabelVars';
+import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 
 const templates = (averyData as AveryDataset).templates;
 
@@ -125,11 +127,20 @@ export default function BatchPrintScreen() {
     try {
       // Rasterize each design off-screen at print resolution.
       const { editor } = await import('@/lib/fabric/editorController');
+      const [allRecipes, allIngredients] = await Promise.all([
+        recipesRepo.all(),
+        ingredientsRepo.all(),
+      ]);
       const items: BatchItem[] = [];
       for (const entry of printable) {
         const resolvedLot = await resolveLatestLotCodeForRecipe(entry.draft.recipeId);
+        const recipe = entry.draft.recipeId
+          ? allRecipes.find((r) => r.id === entry.draft.recipeId)
+          : undefined;
+        const resolvedIngredients = resolveIngredientsForRecipe(recipe, allIngredients);
         const designJson = applyDynamicVariablesToCanvasJson(entry.draft.designJson, {
           lotCode: resolvedLot,
+          ingredients: resolvedIngredients,
         });
         const png = await editor.renderDesignPng(designJson, template, settings);
         items.push({ pngDataUrl: png, quantity: entry.quantity });

@@ -3,8 +3,7 @@
  *
  * Steps:
  *   1     Choose Shape & Size  (template)
- *   1.5   Manage Ingredients   (ingredients)
- *   2     Build Recipe         (recipes)
+ *   2     Choose Recipe        (recipes)
  *   3     Choose Background    (background)
  *   4     Refine & Design      (editor)
  *   5     Print & Export       (export)
@@ -19,7 +18,7 @@
  * Once the user is IN the editor (step 4), step 5 is always freely accessible.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Beaker, BookOpen, Image as ImageIcon, Layers, Pencil, Printer } from 'lucide-react';
+import { BookOpen, Image as ImageIcon, Layers, Pencil, Printer } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, type Screen } from '@/store/useAppStore';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
@@ -29,7 +28,7 @@ import { useTrainingBlockStore } from '@/store/useTrainingBlockStore';
 
 interface Step {
   order: number;
-  /** Shown in the step circle on desktop (e.g. "1", "1.5", "2"). */
+  /** Shown in the step circle on desktop (e.g. "1", "2"). */
   stepLabel: string;
   labelKey: string;
   defaultLabel: string;
@@ -40,7 +39,6 @@ interface Step {
 
 const STEPS: Step[] = [
   { order: 1, stepLabel: '1', labelKey: 'workflow.shape', defaultLabel: 'Choose Shape & Size', icon: Layers, screens: ['template', 'sets'], goto: 'template' },
-  { order: 1.5, stepLabel: '1.5', labelKey: 'workflow.ingredients', defaultLabel: 'Manage Ingredients', icon: Beaker, screens: ['ingredients'], goto: 'ingredients' },
   { order: 2, stepLabel: '2', labelKey: 'workflow.recipe', defaultLabel: 'Choose Recipe', icon: BookOpen, screens: ['recipes'], goto: 'recipes' },
   { order: 3, stepLabel: '3', labelKey: 'workflow.step3', defaultLabel: 'Choose Background', icon: ImageIcon, screens: ['background'], goto: 'background' },
   { order: 4, stepLabel: '4', labelKey: 'workflow.refine', defaultLabel: 'Refine & Design', icon: Pencil, screens: ['editor'], goto: 'editor' },
@@ -75,20 +73,10 @@ export default function WorkflowStepper({ embedded = false }: WorkflowStepperPro
 
   const [hintStep,        setHintStep]        = useState<number | null>(null);
   const [hintMsg,         setHintMsg]         = useState('');
-  const [hoveredStep,     setHoveredStep]     = useState<number | null>(null);
-  const [activeIngCount,  setActiveIngCount]  = useState(0);
   const [activeRecipeDot, setActiveRecipeDot] = useState<string | null>(null);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => { if (hintTimer.current) clearTimeout(hintTimer.current); }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    ingredientsRepo.active().then((ings) => {
-      if (!cancelled) setActiveIngCount(ings.length);
-    });
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     if (!activeRecipeId) { setActiveRecipeDot(null); return; }
@@ -180,13 +168,9 @@ export default function WorkflowStepper({ embedded = false }: WorkflowStepperPro
           }`}
           onClick={() => handleClick(step)}
           aria-current={isActive ? 'step' : undefined}
-          onMouseEnter={() => setHoveredStep(step.order)}
-          onMouseLeave={() => setHoveredStep(null)}
         >
           <span
             className={`flex shrink-0 items-center justify-center rounded-full font-bold transition-all ${
-              step.stepLabel.length > 1 ? 'min-w-[1.85rem] px-1' : ''
-            } ${
               isActive
                 ? 'h-8 w-8 bg-gaia-600 text-sm text-white ring-4 ring-gaia-100'
                 : isPast
@@ -217,16 +201,6 @@ export default function WorkflowStepper({ embedded = false }: WorkflowStepperPro
             )}
           </span>
         </button>
-
-        {step.order === 1.5 && hoveredStep === 1.5 && activeIngCount > 0 && (
-          <div
-            role="tooltip"
-            className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 whitespace-nowrap rounded-lg bg-gaia-800 px-2.5 py-1.5 text-xs text-white shadow-lg"
-          >
-            <span className="font-semibold">{activeIngCount}</span>
-            {' '}{t('inventory.activeIngredients', 'active ingredients')}
-          </div>
-        )}
 
         {idx < STEPS.length - 1 && (
           <div

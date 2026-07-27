@@ -21,7 +21,7 @@ import type {
   WorkOrderUsageLine,
 } from '@/types';
 
-import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs } from '@/lib/inventoryMath';
+import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs, calculateRecipeUnitCogs, DEFAULT_BASE_LABOR_RATE } from '@/lib/inventoryMath';
 import { uid } from '@/lib/id';
 import { createLotCodeForRecipe, lotCodesRepo } from '@/lib/lotCodes';
 import {
@@ -34,11 +34,12 @@ import {
 } from '@/lib/crypto';
 import { migrateTrainingSettings } from '@/lib/trainingMode';
 
-function recipeFinancials(recipe: Recipe, ingredients: Ingredient[]) {
+function recipeFinancials(recipe: Recipe, ingredients: Ingredient[], baseLaborRate = DEFAULT_BASE_LABOR_RATE) {
   const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
+  const unitCogs = calculateRecipeUnitCogs(recipe, ingredients, baseLaborRate);
   const profitMargin =
     recipe.retailPrice !== undefined
-      ? calculateProfitMargin(recipe.retailPrice, cogsTotal)
+      ? calculateProfitMargin(recipe.retailPrice, unitCogs)
       : undefined;
   return { cogsTotal, profitMargin };
 }
@@ -170,8 +171,9 @@ export const recipesRepo = {
   ): Promise<Recipe> {
     const now = Date.now();
     const ingredients = await db.ingredients.toArray();
+    const settings = await settingsRepo.get();
     const draft: Recipe = { ...input, id: uid(), createdAt: now, updatedAt: now };
-    const { cogsTotal, profitMargin } = recipeFinancials(draft, ingredients);
+    const { cogsTotal, profitMargin } = recipeFinancials(draft, ingredients, settings.baseLaborRate ?? DEFAULT_BASE_LABOR_RATE);
     const rec: Recipe = { ...draft, cogsTotal, profitMargin };
     await db.recipes.add(rec);
     return rec;
@@ -181,7 +183,8 @@ export const recipesRepo = {
     if (existing) {
       const merged = { ...existing, ...patch };
       const ingredients = await db.ingredients.toArray();
-      const { cogsTotal, profitMargin } = recipeFinancials(merged, ingredients);
+      const settings = await settingsRepo.get();
+      const { cogsTotal, profitMargin } = recipeFinancials(merged, ingredients, settings.baseLaborRate ?? DEFAULT_BASE_LABOR_RATE);
       await db.recipes.update(id, {
         ...patch,
         cogsTotal,
@@ -623,11 +626,13 @@ export const workOrdersRepo = {
     clientName: string;
     notes?: string;
     items: NewWorkOrderItemInput[];
+    type?: 'client' | 'internal';
   }): Promise<{ order: WorkOrder; items: WorkOrderItem[] }> {
     const client = await clientsRepo.findOrCreateByName(input.clientName);
     const orderNumber = await this.nextOrderNumber();
     const now = Date.now();
     const orderId = uid();
+    const orderType = input.type ?? 'client';
 
     const items: WorkOrderItem[] = input.items
       .filter((i) => i.quantity > 0)
@@ -646,6 +651,7 @@ export const workOrdersRepo = {
     const order: WorkOrder = {
       id: orderId,
       orderNumber,
+      type: orderType,
       clientId: client.id,
       clientName: client.name,
       status: 'open',
@@ -707,14 +713,37 @@ export const workOrdersRepo = {
       lotCodesByRecipe.set(item.recipeId, lotRec.code);
     }
     const orderLotCode = [...lotCodesByRecipe.values()].join(', ') || undefined;
+    const isInternal = order.type === 'internal';
 
-    await db.transaction('rw', db.workOrders, db.workOrderItems, db.ingredients, async () => {
+    await db.transaction('rw', db.workOrders, db.workOrderItems, db.ingredients, db.productListings, async () => {
       for (const line of usage.lines) {
         if (!line.deducted) continue;
         const ing = await db.ingredients.get(line.ingredientId);
         if (!ing || ing.stockOnHand === undefined) continue;
         const next = Math.max(0, Math.round((ing.stockOnHand - line.amount) * 1000) / 1000);
         await db.ingredients.update(line.ingredientId, { stockOnHand: next, updatedAt: now });
+      }
+      if (isInternal) {
+        for (const item of items) {
+          let listing = await db.productListings.where('recipeId').equals(item.recipeId).first();
+          if (!listing) {
+            listing = {
+              id: uid(),
+              name: item.recipeName,
+              recipeId: item.recipeId,
+              active: true,
+              inventoryCount: item.quantity,
+              createdAt: now,
+              updatedAt: now,
+            };
+            await db.productListings.add(listing);
+          } else {
+            await db.productListings.update(listing.id, {
+              inventoryCount: (listing.inventoryCount ?? 0) + item.quantity,
+              updatedAt: now,
+            });
+          }
+        }
       }
       for (const item of items) {
         const code = lotCodesByRecipe.get(item.recipeId);
@@ -741,14 +770,26 @@ export const workOrdersRepo = {
     const order = await db.workOrders.get(id);
     if (!order || order.status !== 'completed') return;
     const now = Date.now();
+    const isInternal = order.type === 'internal';
 
-    await db.transaction('rw', db.workOrders, db.workOrderItems, db.ingredients, async () => {
+    await db.transaction('rw', db.workOrders, db.workOrderItems, db.ingredients, db.productListings, async () => {
       for (const line of order.usageSnapshot ?? []) {
         if (!line.deducted) continue;
         const ing = await db.ingredients.get(line.ingredientId);
         if (!ing || ing.stockOnHand === undefined) continue;
         const next = Math.round((ing.stockOnHand + line.amount) * 1000) / 1000;
         await db.ingredients.update(line.ingredientId, { stockOnHand: next, updatedAt: now });
+      }
+      if (isInternal) {
+        const itemRows = await db.workOrderItems.where('workOrderId').equals(id).toArray();
+        for (const item of itemRows) {
+          const listing = await db.productListings.where('recipeId').equals(item.recipeId).first();
+          if (!listing) continue;
+          await db.productListings.update(listing.id, {
+            inventoryCount: Math.max(0, (listing.inventoryCount ?? 0) - item.quantity),
+            updatedAt: now,
+          });
+        }
       }
       const itemRows = await db.workOrderItems.where('workOrderId').equals(id).toArray();
       for (const row of itemRows) {

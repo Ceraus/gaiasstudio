@@ -16,7 +16,7 @@ import type { Recipe } from '@/types';
 import { draftsRepo, productListingsRepo, recipesRepo, ingredientsRepo } from '@/db/repositories';
 import { etsyListingsRepo } from '@/lib/etsyApi';
 import { useAppStore } from '@/store/useAppStore';
-import { calculateRecipeMaterialCogs, calculateProfitMargin } from '@/lib/inventoryMath';
+import { calculateRecipeUnitCogs, calculateProfitMargin } from '@/lib/inventoryMath';
 
 const fmtMoney = (n: number) =>
   `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -41,6 +41,8 @@ interface ProductCard {
 export default function ProductsScreen() {
   const { t } = useTranslation();
   const goto = useAppStore((s) => s.goto);
+  const settings = useAppStore((s) => s.settings);
+  const baseLaborRate = settings.baseLaborRate ?? 20;
 
   const [products, setProducts] = useState<ProductCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,7 +72,7 @@ export default function ProductsScreen() {
       const recipe = pl.recipeId ? recipeMap.get(pl.recipeId) : undefined;
       const etsy = pl.etsyListingId ? etsyMap.get(pl.etsyListingId) : undefined;
       const draft = pl.draftId ? draftMap.get(pl.draftId) : undefined;
-      const cogs = recipe ? calculateRecipeMaterialCogs(recipe, ingredients) : undefined;
+      const cogs = recipe ? calculateRecipeUnitCogs(recipe, ingredients, baseLaborRate) : undefined;
       const price = pl.price ?? recipe?.retailPrice;
       const margin = price !== undefined && cogs !== undefined
         ? calculateProfitMargin(price, cogs)
@@ -101,7 +103,7 @@ export default function ProductsScreen() {
 
       const draft = drafts.find((d) => d.recipeId === recipe.id);
       const etsy = etsyListings.find((e) => e.recipeId === recipe.id);
-      const cogs = calculateRecipeMaterialCogs(recipe, ingredients);
+      const cogs = calculateRecipeUnitCogs(recipe, ingredients, baseLaborRate);
       const margin = calculateProfitMargin(recipe.retailPrice, cogs);
 
       cards.push({

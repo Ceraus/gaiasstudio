@@ -6,6 +6,7 @@ import WorkflowNav from '@/components/WorkflowNav';
 import { editor, parseTextObjectsFromJson } from '@/lib/fabric/editorController';
 import {
   applyDynamicVariablesToCanvasJson,
+  resolveIngredientsForRecipe,
   resolveLatestLotCodeForRecipe,
 } from '@/lib/dynamicLabelVars';
 import { recipesRepo, ingredientsRepo, draftsRepo } from '@/db/repositories';
@@ -124,8 +125,14 @@ export default function ExportScreen() {
     try {
       let png = previewPng;
       const resolvedLot = await resolveLatestLotCodeForRecipe(activeRecipeId ?? undefined);
+      const recipe = activeRecipeId ? await recipesRepo.get(activeRecipeId) : undefined;
+      const allIngredients = await ingredientsRepo.all();
+      const resolvedIngredients = resolveIngredientsForRecipe(recipe, allIngredients);
       if (designJson && template) {
-        const resolvedJson = applyDynamicVariablesToCanvasJson(designJson, { lotCode: resolvedLot });
+        const resolvedJson = applyDynamicVariablesToCanvasJson(designJson, {
+          lotCode: resolvedLot,
+          ingredients: resolvedIngredients,
+        });
         png = await editor.renderDesignPng(resolvedJson, template, settings);
       }
       if (!png) throw new Error('No label preview');

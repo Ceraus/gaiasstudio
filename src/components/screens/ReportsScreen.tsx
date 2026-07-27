@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, TrendingUp, TrendingDown, DollarSign, Package, PieChart, BarChart2 } from 'lucide-react';
 import { recipesRepo, ingredientsRepo, receiptsRepo, workOrdersRepo } from '@/db/repositories';
+import { calculateRecipeUnitCogs } from '@/lib/inventoryMath';
+import { useAppStore } from '@/store/useAppStore';
 import type { Recipe, Ingredient, Receipt, WorkOrder, WorkOrderItem } from '@/types';
 
 // Simple date helpers
@@ -80,6 +82,7 @@ const BarChart = ({ data }: { data: { label: string; revenue: number; expense: n
 
 export default function ReportsScreen() {
   const { t } = useTranslation();
+  const baseLaborRate = useAppStore((s) => s.settings.baseLaborRate ?? 20);
   const [loading, setLoading] = useState(true);
   
   const [orders, setOrders] = useState<WorkOrder[]>([]);
@@ -193,16 +196,8 @@ export default function ReportsScreen() {
       .map(p => ({ ...p, avgPrice: p.units > 0 ? p.revenue / p.units : 0 }));
 
     // Margin Data
-    const ingrCostMap = new Map(ingredients.map(i => [i.id, i.fractionalCost || 0]));
     const marginData = recipes.map(r => {
-      let cogs = 0;
-      if (r.ingredientAmounts) {
-        Object.entries(r.ingredientAmounts).forEach(([id, amt]) => {
-          cogs += (ingrCostMap.get(id) || 0) * amt;
-        });
-      }
-      const barsPerBatch = r.barsPerBatch || 1;
-      const unitCogs = cogs / barsPerBatch;
+      const unitCogs = calculateRecipeUnitCogs(r, ingredients, baseLaborRate);
       const retail = r.retailPrice || 0;
       const margin = retail > 0 ? ((retail - unitCogs) / retail) * 100 : 0;
       return { name: r.name, retail, cogs: unitCogs, margin };
@@ -236,7 +231,7 @@ export default function ReportsScreen() {
       marginData,
       expenseBreakdown: Object.entries(categoryTotals).map(([name, val]) => ({ name, value: val })),
     };
-  }, [orders, completedOrders, orderItems, receipts, recipes, ingredients]);
+  }, [orders, completedOrders, orderItems, receipts, recipes, ingredients, baseLaborRate]);
 
 
   const downloadCsv = (filename: string, content: string) => {

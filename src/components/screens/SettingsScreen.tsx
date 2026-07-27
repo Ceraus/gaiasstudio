@@ -503,6 +503,24 @@ export default function SettingsScreen() {
               />
             </div>
             <div>
+              <label className="label">{t('settings.baseLaborRate', 'Labor rate (USD / hour)')}</label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                className="input"
+                placeholder="20"
+                value={settings.baseLaborRate ?? 20}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  void updateSettings({ baseLaborRate: !isNaN(n) && n >= 0 ? n : 20 });
+                }}
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                {t('settings.baseLaborRateHint', 'Used with recipe production time to calculate labor COGS and profit margins.')}
+              </p>
+            </div>
+            <div>
               <label className="label">{t('settings.contact', 'Contact Info')}</label>
               <input
                 className="input"

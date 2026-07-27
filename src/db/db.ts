@@ -188,6 +188,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ollamaModel: 'llama3.1:8b',
   businessName: "Gaia's Essences",
   businessAddress: "1836 Westchester Ave, Unit #282, Bronx, NY 10472",
+  baseLaborRate: 20,
   contact: 'Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/',
   isTrainingMode: true,
   hasSeenTrainingWelcome: false,
