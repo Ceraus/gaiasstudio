@@ -16,7 +16,7 @@ export default defineConfig({
     host: true,
     watch: {
       // dist.zip is often locked by Explorer/archivers on Windows — ignore it.
-      ignored: ['**/dist/**', '**/*.zip'],
+      ignored: ['**/dist/**', '**/release/**', '**/*.zip'],
     },
   },
   build: {

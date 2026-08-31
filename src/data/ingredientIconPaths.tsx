@@ -9,6 +9,7 @@
  */
 import type { JSX } from 'react';
 import type { ReactNode } from 'react';
+import { canonicalizeIngredientName } from '@/lib/ingredientResolution';
 
 export interface SpecificIcon {
   path: ReactNode;
@@ -4698,7 +4699,10 @@ export const INGREDIENT_ICON_MAP: Record<string, SpecificIcon> = {
  */
 const SORTED_INGREDIENT_ICON_KEYS = Object.keys(INGREDIENT_ICON_MAP).sort((a, b) => b.length - a.length);
 
-export function getIngredientSpecificIcon(name: string): SpecificIcon | undefined {
+export function getIngredientSpecificIcon(name: string, iconKey?: string): SpecificIcon | undefined {
+  if (iconKey && INGREDIENT_ICON_MAP[iconKey]) return INGREDIENT_ICON_MAP[iconKey];
+  const resolved = resolveIngredientIconKey(name);
+  if (resolved && INGREDIENT_ICON_MAP[resolved]) return INGREDIENT_ICON_MAP[resolved];
   const lower = name.toLowerCase().trim();
   for (const key of SORTED_INGREDIENT_ICON_KEYS) {
     if (lower.includes(key)) return INGREDIENT_ICON_MAP[key];
@@ -4793,6 +4797,24 @@ const _perfume = (body: string, liquid: string): JSX.Element => (
     <rect x="17" y="5" width="4" height="4" rx="1" fill="#9CA3AF"/>
     <rect x="11" y="27" width="18" height="10" rx="0 0 5 5" fill={liquid} opacity="0.50"/>
     <rect x="13" y="17" width="5" height="13" rx="2.5" fill="white" opacity="0.16"/>
+  </svg>
+);
+
+/** Watermelon wedge — green rind, pink flesh, seeds */
+const _watermelon = (): JSX.Element => (
+  <svg viewBox="0 0 40 40" width="100%" height="100%" fill="none" aria-hidden="true">
+    <g transform="translate(0 8)">
+      <path d="M4 20 A16 16 0 0 1 36 20 Z" fill="#15803D" stroke="#14532D" strokeWidth="1.75" strokeLinejoin="round" />
+      <path d="M6 20 A14 14 0 0 1 34 20 Z" fill="#86EFAC" />
+      <path d="M8 20 A12 12 0 0 1 32 20 Z" fill="#F87171" />
+      <path d="M12 20 A8 8 0 0 1 28 20 Z" fill="#FCA5A5" opacity="0.5" />
+      <ellipse cx="16" cy="17" rx="1.2" ry="2" fill="#1C1917" transform="rotate(10 16 17)" />
+      <ellipse cx="20" cy="16" rx="1.2" ry="2" fill="#1C1917" />
+      <ellipse cx="24" cy="17" rx="1.2" ry="2" fill="#1C1917" transform="rotate(-10 24 17)" />
+      <ellipse cx="22" cy="13" rx="1" ry="1.8" fill="#1C1917" transform="rotate(20 22 13)" />
+      <ellipse cx="18" cy="13" rx="1" ry="1.8" fill="#1C1917" transform="rotate(-20 18 13)" />
+      <line x1="4" y1="20" x2="36" y2="20" stroke="#14532D" strokeWidth="2" />
+    </g>
   </svg>
 );
 
@@ -6129,6 +6151,9 @@ export const COLORFUL_INGREDIENT_ICON_MAP: Record<string, JSX.Element> = {
   'sodium hydroxypropyl starch phosphate': _flask('#E5E7EB', '#F1F5F9'),
   'vitamin e (preservative)': _flask('#FDBA74', '#E5E7EB'),
 
+  // ── FRUITS ────────────────────────────────────────────────────────────────────
+  'watermelon': _watermelon(),
+
   // ── FRAGRANCE OILS ────────────────────────────────────────────────────────────
   'vanilla essence': _perfume('#F3E1C2', '#E8C39E'),
   'rose fragrance oil': _perfume('#F48FB1', '#EC407A'),
@@ -6244,8 +6269,49 @@ export const COLORFUL_INGREDIENT_ICON_MAP: Record<string, JSX.Element> = {
  * in the ingredient name. Longer (more specific) keys take priority.
  */
 const SORTED_COLORFUL_ICON_KEYS = Object.keys(COLORFUL_INGREDIENT_ICON_MAP).sort((a, b) => b.length - a.length);
+const ALL_ICON_KEYS = [...new Set([...SORTED_COLORFUL_ICON_KEYS, ...SORTED_INGREDIENT_ICON_KEYS])];
+const ICON_NAME_ALIASES = new Map<string, string>();
 
-export function getIngredientColorfulIcon(name: string): JSX.Element | undefined {
+export function listIngredientIconKeys(): string[] {
+  return ALL_ICON_KEYS;
+}
+
+/** Remember an AI or manual mapping so later similar names reuse the same artwork. */
+export function registerIngredientIconAlias(name: string, iconKey: string) {
+  const normalized = canonicalizeIngredientName(name);
+  if (normalized && iconKey && !iconKey.startsWith('asset_')) ICON_NAME_ALIASES.set(normalized, iconKey);
+}
+
+function iconKeyScore(name: string, key: string): number {
+  const normalized = canonicalizeIngredientName(name);
+  const canonicalKey = canonicalizeIngredientName(key);
+  if (!normalized || !canonicalKey) return 0;
+  if (normalized === canonicalKey) return 100 + canonicalKey.length;
+  if (normalized.includes(canonicalKey) && canonicalKey.length >= 4) return 60 + canonicalKey.length;
+  if (canonicalKey.includes(normalized) && normalized.length >= 5) return 40 + normalized.length;
+  return 0;
+}
+
+/** Pick the bundled icon whose name is closest to the typed ingredient. */
+export function resolveIngredientIconKey(name: string): string | undefined {
+  const alias = ICON_NAME_ALIASES.get(canonicalizeIngredientName(name));
+  if (alias && !alias.startsWith('asset_')) return alias;
+  let bestKey: string | undefined;
+  let bestScore = 0;
+  for (const key of ALL_ICON_KEYS) {
+    const score = iconKeyScore(name, key);
+    if (score > bestScore) {
+      bestScore = score;
+      bestKey = key;
+    }
+  }
+  return bestKey;
+}
+
+export function getIngredientColorfulIcon(name: string, iconKey?: string): JSX.Element | undefined {
+  if (iconKey && COLORFUL_INGREDIENT_ICON_MAP[iconKey]) return COLORFUL_INGREDIENT_ICON_MAP[iconKey];
+  const resolved = resolveIngredientIconKey(name);
+  if (resolved && COLORFUL_INGREDIENT_ICON_MAP[resolved]) return COLORFUL_INGREDIENT_ICON_MAP[resolved];
   const lower = name.toLowerCase().trim();
   for (const key of SORTED_COLORFUL_ICON_KEYS) {
     if (lower.includes(key)) return COLORFUL_INGREDIENT_ICON_MAP[key];

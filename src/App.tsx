@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Leaf } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import Shell from '@/components/Shell';
-import LockScreen, { isUnlocked } from '@/components/LockScreen';
+import LockScreen from '@/components/LockScreen';
+import { db } from '@/db/db';
+import { shouldShowLockGate } from '@/lib/appLock';
 import { consumePkceVerifier, exchangeAuthCode } from '@/lib/etsyApi';
 import { registerServiceWorker } from '@/lib/pwa';
 
@@ -15,11 +17,32 @@ export default function App() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const goto = useAppStore((s) => s.goto);
   const { t } = useTranslation();
-  const [unlocked, setUnlocked] = useState(isUnlocked);
+  const [gateReady, setGateReady] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
   const [oauthMessage, setOauthMessage] = useState<string | null>(null);
 
   useEffect(() => {
     registerServiceWorker();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void db.settings
+      .get('app')
+      .then((s) => {
+        if (cancelled) return;
+        // No PIN is a valid state — skip the lock and enter the studio.
+        setUnlocked(!shouldShowLockGate(s));
+        setGateReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUnlocked(true);
+        setGateReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -60,8 +83,16 @@ export default function App() {
     })();
   }, [settingsLoaded, settings.etsyShop, updateSettings, goto, t]);
 
-  if (!unlocked) {
-    return <LockScreen onUnlock={() => setUnlocked(true)} />;
+  if (!gateReady || !unlocked) {
+    if (gateReady && !unlocked) {
+      return <LockScreen onUnlock={() => setUnlocked(true)} />;
+    }
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-gaia-50 text-gaia-700">
+        <Leaf className="h-10 w-10 animate-pulse" />
+        <p className="text-sm">{t('common.loading')}</p>
+      </div>
+    );
   }
 
   if (!settingsLoaded) {

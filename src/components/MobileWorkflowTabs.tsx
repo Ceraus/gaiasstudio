@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next';
 import {
-  Beaker,
   Circle,
   FlaskConical,
   Image,
@@ -16,10 +15,9 @@ const WORKFLOW_TABS: Array<{
   icon: typeof Circle;
 }> = [
   { id: 'template', labelKey: 'mobileNav.shape', defaultLabel: 'Shape', icon: Circle },
-  { id: 'ingredients', labelKey: 'mobileNav.ingredients', defaultLabel: 'Ingredients', icon: Beaker },
   { id: 'recipes', labelKey: 'mobileNav.recipe', defaultLabel: 'Recipe', icon: FlaskConical },
   { id: 'background', labelKey: 'mobileNav.background', defaultLabel: 'Background', icon: Image },
-  { id: 'editor', labelKey: 'mobileNav.design', defaultLabel: 'Design', icon: Pencil },
+  { id: 'editor-v2', labelKey: 'mobileNav.design', defaultLabel: 'Design', icon: Pencil },
 ];
 
 interface MobileWorkflowTabsProps {

@@ -14,7 +14,7 @@
  *
  * Run:  npm run avery:generate
  */
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -187,7 +187,7 @@ const RIBBON = {
   contexts: ['side'],
 };
 
-const templates = [
+const curatedTemplates = [
   ...SHAPE_SPECS.map(centeredTemplate),
   ...RECT_ROWS.map(rectTemplate),
   RIBBON,
@@ -195,18 +195,29 @@ const templates = [
 
 // Sort: circle, oval, square, rounded-rectangle, rectangle; then by size.
 const order = { circle: 0, oval: 1, square: 2, 'rounded-rectangle': 3, rectangle: 4 };
-templates.sort((a, b) => {
+curatedTemplates.sort((a, b) => {
   if (order[a.shape] !== order[b.shape]) return order[a.shape] - order[b.shape];
   return a.labelWidthIn * a.labelHeightIn - b.labelWidthIn * b.labelHeightIn;
 });
 
 mkdirSync(dirname(OUT), { recursive: true });
+const existing = existsSync(OUT)
+  ? JSON.parse(readFileSync(OUT, 'utf8')).templates ?? []
+  : [];
+const byId = new Map(existing.map((template) => [template.id, template]));
+for (const template of curatedTemplates) byId.set(template.id, template);
+const templates = [...byId.values()];
+templates.sort((a, b) => {
+  if (order[a.shape] !== order[b.shape]) return order[a.shape] - order[b.shape];
+  return a.labelWidthIn * a.labelHeightIn - b.labelWidthIn * b.labelHeightIn;
+});
+
 writeFileSync(
   OUT,
   JSON.stringify(
     {
       generatedAt: new Date().toISOString(),
-      note: 'Geometry is explicit and print-ready. Regenerate with `npm run avery:generate`. Merge live-scraped data with `npm run avery:scrape`.',
+      note: 'Curated templates merged into the bundled Avery catalog. Refresh live data with `npm run avery:scrape`.',
       count: templates.length,
       templates,
     },

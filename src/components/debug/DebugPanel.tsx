@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 
@@ -63,13 +64,15 @@ interface DbCounts {
 
 export default function DebugPanel() {
   const settings = useAppStore((s) => s.settings);
-  const visible = import.meta.env.DEV || !!settings.debugMode;
 
-  if (!visible) return null;
+  // Opt-in only, dev included — the floating bug button otherwise covers the
+  // workflow bar every time the app runs from `npm run dev`.
+  if (!settings.debugMode) return null;
   return <DebugPanelInner />;
 }
 
 function DebugPanelInner() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('state');
 
@@ -110,7 +113,7 @@ function DebugPanelInner() {
   if (!open) {
     return (
       <button
-        title="Open Debug Panel"
+        title={t('debug.open', 'Open Debug Panel')}
         onClick={() => setOpen(true)}
         style={{ right: pos.x, bottom: pos.y }}
         className="fixed z-[9999] flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-lg text-white shadow-lg hover:bg-slate-700"
@@ -131,7 +134,7 @@ function DebugPanelInner() {
         onMouseDown={onMouseDown}
         className="flex cursor-grab items-center justify-between bg-slate-800 px-3 py-2 active:cursor-grabbing"
       >
-        <span className="font-mono font-semibold text-slate-100">🐛 Debug Panel</span>
+        <span className="font-mono font-semibold text-slate-100">🐛 {t('debug.title', 'Debug Panel')}</span>
         <button
           onClick={() => setOpen(false)}
           className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-600 hover:text-white"
@@ -214,6 +217,7 @@ function StateTab() {
 // ── DB Tab ────────────────────────────────────────────────────────────────────
 
 function DbTab() {
+  const { t } = useTranslation();
   const [counts, setCounts] = useState<DbCounts | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -240,16 +244,16 @@ function DbTab() {
   return (
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-slate-400">Dexie row counts</span>
+        <span className="text-slate-400">{t('debug.rowCounts', 'Dexie row counts')}</span>
         <button
           onClick={() => void refresh()}
           className="rounded bg-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-600"
         >
-          ↻ Refresh
+          ↻ {t('debug.refresh', 'Refresh')}
         </button>
       </div>
       {loading ? (
-        <p className="text-slate-500">Loading…</p>
+        <p className="text-slate-500">{t('debug.loading', 'Loading…')}</p>
       ) : counts ? (
         <table className="w-full font-mono">
           <tbody>

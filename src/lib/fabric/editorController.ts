@@ -6,14 +6,23 @@ import { loadFont } from '@/lib/fontManager';
 import { versionsRepo, draftsRepo, recipesRepo, ingredientsRepo } from '@/db/repositories';
 import { useEditorStore, type LayerInfo, type SelectionInfo, type SaveState } from '@/store/useEditorStore';
 import { useAppStore } from '@/store/useAppStore';
+import type { EditorTool, PendingShapeKind } from '@/lib/editorTools';
 import { configureFabricOnce, CUSTOM_PROPS } from './fabricConfig';
 import {
+  applyCurveToText,
+  isCurvedTextGroup,
+  type CircleSide,
+  type CurveApplyOptions,
+  type CurveMode,
+} from './curveText';
+import {
+  applyCircleDiscInteractivity,
   CIRCLE_INNER_DISC_RATIO,
   CIRCLE_LEGIBILITY_OPACITY,
   CIRCLE_SAGE_BASE,
-  isCircleTemplate,
 } from '@/lib/circleLabelTemplate';
-import { drawBleedOverlay, type OverlayConfig } from './overlay';
+import { ALIGNMENT_GRID_PX, drawBleedOverlay, EDITOR_WORKSPACE_BG, type OverlayConfig } from './overlay';
+import { guideHitsFromBBox, printGuideLayoutPx, resolvePrintGuides } from '@/lib/printGuides';
 import {
   computeResizeGuides,
   computeSnapGuides,
@@ -22,6 +31,9 @@ import {
   type TrimBox,
 } from './snapping';
 import { uid } from '@/lib/id';
+import { normalizeQrFields, type QrFields } from '@/lib/qrPayload';
+
+export { applyCurveToText, buildCurvePath, splitCurveLines } from './curveText';
 
 type Gaia = fabric.FabricObject & {
   id?: string;
@@ -29,11 +41,26 @@ type Gaia = fabric.FabricObject & {
   gaiaKind?: string;
   locked?: boolean;
   gaiaCurve?: number;
+  /** Box width before curving, so slider 0 can wrap again. */
+  gaiaCurveWrapWidth?: number;
+  gaiaCurveSourceText?: string;
+  gaiaCurveLines?: string[];
+  gaiaCurveCharSpacing?: number;
+  gaiaCurveMode?: CurveMode;
+  gaiaCircleSide?: CircleSide;
+  gaiaCircleDiameter?: number;
+  gaiaCircleLabelW?: number;
+  gaiaCircleLabelH?: number;
+  gaiaCircleSafePx?: number;
   gaiaLockAspect?: boolean;
   isLegibilityOverlay?: boolean;
   gaiaAdjust?: ImageAdjust;
   /** True on the empty "Background" slot rect (swapped for a real image later). */
   gaiaPlaceholder?: boolean;
+  /** Combined QR builder fields so editing reloads every section. */
+  gaiaQrFields?: QrFields;
+  /** Encoded URL / vCard / labeled-text payload baked into the QR image. */
+  gaiaQrPayload?: string;
 };
 
 /**
@@ -41,18 +68,20 @@ type Gaia = fabric.FabricObject & {
  * These survive auto-layouts (only foreground content is regenerated) and are
  * excluded from safe-zone fit checks.
  */
-export const STRUCTURAL_KINDS = ['base', 'background', 'overlay'] as const;
+export const STRUCTURAL_KINDS = ['background', 'overlay'] as const;
 
 /** Non-destructive image adjustments. All amounts are Fabric's -1…1 range. */
 export interface ImageAdjust {
   brightness: number;
   contrast: number;
   saturation: number;
+  /** Optional hex tint applied with Fabric BlendColor. */
+  tint?: string;
 }
 
 export const NEUTRAL_ADJUST: ImageAdjust = { brightness: 0, contrast: 0, saturation: 0 };
 
-export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image';
+export type AddImageKind = 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'image' | 'qr';
 
 export interface InitOptions {
   el: HTMLCanvasElement;
@@ -80,13 +109,21 @@ class EditorController {
 
   private overlayVisible = true;
   private guidesEnabled = true;
+  private gridEnabled = true;
+  private textBoxOutlines = false;
+  private spellCheckEnabled = true;
   private legibilityOverlayVisible = true;
   private activeGuides: Guide[] = [];
+  private printGuideHits = { bleed: false, safety: false };
   private isRestoring = false;
 
   private history: string[] = [];
+  private historyLabels: string[] = [];
   private historyIndex = -1;
+  private pendingHistoryLabel = 'Edit';
   private historyTimer: ReturnType<typeof setTimeout> | null = null;
+  private selectionSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private structuralChangeQueued = false;
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   private initToken = 0;
 
@@ -95,6 +132,8 @@ class EditorController {
 
   private adjustFrame: number | null = null;
   private pendingAdjust: (fabric.FabricImage & Gaia)[] = [];
+  private layerPulse: { obj: Gaia; started: number; raf: number } | null = null;
+  private static readonly LAYER_PULSE_MS = 1100;
 
   /** Objects copied with Ctrl/Cmd+C, serialized so paste survives deletion. */
   private clipboard: Record<string, unknown>[] = [];
@@ -111,8 +150,9 @@ class EditorController {
     this.settings = opts.settings;
     this.designId = opts.designId;
 
-    this.bleedPx = opts.settings.bleedIn * EDITOR_PPI;
-    this.safePx = opts.settings.safeIn * EDITOR_PPI;
+    const printGuides = resolvePrintGuides(opts.template);
+    this.bleedPx = printGuides.bleedIn * EDITOR_PPI;
+    this.safePx = printGuides.safeIn * EDITOR_PPI;
     this.labelWpx = opts.template.labelWidthIn * EDITOR_PPI;
     this.labelHpx = opts.template.labelHeightIn * EDITOR_PPI;
 
@@ -127,19 +167,15 @@ class EditorController {
       cy: h / 2,
     };
 
-    // Force a minimum backing-store DPR of 3 so the canvas renders crisply on
-    // all displays: 100% Windows scaling (DPR 1), 125–150% (DPR 1.25–1.5),
-    // Retina (DPR 2+), and 4K (DPR 2–3).  Fabric reads this from its global
-    // config singleton before initialising each canvas.
-    if (typeof window !== 'undefined') {
-      const dpr = Math.max(3, Math.round(window.devicePixelRatio ?? 1));
-      fabric.config.configure({ devicePixelRatio: dpr });
-    }
+    // Fabric reads devicePixelRatio from its global config before each canvas
+    // init. Start at the zoom-1 floor; applyDisplayScale() raises it with view
+    // zoom so CSS `transform: scale(zoom)` never upscales a soft bitmap.
+    this.applyDisplayScale(useEditorStore.getState().zoom);
 
     const canvas = new fabric.Canvas(opts.el, {
       width: w,
       height: h,
-      backgroundColor: '#ffffff',
+      backgroundColor: EDITOR_WORKSPACE_BG,
       preserveObjectStacking: true,
       enableRetinaScaling: true,
       controlsAboveOverlay: true,
@@ -152,10 +188,15 @@ class EditorController {
     this.attachEvents();
 
     const store = useEditorStore.getState();
+    this.textBoxOutlines = store.textBoxOutlines;
+    this.spellCheckEnabled = store.spellCheckEnabled;
     store.set({
-      ready: true,
+      ready: false,
       overlayVisible: this.overlayVisible,
       guidesEnabled: this.guidesEnabled,
+      gridEnabled: this.gridEnabled,
+      printGuideBleedHit: false,
+      printGuideSafeHit: false,
       legibilityOverlayVisible: this.legibilityOverlayVisible,
       zoom: 1,
       cropMode: false,
@@ -166,10 +207,10 @@ class EditorController {
       await this.load(opts.initialJson);
       if (token !== this.initToken || !this.canvas) return; // a newer init/dispose superseded us
       // Background chosen on the workflow step must apply even when a saved design exists.
+      // Keep the URL so Choose Background stays complete in the stepper.
       const { backgroundImageUrl: bgAfterLoad } = useAppStore.getState();
       if (bgAfterLoad) {
         await this.setBackgroundFromUrl(bgAfterLoad);
-        useAppStore.getState().setBackgroundImageUrl(null);
         if (token !== this.initToken || !this.canvas) return;
       }
     } else {
@@ -178,10 +219,28 @@ class EditorController {
       const { backgroundImageUrl } = useAppStore.getState();
       if (backgroundImageUrl) {
         await this.setBackgroundFromUrl(backgroundImageUrl);
-        useAppStore.getState().setBackgroundImageUrl(null);
+        if (token !== this.initToken || !this.canvas) return;
+      }
+      // Circle labels always get the Avery stack (curved name, copy block, disc).
+      // Other shapes still wait for a recipe. Snapshot as Initial after this.
+      const isRound = opts.template.shape === 'circle' || opts.template.shape === 'oval';
+      if (isRound || useAppStore.getState().activeRecipeId) {
+        this.isRestoring = true;
+        try {
+          await this.applyAutoLayout(opts.context);
+        } catch (err) {
+          console.error('applyAutoLayout failed', err);
+        } finally {
+          this.isRestoring = false;
+        }
         if (token !== this.initToken || !this.canvas) return;
       }
     }
+
+    this.stripBaseLayers();
+    // Circle discs used to be structural (locked, hidden from Layers). Promote
+    // them to a normal shape layer so they show up and can be moved / restyled.
+    this.promoteCircleLegibilityDisc();
 
     // Sync legibility overlay visibility from canvas state (handles restored designs too).
     const legObj = this.canvas?.getObjects().find((o) => (o as Gaia).isLegibilityOverlay);
@@ -189,28 +248,65 @@ class EditorController {
     useEditorStore.getState().set({ legibilityOverlayVisible: this.legibilityOverlayVisible });
 
     this.history = [this.serialize()];
+    this.historyLabels = ['Initial State'];
     this.historyIndex = 0;
     this.updateHistoryFlags();
     this.refreshLayers();
+    useEditorStore.getState().set({
+      ready: true,
+      legibilityOverlayVisible: this.legibilityOverlayVisible,
+    });
     canvas.requestRenderAll();
+  }
+
+  /**
+   * Backing-store pixels per CSS canvas pixel. Kept ≥ 3 at 100% so 1× Windows
+   * scaling still looks crisp; multiplied by view zoom (capped) so a high Fit
+   * on a tiny sticker stays retina-sharp. toDataURL defaults
+   * enableRetinaScaling=false, so export size is unchanged.
+   */
+  applyDisplayScale(zoom: number) {
+    if (typeof window === 'undefined') return;
+    const baseDpr = Math.max(3, Math.round(window.devicePixelRatio ?? 1));
+    const dpr = Math.min(16, baseDpr * Math.max(1, zoom));
+    if (Math.abs((fabric.config.devicePixelRatio ?? 0) - dpr) < 0.01 && this.canvas) return;
+    fabric.config.configure({ devicePixelRatio: dpr });
+    if (!this.canvas) return;
+    const w = this.canvas.getWidth();
+    const h = this.canvas.getHeight();
+    this.canvas.setDimensions({ width: w, height: h });
+    this.canvas.getObjects().forEach((obj) => obj.set('dirty', true));
+    this.canvas.requestRenderAll();
   }
 
   dispose() {
     this.initToken++;
     if (this.historyTimer) clearTimeout(this.historyTimer);
+    if (this.selectionSyncTimer) clearTimeout(this.selectionSyncTimer);
     if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
     if (this.adjustFrame !== null) cancelAnimationFrame(this.adjustFrame);
+    if (this.layerPulse?.raf) cancelAnimationFrame(this.layerPulse.raf);
+    this.layerPulse = null;
     this.historyTimer = null;
+    this.selectionSyncTimer = null;
+    this.structuralChangeQueued = false;
     this.autosaveTimer = null;
     this.adjustFrame = null;
     this.pendingAdjust = [];
+    if (typeof window !== 'undefined') {
+      const dpr = Math.max(3, Math.round(window.devicePixelRatio ?? 1));
+      fabric.config.configure({ devicePixelRatio: dpr });
+    }
     if (this.canvas) {
       this.canvas.dispose();
       this.canvas = null;
     }
     this.history = [];
+    this.historyLabels = [];
     this.historyIndex = -1;
     this.activeGuides = [];
+    this.printGuideHits = { bleed: false, safety: false };
+    useEditorStore.getState().set({ printGuideBleedHit: false, printGuideSafeHit: false });
     this.cropRect = null;
     this.cropTarget = null;
   }
@@ -235,14 +331,14 @@ class EditorController {
    * AI-generated art.
    */
   private buildLegibilityShape(): fabric.FabricObject & Gaia {
-    const isRound = isCircleTemplate(this.template ?? null);
+    
     const common = {
       left: this.trim.left,
       top: this.trim.top,
       originX: 'left' as const,
       originY: 'top' as const,
       fill: '#ffffff',
-      opacity: isRound ? CIRCLE_LEGIBILITY_OPACITY : 0.15,
+      opacity: 0 /* user requested removal */,
       stroke: '',
       strokeWidth: 0,
       ...EditorController.LOCKED_PROPS,
@@ -260,7 +356,9 @@ class EditorController {
         opacity: CIRCLE_LEGIBILITY_OPACITY,
         stroke: '',
         strokeWidth: 0,
-        ...EditorController.LOCKED_PROPS,
+        selectable: true,
+        evented: true,
+        hasControls: true,
       }) as fabric.Circle & Gaia;
     }
     const radius =
@@ -275,50 +373,23 @@ class EditorController {
   }
 
   /**
-   * Populates a blank canvas with the STRICT 4-LAYER context stack:
-   *   1 (bottom) Base — solid white covering the label trim zone.
-   *   2          Background — the AI/photo background slot (an invisible
-   *              placeholder until an image arrives, so the stack shape is
-   *              always identical across Front / Back / Side contexts).
-   *   3          Legibility Overlay — template-shaped white vector at 15%.
-   *   4 (top)    Foreground — text (and later the transparent logo).
+   * Populates a blank canvas:
+   *   1 (bottom) Background — chosen photo, or a sage/white plate until one arrives.
+   *   2          Legibility Overlay — inner white disc / template-shaped vector.
+   *   3 (top)    Foreground — text (and later the transparent logo).
    */
   private addDefaultLayers() {
     if (!this.canvas) return;
     this.isRestoring = true;
     try {
-      // Layer 1 — Base: sage for round labels, white for rectangular.
-      const baseFill = isCircleTemplate(this.template ?? null) ? CIRCLE_SAGE_BASE : '#ffffff';
-      const base = new fabric.Rect({
-        left: this.trim.left,
-        top: this.trim.top,
-        width: this.labelWpx,
-        height: this.labelHpx,
-        fill: baseFill,
-        stroke: '',
-        strokeWidth: 0,
-        originX: 'left',
-        originY: 'top',
-        ...EditorController.LOCKED_PROPS,
-      }) as fabric.Rect & Gaia;
-      base.id = uid();
-      base.gaiaKind = 'base';
-      base.name = 'Base';
-      base.locked = true;
-      this.canvas.add(base);
-
-      if (isCircleTemplate(this.template ?? null)) {
-        this.canvas.backgroundColor = CIRCLE_SAGE_BASE;
-      }
-
-      // Layer 2 — Background slot: fully transparent placeholder rect that a
-      // real AI/photo background replaces in place (see insertBackgroundImage).
+      const isRound = this.template?.shape === 'circle' || this.template?.shape === 'oval';
+      const bgFill = isRound ? CIRCLE_SAGE_BASE : '#ffffff';
       const bgSlot = new fabric.Rect({
         left: this.trim.left,
         top: this.trim.top,
         width: this.labelWpx,
         height: this.labelHpx,
-        fill: 'rgba(0,0,0,0)',
+        fill: bgFill,
         stroke: '',
         strokeWidth: 0,
         originX: 'left',
@@ -337,28 +408,35 @@ class EditorController {
       overlay.id = uid();
       overlay.gaiaKind = 'overlay';
       overlay.name = 'Legibility Overlay';
-      overlay.locked = true;
       overlay.isLegibilityOverlay = true;
+      if (isRound) {
+        applyCircleDiscInteractivity(overlay, false);
+      } else {
+        overlay.locked = true;
+      }
       this.canvas.add(overlay);
 
-      // Layer 4 — Foreground: centred instructional placeholder text.
-      const textObj = new fabric.Textbox('Your product name here', {
-        width: this.labelWpx * 0.82,
-        fontFamily: DEFAULT_FONT,
-        fontSize: ptToPx(18),
-        fill: '#2b2b2b',
-        textAlign: 'center',
-        originX: 'center',
-        originY: 'center',
-        left: this.trim.cx,
-        top: this.trim.cy,
-      }) as fabric.Textbox & Gaia;
-      textObj.id = uid();
-      textObj.gaiaKind = 'text';
-      textObj.name = 'Text / Info';
-      textObj.locked = false;
-      loadFont(DEFAULT_FONT);
-      this.canvas.add(textObj);
+      // Layer 4 — Foreground stub for rectangles. Circles get the full copy
+      // stack from applyAutoLayout() (product name + ingredients block, etc.).
+      if (!isRound) {
+        const textObj = new fabric.Textbox('Your product name here', {
+          width: this.labelWpx * 0.82,
+          fontFamily: DEFAULT_FONT,
+          fontSize: ptToPx(18),
+          fill: '#2b2b2b',
+          textAlign: 'center',
+          originX: 'center',
+          originY: 'center',
+          left: this.trim.cx,
+          top: this.trim.cy,
+        }) as fabric.Textbox & Gaia;
+        textObj.id = uid();
+        textObj.gaiaKind = 'text';
+        textObj.name = 'Text / Info';
+        textObj.locked = false;
+        loadFont(DEFAULT_FONT);
+        this.canvas.add(textObj);
+      }
     } finally {
       this.isRestoring = false;
     }
@@ -371,42 +449,101 @@ class EditorController {
     canvas.on('selection:cleared', () =>
       useEditorStore.getState().set({ selection: null, activeIds: [] }),
     );
-    canvas.on('object:added', () => this.onStructuralChange());
-    canvas.on('object:removed', () => this.onStructuralChange());
-    canvas.on('object:modified', () => {
+    canvas.on('object:added', (e) => {
+      const o = e.target as Gaia | undefined;
+      if (
+        !this.isRestoring &&
+        o &&
+        !String(o.gaiaKind ?? '').startsWith('__') &&
+        this.pendingHistoryLabel === 'Edit'
+      ) {
+        this.noteHistoryAction(historyWithLayer('Add', o));
+      }
+      this.onStructuralChange();
+    });
+    canvas.on('object:removed', (e) => {
+      const o = e.target as Gaia | undefined;
+      if (
+        !this.isRestoring &&
+        o &&
+        !String(o.gaiaKind ?? '').startsWith('__') &&
+        this.pendingHistoryLabel === 'Edit'
+      ) {
+        this.noteHistoryAction(historyWithLayer('Delete', o));
+      }
+      this.onStructuralChange();
+    });
+    canvas.on('object:modified', (e) => {
       this.clearGuides();
+      const ev = e as { action?: string; transform?: { action?: string }; target?: fabric.FabricObject };
+      const action = ev.action ?? ev.transform?.action ?? '';
+      const target = ev.target ?? this.canvas?.getActiveObject();
+      if (action === 'drag') this.noteHistoryAction(historyWithLayer('Move', target));
+      else if (action === 'scale' || action === 'scaleX' || action === 'scaleY') {
+        this.noteHistoryAction(historyWithLayer('Resize', target));
+      } else if (action === 'rotate') this.noteHistoryAction(historyWithLayer('Rotate', target));
+      else if (action === 'skewX' || action === 'skewY') this.noteHistoryAction(historyWithLayer('Skew', target));
+      else this.noteHistoryAction(historyWithLayer('Change', target));
       this.onChanged();
     });
-    canvas.on('text:changed', () => {
+    canvas.on('text:changed', (opt) => {
+      const t = opt.target;
+      if (t && isTextObject(t)) {
+        const g = t as Gaia;
+        if (typeof g.gaiaCurve === 'number' && g.gaiaCurve !== 0) {
+          delete g.gaiaCurveLines;
+          const next = applyCurveToText(t as fabric.Textbox, g.gaiaCurve, this.circleCurveLayout(false));
+          if (next !== t) this.replaceObject(t, next);
+        }
+      }
+      this.noteHistoryAction(historyWithLayer('Edit', t));
       this.onChanged();
-      this.syncSelection();
+      this.scheduleSelectionSync();
     });
     canvas.on('object:moving', (opt) => {
-      if (!this.guidesEnabled || this.cropMode) {
+      const target = opt.target as fabric.FabricObject | undefined;
+      this.updatePrintGuideHits(target);
+      if (this.cropMode || (!this.guidesEnabled && !this.gridEnabled)) {
         this.clearGuides();
         return;
       }
-      const target = opt.target as fabric.FabricObject | undefined;
       if (!target) return;
-      this.setGuides(computeSnapGuides(canvas, target, this.trim));
+      const guides = computeSnapGuides(canvas, target, this.trim, {
+        gridSpacing: this.gridEnabled ? ALIGNMENT_GRID_PX : 0,
+      });
+      if (this.guidesEnabled) this.setGuides(guides);
+      else this.clearGuides();
     });
     canvas.on('object:scaling', (opt) => {
+      const target = opt.target as fabric.FabricObject | undefined;
+      this.updatePrintGuideHits(target);
       if (!this.guidesEnabled || this.cropMode) {
         this.clearGuides();
         return;
       }
-      const target = opt.target as fabric.FabricObject | undefined;
       if (!target) return;
       this.setGuides(computeResizeGuides(canvas, target, this.trim));
     });
+    canvas.on('object:rotating', (opt) => {
+      this.updatePrintGuideHits(opt.target as fabric.FabricObject | undefined);
+    });
     canvas.on('mouse:up', () => {
       if (this.activeGuides.length) this.clearGuides();
+      this.clearPrintGuideHits();
+    });
+    canvas.on('mouse:down', (opt) => {
+      this.handleToolMouseDown(opt);
     });
     canvas.on('after:render', (opt) => {
       // Only decorate the visible canvas, never export / offscreen renders.
       if (!this.canvas || opt.ctx !== this.canvas.getContext()) return;
       drawBleedOverlay(this.canvas, this.overlayConfig());
       drawGuides(this.canvas, this.activeGuides);
+      if (this.textBoxOutlines) this.drawTextBoxOutlines();
+      this.drawLayerPulse();
+    });
+    canvas.on('text:editing:entered', (opt) => {
+      this.applySpellCheckToEditor(opt.target);
     });
   }
 
@@ -417,7 +554,39 @@ class EditorController {
       safePx: this.safePx,
       cornerRadiusPx: (this.template!.cornerRadiusIn || 0) * EDITOR_PPI,
       visible: this.overlayVisible,
+      gridVisible: this.gridEnabled,
+      gridSpacingPx: ALIGNMENT_GRID_PX,
+      bleedHit: this.printGuideHits.bleed,
+      safeHit: this.printGuideHits.safety,
     };
+  }
+
+  private setPrintGuideHits(bleed: boolean, safety: boolean) {
+    if (this.printGuideHits.bleed === bleed && this.printGuideHits.safety === safety) return;
+    this.printGuideHits = { bleed, safety };
+    useEditorStore.getState().set({
+      printGuideBleedHit: bleed,
+      printGuideSafeHit: safety,
+    });
+    this.canvas?.requestRenderAll();
+  }
+
+  private updatePrintGuideHits(target?: fabric.FabricObject | null) {
+    if (!target || !this.canvas || !this.template || this.cropMode) {
+      this.setPrintGuideHits(false, false);
+      return;
+    }
+    const hits = guideHitsFromBBox(
+      target.getBoundingRect(),
+      printGuideLayoutPx(this.template),
+      this.template.shape,
+    );
+    const pte = this.bleedPx > 0.5 && resolvePrintGuides(this.template).printToTheEdge;
+    this.setPrintGuideHits(pte && hits.bleed, this.safePx > 0.5 && hits.safety);
+  }
+
+  private clearPrintGuideHits() {
+    this.setPrintGuideHits(false, false);
   }
 
   /**
@@ -451,8 +620,21 @@ class EditorController {
     if (this.isRestoring || !this.canvas) return;
     this.refreshLayers();
     if (this.historyTimer) clearTimeout(this.historyTimer);
-    this.commitHistory();
-    this.scheduleAutosave();
+    if (this.structuralChangeQueued) return;
+    this.structuralChangeQueued = true;
+    queueMicrotask(() => {
+      this.structuralChangeQueued = false;
+      this.commitHistory();
+      this.scheduleAutosave();
+    });
+  }
+
+  private scheduleSelectionSync() {
+    if (this.selectionSyncTimer) clearTimeout(this.selectionSyncTimer);
+    this.selectionSyncTimer = setTimeout(() => {
+      this.selectionSyncTimer = null;
+      this.syncSelection();
+    }, 100);
   }
 
   private scheduleHistory() {
@@ -461,13 +643,30 @@ class EditorController {
     this.historyTimer = setTimeout(() => this.commitHistory(), 350);
   }
 
-  private commitHistory() {
+  /** Label shown on the next history snapshot (e.g. "Added text"). */
+  noteHistoryAction(label: string) {
+    this.pendingHistoryLabel = label;
+  }
+
+  private commitHistory(label?: string) {
     if (!this.canvas) return;
     const json = this.serialize();
     if (json === this.history[this.historyIndex]) return;
+    let entryLabel = label ?? this.pendingHistoryLabel;
+    if (entryLabel === 'Edit') {
+      const active = this.canvas.getActiveObject() as Gaia | undefined;
+      entryLabel = historyWithLayer('Change', active);
+    }
+    this.pendingHistoryLabel = 'Edit';
+    // keep default for unlabeled snapshots
     this.history = this.history.slice(0, this.historyIndex + 1);
+    this.historyLabels = this.historyLabels.slice(0, this.historyIndex + 1);
     this.history.push(json);
-    if (this.history.length > 60) this.history.shift();
+    this.historyLabels.push(entryLabel);
+    if (this.history.length > 60) {
+      this.history.shift();
+      this.historyLabels.shift();
+    }
     this.historyIndex = this.history.length - 1;
     this.updateHistoryFlags();
   }
@@ -503,7 +702,7 @@ class EditorController {
         name: draftName,
         designJson: json,
         templateId: this.template.id,
-        context: this.context,
+        context: appState.context,
         thumb,
         // Recorded so the Workspace can search designs by recipe or ingredient.
         recipeId: appState.activeRecipeId ?? undefined,
@@ -521,10 +720,60 @@ class EditorController {
   }
 
   private updateHistoryFlags() {
+    const steps = this.historyLabels.map((label, index) => ({
+      index,
+      label,
+      current: index === this.historyIndex,
+    }));
     useEditorStore.getState().set({
       canUndo: this.historyIndex > 0,
       canRedo: this.historyIndex < this.history.length - 1,
+      historySteps: [...steps].reverse(),
     });
+  }
+
+  async jumpToHistory(index: number) {
+    if (index < 0 || index >= this.history.length || index === this.historyIndex) return;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyIndex = index;
+    await this.load(this.history[index]);
+    this.updateHistoryFlags();
+    this.scheduleAutosave();
+  }
+
+  applyTextMap(map: Record<string, string>) {
+    if (!this.canvas) return;
+    let changed = false;
+    const visit = (o: fabric.FabricObject) => {
+      const g = o as Gaia;
+      if (g.id && map[g.id] != null) {
+        if (isCurvedTextGroup(o)) {
+          g.gaiaCurveSourceText = map[g.id];
+          const first = (o as fabric.Group).getObjects().find((child) =>
+            child.type === 'textbox' || child.type === 'i-text' || child.type === 'text',
+          );
+          if (first) first.set('text', map[g.id]);
+          o.set('dirty', true);
+          changed = true;
+          return;
+        }
+        if (o.type === 'textbox' || o.type === 'i-text' || o.type === 'text') {
+          o.set('text', map[g.id]);
+          o.set('dirty', true);
+          changed = true;
+          return;
+        }
+      }
+      if (o.type === 'group') {
+        (o as fabric.Group).getObjects().forEach(visit);
+      }
+    };
+    for (const o of this.canvas.getObjects()) visit(o);
+    if (changed) {
+      this.noteHistoryAction('Text');
+      this.canvas.requestRenderAll();
+      this.onChanged();
+    }
   }
 
   serialize(): string {
@@ -533,14 +782,21 @@ class EditorController {
     // never trips loadFromJSON. Paths are rebuilt deterministically from
     // `gaiaCurve` on load.
     const detached: { obj: Gaia; path: unknown }[] = [];
-    for (const o of canvas.getObjects()) {
+    const visit = (o: fabric.FabricObject) => {
       const g = o as Gaia & { path?: unknown };
       if (g.gaiaCurve && g.path) {
         detached.push({ obj: g, path: g.path });
         (g as { path?: unknown }).path = undefined;
       }
-    }
-    const json = JSON.stringify(canvas.toJSON());
+      if (o.type === 'group') {
+        (o as fabric.Group).getObjects().forEach(visit);
+      }
+    };
+    for (const o of canvas.getObjects()) visit(o);
+    const payload = canvas.toJSON() as Record<string, unknown>;
+    const labelLanguage = useAppStore.getState().labelLanguage;
+    if (labelLanguage) payload.gaiaLabelLanguage = labelLanguage;
+    const json = JSON.stringify(payload);
     for (const d of detached) (d.obj as { path?: unknown }).path = d.path;
     return json;
   }
@@ -570,17 +826,29 @@ class EditorController {
   /** Re-applies curved-text paths from each object's saved `gaiaCurve` amount. */
   private rebuildCurves() {
     if (!this.canvas) return;
-    for (const o of this.canvas.getObjects()) {
+    for (const o of [...this.canvas.getObjects()]) {
       const g = o as Gaia;
       if (typeof g.gaiaCurve === 'number' && g.gaiaCurve !== 0 && isTextObject(o)) {
-        applyCurveToText(o as fabric.Textbox, g.gaiaCurve);
+        const next = applyCurveToText(o as fabric.Textbox, g.gaiaCurve, this.circleCurveLayout(false));
+        if (next !== o) this.replaceObject(o, next);
       }
     }
   }
 
+  private flushPendingHistory() {
+    if (this.historyTimer) {
+      clearTimeout(this.historyTimer);
+      this.historyTimer = null;
+    }
+    if (this.structuralChangeQueued) {
+      this.structuralChangeQueued = false;
+      this.commitHistory();
+    }
+  }
+
   async undo() {
+    this.flushPendingHistory();
     if (this.historyIndex <= 0) return;
-    if (this.historyTimer) clearTimeout(this.historyTimer);
     this.historyIndex -= 1;
     await this.load(this.history[this.historyIndex]);
     this.updateHistoryFlags();
@@ -588,8 +856,8 @@ class EditorController {
   }
 
   async redo() {
+    this.flushPendingHistory();
     if (this.historyIndex >= this.history.length - 1) return;
-    if (this.historyTimer) clearTimeout(this.historyTimer);
     this.historyIndex += 1;
     await this.load(this.history[this.historyIndex]);
     this.updateHistoryFlags();
@@ -629,6 +897,7 @@ class EditorController {
     targetSidePx?: number,
   ) {
     if (!this.canvas) return;
+    this.noteHistoryAction('Add Image');
     const img = (await fabric.FabricImage.fromURL(url, {
       crossOrigin: 'anonymous',
     })) as fabric.FabricImage & Gaia;
@@ -665,12 +934,79 @@ class EditorController {
     return img;
   }
 
+  private isQrObject(o: Gaia | undefined): boolean {
+    if (!o) return false;
+    return o.gaiaKind === 'qr' || !!o.gaiaQrFields || o.name === 'QR Code' || o.name === 'Código QR';
+  }
+
+  /** Fields + encoded payload for the selected QR, if any. */
+  getActiveQrMeta(): { fields: QrFields; payload: string } | null {
+    const o = this.canvas?.getActiveObject() as Gaia | undefined;
+    if (!this.isQrObject(o) || !o) return null;
+    return {
+      fields: normalizeQrFields(o.gaiaQrFields),
+      payload: o.gaiaQrPayload ?? '',
+    };
+  }
+
+  /** Persist combined-QR metadata on the selected object (survives save/clone). */
+  stampActiveQr(fields: QrFields, payload: string) {
+    const o = this.canvas?.getActiveObject() as Gaia | undefined;
+    if (!o) return;
+    o.gaiaKind = 'qr';
+    o.gaiaQrFields = normalizeQrFields(fields);
+    o.gaiaQrPayload = payload;
+    this.refreshLayers();
+    this.syncSelection();
+    this.onChanged();
+  }
+
+  /** Swap the selected image for a new file while keeping size and position. */
+  async replaceSelectedImage(url: string, name?: string) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const active = canvas.getActiveObject() as (fabric.FabricImage & Gaia) | undefined;
+    if (!active || active.type !== 'image') return;
+    const next = (await fabric.FabricImage.fromURL(url, {
+      crossOrigin: 'anonymous',
+    })) as fabric.FabricImage & Gaia;
+    if (!this.canvas) return;
+    next.set({
+      originX: active.originX,
+      originY: active.originY,
+      left: active.left,
+      top: active.top,
+      angle: active.angle,
+      flipX: active.flipX,
+      flipY: active.flipY,
+      opacity: active.opacity,
+    });
+    const oldW = (active.width || 1) * (active.scaleX || 1);
+    const oldH = (active.height || 1) * (active.scaleY || 1);
+    next.set({
+      scaleX: oldW / (next.width || 1),
+      scaleY: oldH / (next.height || 1),
+    });
+    this.tag(next, active.gaiaKind === 'qr' ? 'qr' : (active.gaiaKind || 'image'), name ?? active.name);
+    next.gaiaAdjust = active.gaiaAdjust;
+    next.gaiaLockAspect = active.gaiaLockAspect;
+    next.gaiaQrFields = active.gaiaQrFields;
+    next.gaiaQrPayload = active.gaiaQrPayload;
+    const slot = canvas.getObjects().indexOf(active);
+    canvas.remove(active);
+    canvas.add(next);
+    if (slot >= 0) canvas.moveObjectTo(next, slot);
+    canvas.setActiveObject(next);
+    canvas.requestRenderAll();
+    this.syncSelection();
+    this.onChanged();
+    return next;
+  }
+
   /**
-   * Slots a background image into the strict 4-layer stack: it REPLACES the
-   * current background layer (the invisible placeholder or a previous image)
-   * at the same stack position, so the order Base → Background → Legibility
-   * Overlay → Foreground is always preserved. The layer arrives locked; it
-   * can be unlocked from the Layers panel for repositioning.
+   * Slots a background image into the Background layer, replacing the
+   * placeholder plate or a previous photo. Stays at the bottom of the stack
+   * (under the legibility disc and text). Locked until unlocked in Layers.
    */
   private insertBackgroundImage(img: fabric.FabricImage & Gaia, name?: string) {
     const canvas = this.canvas!;
@@ -680,26 +1016,36 @@ class EditorController {
     img.name = name ?? 'Background';
     img.locked = true;
     img.gaiaPlaceholder = false;
+    this.noteHistoryAction('Set Background');
 
     const existing = canvas
       .getObjects()
       .find((o) => (o as Gaia).gaiaKind === 'background') as Gaia | undefined;
 
-    canvas.add(img);
     if (existing) {
       const slot = canvas.getObjects().indexOf(existing as fabric.FabricObject);
       canvas.remove(existing as fabric.FabricObject);
-      canvas.moveObjectTo(img, slot);
+      canvas.add(img);
+      canvas.moveObjectTo(img, Math.max(0, slot));
     } else {
-      // No slot (legacy design) — sit just above the base layer.
-      const base = canvas.getObjects().find((o) => (o as Gaia).gaiaKind === 'base');
-      canvas.moveObjectTo(img, base ? canvas.getObjects().indexOf(base) + 1 : 0);
+      canvas.add(img);
+      canvas.moveObjectTo(img, 0);
     }
     canvas.requestRenderAll();
+    this.refreshLayers();
+  }
+
+  /** Drop the unused Base plate from older designs. */
+  private stripBaseLayers() {
+    if (!this.canvas) return;
+    for (const o of this.canvas.getObjects().slice()) {
+      if ((o as Gaia).gaiaKind === 'base') this.canvas.remove(o);
+    }
   }
 
   addText(kind: 'heading' | 'body' | string = 'body', text?: string) {
     if (!this.canvas) return;
+    this.noteHistoryAction('Add Text');
     const isHeading = kind === 'heading';
     const t = new fabric.Textbox(text ?? (isHeading ? 'Your Product' : 'Add your text here'), {
       width: this.labelWpx * 0.82,
@@ -715,11 +1061,13 @@ class EditorController {
     this.tag(t, 'text', text ? clip(text) : isHeading ? 'Heading' : 'Text');
     loadFont(DEFAULT_FONT);
     this.place(t);
+    this.flushPendingHistory();
     return t;
   }
 
-  addShape(kind: 'rect' | 'circle' | 'triangle' | 'line') {
+  addShape(kind: PendingShapeKind) {
     if (!this.canvas) return;
+    this.noteHistoryAction('Add Shape');
     const size = Math.min(this.labelWpx, this.labelHpx) * 0.5;
     let obj: (fabric.FabricObject & Gaia) | null = null;
     const base = {
@@ -733,10 +1081,18 @@ class EditorController {
     };
     if (kind === 'rect') {
       obj = new fabric.Rect({ ...base, width: this.labelWpx * 0.6, height: this.labelHpx * 0.4, rx: 0, ry: 0 }) as fabric.Rect & Gaia;
+    } else if (kind === 'roundRect') {
+      obj = new fabric.Rect({ ...base, width: this.labelWpx * 0.6, height: this.labelHpx * 0.4, rx: 18, ry: 18 }) as fabric.Rect & Gaia;
     } else if (kind === 'circle') {
       obj = new fabric.Circle({ ...base, radius: size / 2 }) as fabric.Circle & Gaia;
     } else if (kind === 'triangle') {
       obj = new fabric.Triangle({ ...base, width: size, height: size }) as fabric.Triangle & Gaia;
+    } else if (kind === 'star') {
+      obj = new fabric.Polygon(starPolygon(0, 0, 5, size / 2, size / 4), { ...base }) as fabric.Polygon & Gaia;
+    } else if (kind === 'hexagon') {
+      obj = new fabric.Polygon(regularPolygon(0, 0, 6, size / 2), { ...base }) as fabric.Polygon & Gaia;
+    } else if (kind === 'arrow') {
+      obj = new fabric.Polygon(arrowPolygon(this.labelWpx * 0.55, size * 0.45), { ...base }) as fabric.Polygon & Gaia;
     } else {
       obj = new fabric.Line([0, 0, this.labelWpx * 0.6, 0], {
         ...base,
@@ -747,6 +1103,7 @@ class EditorController {
     }
     this.tag(obj, 'shape', shapeName(kind));
     this.place(obj);
+    this.flushPendingHistory();
     return obj;
   }
 
@@ -835,6 +1192,12 @@ class EditorController {
   deleteSelected() {
     const canvas = this.canvas;
     if (!canvas) return;
+    const deleting = canvas.getActiveObjects();
+    this.noteHistoryAction(
+      deleting.length === 1
+        ? historyWithLayer('Delete', deleting[0])
+        : `Delete ${deleting.length} layers`,
+    );
     const active = canvas.getActiveObject() as (fabric.FabricObject & { isEditing?: boolean }) | undefined;
     if (active && 'isEditing' in active && active.isEditing) return;
     const objs = canvas.getActiveObjects();
@@ -849,6 +1212,9 @@ class EditorController {
     if (!canvas) return;
     const actives = canvas.getActiveObjects();
     if (!actives.length) return;
+    this.noteHistoryAction(
+      actives.length === 1 ? historyWithLayer('Duplicate', actives[0]) : `Duplicate ${actives.length} layers`,
+    );
     canvas.discardActiveObject();
     const clones: fabric.FabricObject[] = [];
     for (const o of actives) {
@@ -876,6 +1242,7 @@ class EditorController {
     if (objects.length < 2) return;
     canvas.discardActiveObject();
     objects.forEach((o) => canvas.remove(o));
+    this.noteHistoryAction('Group');
     const group = new fabric.Group(objects) as fabric.Group & Gaia;
     this.tag(group, 'group', 'Group');
     canvas.add(group);
@@ -926,13 +1293,67 @@ class EditorController {
 
   // -- curved text ----------------------------------------------------------
 
-  /** Bends the selected text along a circular arc. amount: -100…0…100. */
+  /** Swap `old` for `next` on the canvas, keeping id / kind / layer slot. */
+  private replaceObject(old: fabric.FabricObject, next: fabric.FabricObject) {
+    const canvas = this.canvas;
+    if (!canvas || old === next) return next;
+    const idx = canvas.getObjects().indexOf(old);
+    const src = old as Gaia;
+    const dest = next as Gaia;
+    dest.id = src.id;
+    dest.name = src.name;
+    dest.gaiaKind = src.gaiaKind;
+    dest.locked = src.locked;
+    const wasActive = canvas.getActiveObject() === old;
+    if (idx >= 0) {
+      canvas.remove(old);
+      canvas.add(next);
+      canvas.moveObjectTo(next, idx);
+    }
+    if (wasActive || !canvas.getActiveObject()) {
+      canvas.setActiveObject(next);
+    }
+    return next;
+  }
+
+  /** Bends the selected text along a smile/frown wave. amount: -100…0…100. */
   setTextCurve(amount: number) {
+    this.applyTextCurve(amount, { mode: 'wave' });
+  }
+
+  /**
+   * Avery curved-text presets: wave (abc up/down) or circle-path (top/bottom/left/right).
+   */
+  setTextCurveStyle(opts: { mode: CurveMode; side?: CircleSide; amount?: number }) {
+    const amount = opts.mode === 'circle' ? 100 : (opts.amount ?? 50);
+    this.applyTextCurve(amount, {
+      mode: opts.mode,
+      side: opts.side,
+      ...this.circleCurveLayout(opts.mode === 'circle'),
+    });
+  }
+
+  /** Safety-ring metrics for circle-path text. Presets also snap to trim center. */
+  private circleCurveLayout(snapCenter: boolean): CurveApplyOptions {
+    return {
+      labelW: this.labelWpx,
+      labelH: this.labelHpx,
+      safePx: this.safePx,
+      ...(snapCenter ? { centerX: this.trim.cx, centerY: this.trim.cy } : {}),
+    };
+  }
+
+  private applyTextCurve(amount: number, options: CurveApplyOptions) {
     const canvas = this.canvas;
     if (!canvas) return;
     const o = canvas.getActiveObject();
     if (!o || !isTextObject(o)) return;
-    applyCurveToText(o as fabric.Textbox, amount);
+    const next = applyCurveToText(o as fabric.Textbox, amount, {
+      ...this.circleCurveLayout(false),
+      ...options,
+    });
+    if (next !== o) this.replaceObject(o, next);
+    canvas.setActiveObject(next);
     canvas.requestRenderAll();
     this.syncSelection();
     this.onChanged();
@@ -1027,6 +1448,7 @@ class EditorController {
     if (!o) return;
     if (axis === 'h') o.set('flipX', !o.flipX);
     else o.set('flipY', !o.flipY);
+    this.noteHistoryAction(historyWithLayer('Flip', o));
     canvas.requestRenderAll();
     this.onChanged();
   }
@@ -1034,6 +1456,7 @@ class EditorController {
   async setActiveProps(patch: Record<string, unknown>) {
     const canvas = this.canvas;
     if (!canvas) return;
+    this.noteHistoryAction(historyWithLayer(historyLabelForProps(patch), canvas.getActiveObject()));
     const objs = canvas.getActiveObjects();
     if (!objs.length) return;
 
@@ -1044,16 +1467,26 @@ class EditorController {
     }
 
     for (const o of objs) {
-      for (const [k, v] of Object.entries(patch)) {
-        if (k === 'blend') o.set('globalCompositeOperation', v as GlobalCompositeOperation);
-        else if (k === 'cornerRadius') {
-          if (o.type === 'rect') {
-            o.set('rx', v as number);
-            o.set('ry', v as number);
-          }
-        } else o.set(k, v as never);
+      const targets: fabric.FabricObject[] = isCurvedTextGroup(o)
+        ? [o, ...(o as fabric.Group).getObjects()]
+        : [o];
+      for (const t of targets) {
+        for (const [k, v] of Object.entries(patch)) {
+          if (k === 'blend') t.set('globalCompositeOperation', v as GlobalCompositeOperation);
+          else if (k === 'cornerRadius') {
+            if (t.type === 'rect') {
+              t.set('rx', v as number);
+              t.set('ry', v as number);
+            }
+          } else t.set(k, v as never);
+        }
+        t.set('dirty', true);
       }
-      o.set('dirty', true);
+      const curve = (o as Gaia).gaiaCurve;
+      if (isTextObject(o) && typeof curve === 'number' && curve !== 0) {
+        const next = applyCurveToText(o as fabric.Textbox, curve, this.circleCurveLayout(false));
+        if (next !== o) this.replaceObject(o, next);
+      }
     }
     canvas.requestRenderAll();
     this.syncSelection();
@@ -1099,7 +1532,15 @@ class EditorController {
   }
 
   resetImageAdjust() {
-    this.setImageAdjust(NEUTRAL_ADJUST);
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const images = canvas
+      .getActiveObjects()
+      .filter((o): o is fabric.FabricImage & Gaia => o.type === 'image');
+    for (const img of images) img.gaiaAdjust = { ...NEUTRAL_ADJUST };
+    this.pendingAdjust = images;
+    this.syncSelection();
+    this.setImageAdjust({ ...NEUTRAL_ADJUST });
   }
 
   // -- crop -----------------------------------------------------------------
@@ -1246,12 +1687,106 @@ class EditorController {
     if (!wasSelectable) o.set('selectable', false);
     this.canvas.requestRenderAll();
     this.syncSelection();
+    this.pulseLayer(id);
+  }
+
+  /** Brief canvas flash so a Layers-panel click is visible on the object. */
+  pulseLayer(id: string) {
+    const o = this.findById(id);
+    if (!o || !this.canvas) return;
+    if (this.layerPulse?.raf) cancelAnimationFrame(this.layerPulse.raf);
+    this.layerPulse = { obj: o, started: performance.now(), raf: 0 };
+    const tick = () => {
+      if (!this.layerPulse) return;
+      const elapsed = performance.now() - this.layerPulse.started;
+      this.canvas?.requestRenderAll();
+      if (elapsed < EditorController.LAYER_PULSE_MS) {
+        this.layerPulse.raf = requestAnimationFrame(tick);
+      } else {
+        this.layerPulse = null;
+        this.canvas?.requestRenderAll();
+      }
+    };
+    this.layerPulse.raf = requestAnimationFrame(tick);
+  }
+
+  private clipPulseToDieCut(ctx: CanvasRenderingContext2D) {
+    const t = this.trim;
+    const w = this.labelWpx;
+    const h = this.labelHpx;
+    const shape = this.template?.shape;
+    const r = (this.template?.cornerRadiusIn || 0) * EDITOR_PPI;
+    ctx.beginPath();
+    if (shape === 'circle' || shape === 'oval') {
+      ctx.ellipse(t.cx, t.cy, Math.max(0, w / 2), Math.max(0, h / 2), 0, 0, Math.PI * 2);
+    } else if (shape === 'rounded-rectangle') {
+      const rr = Math.min(r, w / 2, h / 2);
+      ctx.moveTo(t.left + rr, t.top);
+      ctx.arcTo(t.right, t.top, t.right, t.bottom, rr);
+      ctx.arcTo(t.right, t.bottom, t.left, t.bottom, rr);
+      ctx.arcTo(t.left, t.bottom, t.left, t.top, rr);
+      ctx.arcTo(t.left, t.top, t.right, t.top, rr);
+    } else {
+      ctx.rect(t.left, t.top, w, h);
+    }
+    ctx.clip();
+  }
+
+  private drawLayerPulse() {
+    const pulse = this.layerPulse;
+    const canvas = this.canvas;
+    if (!pulse || !canvas) return;
+    const o = pulse.obj;
+    if (!canvas.getObjects().includes(o) || o.visible === false) return;
+    const u = Math.min(1, (performance.now() - pulse.started) / EditorController.LAYER_PULSE_MS);
+    // Rise and fall evenly (sine) so it does not slam on at full white.
+    const alpha = 0.62 * Math.sin(Math.PI * u);
+    if (alpha < 0.02) return;
+
+    const ctx = canvas.getContext();
+    ctx.save();
+    this.clipPulseToDieCut(ctx);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#52814e';
+    ctx.lineWidth = 3;
+
+    if (o.type === 'circle') {
+      const c = o as fabric.Circle;
+      const radius = (c.radius ?? 0) * (c.scaleX ?? 1);
+      ctx.beginPath();
+      ctx.arc(c.left ?? 0, c.top ?? 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (o.type === 'ellipse') {
+      const e = o as fabric.Ellipse;
+      ctx.beginPath();
+      ctx.ellipse(
+        e.left ?? 0,
+        e.top ?? 0,
+        (e.rx ?? 0) * (e.scaleX ?? 1),
+        (e.ry ?? 0) * (e.scaleY ?? 1),
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      const br = o.getBoundingRect();
+      ctx.beginPath();
+      ctx.rect(br.left, br.top, br.width, br.height);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   toggleLayerVisible(id: string) {
     const o = this.findById(id);
     if (!o) return;
     o.set('visible', o.visible === false);
+    this.noteHistoryAction(historyWithLayer(o.visible === false ? 'Hide' : 'Show', o));
     this.canvas?.requestRenderAll();
     this.refreshLayers();
     this.scheduleHistory();
@@ -1274,6 +1809,7 @@ class EditorController {
       hasControls: !locked,
     });
     if (locked && this.canvas.getActiveObject() === o) this.canvas.discardActiveObject();
+    this.noteHistoryAction(historyWithLayer(locked ? 'Lock' : 'Unlock', o));
     this.canvas.requestRenderAll();
     this.refreshLayers();
     this.scheduleHistory();
@@ -1284,6 +1820,7 @@ class EditorController {
     const o = this.findById(id);
     if (!o) return;
     o.name = name;
+    this.noteHistoryAction(historyWithLayer('Rename', o));
     this.refreshLayers();
     this.scheduleHistory();
     this.scheduleAutosave();
@@ -1295,6 +1832,7 @@ class EditorController {
     // Panel shows top layer first, so "up" == bring forward.
     if (dir === 'up') this.canvas.bringObjectForward(o);
     else this.canvas.sendObjectBackwards(o);
+    this.noteHistoryAction(historyWithLayer('Reorder', o));
     this.canvas.requestRenderAll();
     this.onChanged();
   }
@@ -1365,13 +1903,14 @@ class EditorController {
     }
     const a = canvas.getActiveObject() as fabric.FabricObject & Record<string, unknown>;
     const type = a.type;
-    const isText = type === 'textbox' || type === 'i-text' || type === 'text';
+    const isText = type === 'textbox' || type === 'i-text' || type === 'text' || isCurvedTextGroup(a);
     const fontWeight = a.fontWeight as string | number | undefined;
     const br = a.getBoundingRect();
     const info: SelectionInfo = {
       count: objs.length,
       isText,
       isImage: type === 'image',
+      isQr: this.isQrObject(a as Gaia),
       isGroup: type === 'group',
       isShape: SHAPE_TYPES.includes(type),
       type,
@@ -1390,6 +1929,12 @@ class EditorController {
       lockAspect: !!(a as Gaia).gaiaLockAspect,
       fontFamily: (a.fontFamily as string) ?? DEFAULT_FONT,
       fontSize: (a.fontSize as number) ?? 20,
+      fontWeight:
+        fontWeight === 'bold' || Number(fontWeight) >= 700
+          ? 'bold'
+          : Number(fontWeight) >= 600
+            ? '600'
+            : 'normal',
       bold: fontWeight === 'bold' || Number(fontWeight) >= 700,
       italic: a.fontStyle === 'italic',
       underline: !!a.underline,
@@ -1399,6 +1944,8 @@ class EditorController {
       lineHeight: (a.lineHeight as number) ?? 1.16,
       charSpacing: (a.charSpacing as number) ?? 0,
       curve: (a as Gaia).gaiaCurve ?? 0,
+      curveMode: (a as Gaia).gaiaCurveMode ?? 'wave',
+      circleSide: (a as Gaia).gaiaCircleSide ?? null,
       fontLoading: false,
       adjust: readAdjust(a),
     };
@@ -1425,17 +1972,23 @@ class EditorController {
    * bleed into thumbnails or exported PNGs regardless of the Fabric rendering path.
    */
   private withoutOverlay<T>(fn: () => T): T {
-    const was = this.overlayVisible;
-    if (was) {
+    const wasOverlay = this.overlayVisible;
+    const wasGrid = this.gridEnabled;
+    const wasOutlines = this.textBoxOutlines;
+    if (wasOverlay || wasGrid || wasOutlines) {
       this.overlayVisible = false;
+      this.gridEnabled = false;
+      this.textBoxOutlines = false;
       // Synchronous re-render so the main canvas is clean before toDataURL reads it.
       this.canvas?.renderAll();
     }
     try {
       return fn();
     } finally {
-      if (was) {
-        this.overlayVisible = true;
+      this.overlayVisible = wasOverlay;
+      this.gridEnabled = wasGrid;
+      this.textBoxOutlines = wasOutlines;
+      if (wasOverlay || wasGrid || wasOutlines) {
         this.canvas?.requestRenderAll();
       }
     }
@@ -1446,6 +1999,72 @@ class EditorController {
     useEditorStore.getState().set({ guidesEnabled: v });
   }
 
+  setGridEnabled(v: boolean) {
+    this.gridEnabled = v;
+    useEditorStore.getState().set({ gridEnabled: v });
+    this.canvas?.requestRenderAll();
+  }
+
+  setTextBoxOutlines(v: boolean) {
+    this.textBoxOutlines = v;
+    useEditorStore.getState().set({ textBoxOutlines: v });
+    this.canvas?.requestRenderAll();
+  }
+
+  setSpellCheckEnabled(v: boolean) {
+    this.spellCheckEnabled = v;
+    useEditorStore.getState().set({ spellCheckEnabled: v });
+    this.applySpellCheckToEditor(this.canvas?.getActiveObject());
+  }
+
+  private applySpellCheckToEditor(target?: fabric.FabricObject | null) {
+    const enabled = this.spellCheckEnabled;
+    const fromTarget = (
+      target as (fabric.FabricObject & { hiddenTextarea?: HTMLTextAreaElement }) | null | undefined
+    )?.hiddenTextarea;
+    if (fromTarget) {
+      fromTarget.spellcheck = enabled;
+      return;
+    }
+    const wrap =
+      (this.canvas as fabric.Canvas & { wrapperEl?: HTMLElement } | null)?.wrapperEl ??
+      this.canvas?.getElement()?.parentElement;
+    wrap?.querySelectorAll('textarea').forEach((el) => {
+      el.spellcheck = enabled;
+    });
+  }
+
+  private drawTextBoxOutlines() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const ctx = canvas.getContext();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(15, 46, 83, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    for (const o of canvas.getObjects()) {
+      if (!isTextObject(o) || o.visible === false) continue;
+      const br = o.getBoundingRect();
+      ctx.strokeRect(br.left + 0.5, br.top + 0.5, br.width, br.height);
+    }
+    ctx.restore();
+  }
+
+  /** Unlock the inner white disc so it appears in Layers and can be edited. */
+  private promoteCircleLegibilityDisc() {
+    if (!this.canvas) return;
+    const isRound = this.template?.shape === 'circle' || this.template?.shape === 'oval';
+    if (!isRound) return;
+    for (const o of this.canvas.getObjects()) {
+      const g = o as Gaia;
+      if (!g.isLegibilityOverlay && g.gaiaKind !== 'overlay') continue;
+      if (o.type !== 'circle' && o.type !== 'ellipse') continue;
+      if (!g.id) g.id = uid();
+      g.name = g.name || 'Legibility Overlay';
+      applyCircleDiscInteractivity(g, false);
+    }
+  }
+
   setLegibilityOverlayVisible(v: boolean) {
     if (!this.canvas) return;
     // Both the structural overlay layer and any auto-layout legibility shape
@@ -1453,6 +2072,7 @@ class EditorController {
     const overlays = this.canvas.getObjects().filter((o) => (o as Gaia).isLegibilityOverlay);
     if (!overlays.length) return;
     overlays.forEach((o) => o.set('visible', v));
+    this.noteHistoryAction(v ? 'Show Legibility Overlay' : 'Hide Legibility Overlay');
     this.legibilityOverlayVisible = v;
     useEditorStore.getState().set({ legibilityOverlayVisible: v });
     this.canvas.requestRenderAll();
@@ -1517,11 +2137,11 @@ class EditorController {
   async renderDesignPng(
     canvasJson: string,
     template: AveryTemplate,
-    settings: AppSettings,
+    _settings: AppSettings,
     ppi = EXPORT_PPI,
     mutate?: (canvas: fabric.Canvas) => void,
   ): Promise<string> {
-    const bleedPx = (settings.bleedIn ?? 0.0625) * EDITOR_PPI;
+    const bleedPx = resolvePrintGuides(template).bleedIn * EDITOR_PPI;
     const labelW  = template.labelWidthIn  * EDITOR_PPI;
     const labelH  = template.labelHeightIn * EDITOR_PPI;
     const totalW  = Math.round(labelW  + bleedPx * 2);
@@ -1596,10 +2216,23 @@ class EditorController {
    * Safe to call on fresh canvases immediately after addDefaultLayers().
    */
   async setBackgroundFromUrl(url: string): Promise<void> {
-    if (!this.canvas) return;
-    const img = (await fabric.FabricImage.fromURL(url, {
-      crossOrigin: 'anonymous',
-    })) as fabric.FabricImage & Gaia;
+    if (!this.canvas || !url) return;
+    let img: fabric.FabricImage & Gaia;
+    try {
+      img = (await fabric.FabricImage.fromURL(url, {
+        crossOrigin: 'anonymous',
+      })) as fabric.FabricImage & Gaia;
+    } catch {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      img = (await fabric.FabricImage.fromURL(dataUrl)) as fabric.FabricImage & Gaia;
+    }
     if (!this.canvas) return; // disposed while the image was loading
 
     const cw = this.canvas.getWidth();
@@ -1627,17 +2260,29 @@ class EditorController {
    * Pass an explicit context (e.g. `'back'`) to override this.context.
    */
   async applyAutoLayout(context?: LabelContext, lang?: import('@/lib/layoutEngine').LayoutLang): Promise<void> {
+    if (!this.canvas || !this.template) return;
+    const isRound = this.template.shape === 'circle' || this.template.shape === 'oval';
     const { activeRecipeId } = useAppStore.getState();
-    if (!activeRecipeId || !this.canvas || !this.template) return;
 
-    const [recipe, ingredients] = await Promise.all([
-      recipesRepo.get(activeRecipeId),
+    const [stored, ingredients] = await Promise.all([
+      activeRecipeId ? recipesRepo.get(activeRecipeId) : Promise.resolve(undefined),
       ingredientsRepo.all(),
     ]);
-    if (!recipe) return;
+    // Rectangles still need a saved recipe. Circles always run layoutCircleLabel —
+    // empty fields fall through to LABEL_STRINGS (addHint, defaults). Product name
+    // is left blank unless the user already typed it.
+    if (!stored && !isRound) return;
 
     // Dynamic import breaks the layoutEngine → editorController → layoutEngine cycle.
     const { applyAutoLayout: runLayout } = await import('@/lib/layoutEngine');
+    const recipe = stored ?? {
+      id: '',
+      name: '',
+      ingredientIds: [],
+      benefit: '',
+      createdAt: 0,
+      updatedAt: 0,
+    };
     const appSettings = useAppStore.getState().settings;
     await runLayout(recipe, ingredients, context ?? this.context, lang, appSettings);
   }
@@ -1718,10 +2363,21 @@ class EditorController {
   scaleAllTextBy(factor: number) {
     if (!this.canvas || factor <= 0 || !Number.isFinite(factor)) return;
     this.canvas.getObjects().filter(isTextObject).forEach((o) => {
-      const tb = o as fabric.Textbox;
-      const size = (tb.fontSize as number) ?? 14;
-      tb.set('fontSize', Math.max(6, size * factor));
-      tb.initDimensions();
+      const applySize = (tb: fabric.Textbox) => {
+        const size = (tb.fontSize as number) ?? 14;
+        tb.set('fontSize', Math.max(6, size * factor));
+        if (typeof tb.initDimensions === 'function') tb.initDimensions();
+      };
+      if (isCurvedTextGroup(o)) {
+        (o as fabric.Group).getObjects().forEach((c) => applySize(c as fabric.Textbox));
+      } else {
+        applySize(o as fabric.Textbox);
+      }
+      const curve = (o as Gaia).gaiaCurve;
+      if (typeof curve === 'number' && curve !== 0) {
+        const next = applyCurveToText(o as fabric.Textbox, curve, this.circleCurveLayout(false));
+        if (next !== o) this.replaceObject(o, next);
+      }
     });
     this.canvas.requestRenderAll();
     this.syncSelection();
@@ -1731,16 +2387,103 @@ class EditorController {
 
   setAllTextFill(color: string) {
     if (!this.canvas) return;
-    this.canvas.getObjects().filter(isTextObject).forEach((o) => o.set('fill', color));
+    this.canvas.getObjects().filter(isTextObject).forEach((o) => {
+      if (isCurvedTextGroup(o)) {
+        (o as fabric.Group).getObjects().forEach((c) => c.set('fill', color));
+      }
+      o.set('fill', color);
+    });
     this.canvas.requestRenderAll();
     this.syncSelection();
     this.scheduleHistory();
     this.scheduleAutosave();
   }
+
+  private imageFilePicker: (() => void) | null = null;
+
+  /** LeftRail registers the hidden file input opener for the Image tool (I). */
+  registerImageFilePicker(fn: () => void) {
+    this.imageFilePicker = fn;
+  }
+
+  triggerImageUpload() {
+    this.imageFilePicker?.();
+  }
+
+  /** Switch the active Photoshop-style tool and update canvas cursors. */
+  setActiveTool(tool: EditorTool) {
+    useEditorStore.getState().setActiveTool(tool);
+    this.applyToolCursor(tool);
+  }
+
+  refreshToolCursor() {
+    this.applyToolCursor(useEditorStore.getState().activeTool);
+  }
+
+  private applyToolCursor(tool: EditorTool) {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const pan = tool === 'hand' || useEditorStore.getState().spacePanActive;
+    canvas.selection = !pan && tool !== 'zoom';
+    canvas.defaultCursor = pan ? 'grab' : tool === 'zoom' ? 'zoom-in' : 'default';
+    canvas.hoverCursor = pan ? 'grab' : tool === 'zoom' ? 'zoom-in' : 'move';
+  }
+
+  private handleToolMouseDown(opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) {
+    const store = useEditorStore.getState();
+    const tool = store.activeTool;
+    if (tool === 'hand' || store.spacePanActive) return;
+    if (opt.target && tool !== 'zoom') return;
+
+    const pointer = this.canvas?.getScenePoint(opt.e as MouseEvent);
+    if (!pointer) return;
+
+    if (tool === 'text') {
+      this.noteHistoryAction('Added text');
+      const mode = store.textPlacementMode;
+      this.addText('body');
+      const active = this.canvas?.getActiveObject();
+      if (active && isTextObject(active)) {
+        active.set({ left: pointer.x, top: pointer.y, originX: 'center', originY: 'center' });
+        if (mode === 'curved') {
+          const next = applyCurveToText(active as fabric.Textbox, 40, this.circleCurveLayout(false));
+          if (next !== active) this.replaceObject(active, next);
+        }
+        this.canvas?.requestRenderAll();
+      }
+      this.setActiveTool('move');
+    } else if (tool === 'shape') {
+      this.noteHistoryAction('Added shape');
+      const kind = store.pendingShape;
+      this.addShape(kind);
+      const active = this.canvas?.getActiveObject();
+      if (active) {
+        active.set({ left: pointer.x, top: pointer.y, originX: 'center', originY: 'center' });
+        this.canvas?.requestRenderAll();
+      }
+      this.setActiveTool('move');
+    } else if (tool === 'eraser' && opt.target?.type === 'image') {
+      this.removeBackgroundFromSelection();
+    } else if (tool === 'zoom') {
+      const alt = (opt.e as MouseEvent).altKey;
+      const current = store.zoom;
+      const factor = alt ? 1 / 1.25 : 1.25;
+      store.set({ zoom: Math.max(0.05, Math.min(5, current * factor)) });
+    }
+  }
+
+  /** Trims/isolates the selected photo — opens crop mode for edge cleanup. */
+  removeBackgroundFromSelection(): boolean {
+    const active = this.canvas?.getActiveObject();
+    if (!active || active.type !== 'image') return false;
+    this.noteHistoryAction('Remove background');
+    this.startCrop();
+    return true;
+  }
 }
 
 export function isTextObject(o: fabric.FabricObject): boolean {
-  return o.type === 'textbox' || o.type === 'i-text' || o.type === 'text';
+  return o.type === 'textbox' || o.type === 'i-text' || o.type === 'text' || isCurvedTextGroup(o);
 }
 
 // ── change-detection helpers ────────────────────────────────────────────────
@@ -1797,55 +2540,10 @@ function buildFilters(adjust: ImageAdjust): fabric.filters.BaseFilter<string>[] 
   if (adjust.brightness) out.push(new fabric.filters.Brightness({ brightness: adjust.brightness }));
   if (adjust.contrast) out.push(new fabric.filters.Contrast({ contrast: adjust.contrast }));
   if (adjust.saturation) out.push(new fabric.filters.Saturation({ saturation: adjust.saturation }));
+  if (adjust.tint) {
+    out.push(new fabric.filters.BlendColor({ color: adjust.tint, mode: 'tint', alpha: 0.45 }));
+  }
   return out;
-}
-
-/**
- * Builds a smooth circular-arc path (approximated by a fine polyline so we never
- * fight SVG sweep-flag ambiguity). Positive amount arches the text upward
- * (a "smile"), negative arches it downward. Returns null for a straight line.
- */
-export function buildCurvePath(width: number, amount: number): fabric.Path | null {
-  const a = Math.max(-100, Math.min(100, amount)) / 100;
-  if (a === 0 || width <= 0) return null;
-  const dir = a < 0 ? -1 : 1;
-  const theta = Math.abs(a) * Math.PI * 0.9; // total sweep, up to ~162°
-  const radius = width / theta; // arc length ≈ width
-  const steps = 72;
-  const cosHalf = Math.cos(theta / 2);
-  let d = '';
-  for (let i = 0; i <= steps; i++) {
-    const ang = -theta / 2 + (theta * i) / steps;
-    const x = radius * Math.sin(ang) + width / 2;
-    const sag = radius * (Math.cos(ang) - cosHalf);
-    const y = dir > 0 ? -sag : sag;
-    d += `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)} `;
-  }
-  return new fabric.Path(d.trim(), { fill: '', stroke: '' });
-}
-
-/** Applies (or clears) a curved-text path on a text object and records the amount. */
-export function applyCurveToText(text: fabric.Textbox, amount: number) {
-  const g = text as fabric.Textbox & Gaia;
-  const clamped = Math.max(-100, Math.min(100, Math.round(amount)));
-  if (clamped === 0) {
-    (text as { path?: unknown }).path = undefined;
-    g.gaiaCurve = 0;
-    text.set('objectCaching', true);
-  } else {
-    const width = text.width || 200;
-    const path = buildCurvePath(width, clamped);
-    if (path) {
-      text.set({ path, pathAlign: 'center', pathStartOffset: 0, pathSide: 'left' } as never);
-    }
-    g.gaiaCurve = clamped;
-    // Fabric sizes an object's cache canvas from the text box, which knows
-    // nothing about how far the arc rises above it — a deeply curved headline
-    // gets its ascenders sliced off along the arc. Rendering uncached costs a
-    // little redraw time and is correct at any curve amount.
-    text.set('objectCaching', false);
-  }
-  text.set('dirty', true);
 }
 
 function defaultName(kind: string) {
@@ -1855,9 +2553,10 @@ function defaultName(kind: string) {
     base: 'Base',
     overlay: 'Legibility Overlay',
     photo: 'Photo',
-    ai: 'AI image',
-    stock: 'Stock photo',
+    ai: 'AI Image',
+    stock: 'Stock Photo',
     image: 'Image',
+    qr: 'QR Code',
     text: 'Text',
     shape: 'Shape',
     group: 'Group',
@@ -1868,11 +2567,75 @@ function defaultName(kind: string) {
 function shapeName(kind: string) {
   const map: Record<string, string> = {
     rect: 'Rectangle',
+    roundRect: 'Rounded rectangle',
     circle: 'Circle',
     triangle: 'Triangle',
     line: 'Line',
+    star: 'Star',
+    arrow: 'Arrow',
+    hexagon: 'Hexagon',
   };
   return map[kind] ?? 'Shape';
+}
+
+function layerHistoryName(o?: fabric.FabricObject | null): string {
+  if (!o) return '';
+  const g = o as Gaia;
+  return String(g.name || g.gaiaKind || o.type || '').trim();
+}
+
+function historyWithLayer(verb: string, o?: fabric.FabricObject | null): string {
+  const name = layerHistoryName(o);
+  return name ? `${verb} ${name}` : verb;
+}
+
+function historyLabelForProps(patch: Record<string, unknown>): string {
+  if ('fontFamily' in patch || 'fontSize' in patch) return 'Font';
+  if ('fill' in patch || 'stroke' in patch || 'strokeWidth' in patch) return 'Color';
+  if ('fontWeight' in patch || 'fontStyle' in patch || 'underline' in patch || 'linethrough' in patch) {
+    return 'Style';
+  }
+  if ('textAlign' in patch) return 'Align';
+  if ('opacity' in patch) return 'Opacity';
+  if ('gaiaCurve' in patch || 'curve' in patch) return 'Curve';
+  if ('charSpacing' in patch || 'lineHeight' in patch) return 'Spacing';
+  return 'Change';
+}
+
+function starPolygon(cx: number, cy: number, points: number, outerR: number, innerR: number) {
+  const out: { x: number; y: number }[] = [];
+  const step = Math.PI / points;
+  let angle = -Math.PI / 2;
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    out.push({ x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+    angle += step;
+  }
+  return out;
+}
+
+function regularPolygon(cx: number, cy: number, sides: number, r: number) {
+  const out: { x: number; y: number }[] = [];
+  const start = -Math.PI / 2;
+  for (let i = 0; i < sides; i++) {
+    const angle = start + (i * 2 * Math.PI) / sides;
+    out.push({ x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+  }
+  return out;
+}
+
+function arrowPolygon(width: number, height: number) {
+  const head = width * 0.38;
+  const shaftH = height * 0.42;
+  return [
+    { x: -width / 2, y: -shaftH / 2 },
+    { x: width / 2 - head, y: -shaftH / 2 },
+    { x: width / 2 - head, y: -height / 2 },
+    { x: width / 2, y: 0 },
+    { x: width / 2 - head, y: height / 2 },
+    { x: width / 2 - head, y: shaftH / 2 },
+    { x: -width / 2, y: shaftH / 2 },
+  ];
 }
 
 function clip(text: string) {
@@ -1887,15 +2650,38 @@ if (typeof window !== 'undefined') {
   (window as unknown as { gaiaEditor: EditorController }).gaiaEditor = editor;
 }
 
-/** Parse text objects from serialized JSON without loading a full canvas. */
-export function parseTextObjectsFromJson(canvasJson: string): Array<{ id: string; text: string }> {
-  try {
-    const parsed = JSON.parse(canvasJson) as { objects?: Array<{ type?: string; id?: string; text?: string }> };
-    return (parsed.objects ?? [])
-      .filter((o) => o.type === 'textbox' || o.type === 'i-text' || o.type === 'text')
-      .map((o) => ({ id: o.id ?? '', text: (o.text ?? '').trim() }))
-      .filter((o) => o.text);
-  } catch {
-    return [];
-  }
+export {
+  applyTextMapToCanvasJson,
+  parseTextObjectsFromJson,
+  readCanvasLabelLanguage,
+  writeCanvasLabelLanguage,
+} from './canvasTextJson';
+
+/** Collect translatable text from a live Fabric canvas (groups + curved labels). */
+export function parseTextObjectsFromCanvas(
+  canvas: { getObjects: () => fabric.FabricObject[] } | null | undefined,
+): Array<{ id: string; text: string }> {
+  if (!canvas) return [];
+  const out: Array<{ id: string; text: string }> = [];
+  const visit = (o: fabric.FabricObject) => {
+    const g = o as Gaia;
+    if (isCurvedTextGroup(o)) {
+      const first = (o as fabric.Group).getObjects().find((child) =>
+        child.type === 'textbox' || child.type === 'i-text' || child.type === 'text',
+      ) as { text?: string } | undefined;
+      const text = (g.gaiaCurveSourceText ?? first?.text ?? '').trim();
+      if (text) out.push({ id: g.id ?? '', text });
+      return;
+    }
+    if (o.type === 'textbox' || o.type === 'i-text' || o.type === 'text') {
+      const text = String((o as { text?: string }).text ?? '').trim();
+      if (text) out.push({ id: g.id ?? '', text });
+      return;
+    }
+    if (o.type === 'group') {
+      (o as fabric.Group).getObjects().forEach(visit);
+    }
+  };
+  for (const o of canvas.getObjects()) visit(o);
+  return out;
 }

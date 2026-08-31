@@ -1,96 +1,121 @@
 import { useTranslation } from 'react-i18next';
-import { BookOpen, FlaskConical, Layers, MousePointerClick, Printer, Shapes, Sparkles, Upload } from 'lucide-react';
+import { FilePlus, Folder } from 'lucide-react';
+import type { Screen } from '@/store/useAppStore';
 import { useAppStore } from '@/store/useAppStore';
+import { WORKFLOW_STEP_ICONS, type WorkflowStepOrder } from '@/lib/workflowStepIcons';
+import AffirmationCenterPill from '@/components/common/AffirmationCenterPill';
 import logo from '@/assets/logo.png';
+
+/** Mirrors the global WorkflowStepper — same order, keys, icons, and destinations. */
+const WORKFLOW_STEPS: Array<{
+  order: WorkflowStepOrder;
+  labelKey: string;
+  defaultLabel: string;
+  screen: Screen;
+}> = [
+  { order: 1, labelKey: 'workflow.shape', defaultLabel: 'Choose Shape & Size', screen: 'template' },
+  { order: 2, labelKey: 'workflow.recipe', defaultLabel: 'Choose Recipe', screen: 'recipes' },
+  { order: 3, labelKey: 'workflow.step3', defaultLabel: 'Choose Background', screen: 'background' },
+  { order: 4, labelKey: 'workflow.refine', defaultLabel: 'Refine & Design', screen: 'editor-v2' },
+  { order: 5, labelKey: 'workflow.export', defaultLabel: 'Print & Export', screen: 'export' },
+];
 
 export default function WelcomeScreen() {
   const { t } = useTranslation();
   const goto = useAppStore((s) => s.goto);
 
-  const steps = [
-    { icon: Shapes, label: t('welcome.step1') },
-    { icon: Upload, label: t('welcome.step2') },
-    { icon: MousePointerClick, label: t('welcome.step3') },
-    { icon: Printer, label: t('welcome.step4') },
-  ];
-
-  const gettingStartedSteps = [
-    { icon: FlaskConical, label: t('welcome.gs1'), screen: 'ingredients' as const, color: 'bg-emerald-100 text-emerald-700' },
-    { icon: BookOpen,     label: t('welcome.gs2'), screen: 'recipes' as const,     color: 'bg-gaia-100 text-gaia-700'      },
-    { icon: Layers,       label: t('welcome.gs3'), screen: 'template' as const,    color: 'bg-sky-100 text-sky-700'        },
-  ];
-
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex min-h-full max-w-4xl flex-col items-center justify-center px-6 py-16 text-center">
-        <img
-          src={logo}
-          alt="Gaia's Essences"
-          className="mb-2 h-48 w-auto select-none object-contain sm:h-56"
-          draggable={false}
-        />
-        <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-gaia-100 px-4 py-1.5 text-sm font-medium text-gaia-700">
-          <Sparkles className="h-4 w-4" /> {t('app.tagline')}
-        </span>
-        <h1 className="max-w-2xl text-4xl font-semibold leading-tight text-gaia-900 sm:text-5xl">
-          {t('welcome.title')}
-        </h1>
-        <p className="mt-4 max-w-xl text-base text-slate-600">{t('welcome.body')}</p>
-
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <button className="btn btn-primary px-6 py-3 text-base" onClick={() => goto('template')}>
-            <Sparkles className="h-5 w-5" /> {t('welcome.start')}
-          </button>
-          <button className="btn btn-secondary px-6 py-3 text-base" onClick={() => goto('recipes')}>
-            <BookOpen className="h-5 w-5" /> {t('welcome.manageRecipes')}
-          </button>
+    <div data-welcome-dash="" className="flex h-full min-h-0 flex-col overflow-x-hidden overflow-y-hidden bg-[#e2ece0] max-sm:overflow-y-auto">
+      <div data-welcome-hero="" className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+        <div data-welcome-wreath="" className="w-full shrink-0 overflow-hidden pt-[var(--welcome-wreath-pt)]">
+          <div className="mx-auto w-full min-w-0 max-w-5xl overflow-hidden px-6 text-center">
+            <div className="welcome-wreath-frame mx-auto w-full min-h-0 min-w-0 max-w-[18.627rem] shrink-0 overflow-hidden sm:max-w-[22.353rem]">
+              <img
+                src={logo}
+                alt="Gaia's Essences"
+                width={298}
+                height={277}
+                className="block h-full w-full max-w-full select-none object-contain"
+                style={{ maxWidth: '100%', maxHeight: '100%' }}
+                draggable={false}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Getting Started section */}
-        <div className="mt-14 w-full rounded-2xl bg-gaia-50 px-6 py-7 ring-1 ring-gaia-100 text-left">
-          <p className="text-center text-xs font-bold uppercase tracking-widest text-gaia-600">
+        <div data-welcome-copy="" className="w-full shrink-0">
+          <div data-welcome-greeting-pad="" className="w-full pb-[var(--welcome-greeting-pb)]">
+            <div className="mx-auto w-full min-w-0 max-w-5xl overflow-hidden px-6 text-center">
+              <h1
+                data-welcome-greeting=""
+                className="mx-auto max-w-2xl shrink-0 text-4xl font-semibold leading-tight text-gaia-900 sm:text-5xl"
+              >
+                {t('welcome.title')}
+              </h1>
+            </div>
+          </div>
+
+          <div data-welcome-cta-pad="" className="w-full pt-[var(--welcome-cta-pt)]">
+            <div className="mx-auto w-full min-w-0 max-w-5xl overflow-hidden px-6 text-center">
+              <div
+                data-welcome-cta-row=""
+                className="mx-auto flex w-full max-w-2xl shrink-0 items-center justify-center gap-[var(--welcome-cta-gap)]"
+              >
+                <button className="btn btn-primary min-w-0 flex-1 justify-center whitespace-nowrap rounded-full px-6 py-3 text-base" onClick={() => goto('template')}>
+                  <FilePlus className="h-5 w-5" /> {t('welcome.start')}
+                </button>
+                <button
+                  type="button"
+                  className="saved-designs-pill btn min-w-0 flex-1 justify-center whitespace-nowrap rounded-full px-6 py-3 text-base text-white shadow-md hover:shadow-lg"
+                  style={{ backgroundColor: '#0d9488', color: '#ffffff' }}
+                  onClick={() => goto('drafts')}
+                >
+                  <Folder className="h-5 w-5" /> {t('welcome.savedDesigns', 'Saved Designs')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div data-affirmation-pill-spacer="" className="w-full shrink-0 pt-[var(--welcome-pill-pt)]" />
+
+        <div data-welcome-pill-wrap="" className="w-full shrink-0">
+          <div className="mx-auto w-full max-w-5xl px-6">
+            <AffirmationCenterPill />
+          </div>
+        </div>
+
+        <div data-welcome-sage-leftover="" className="min-h-0 w-full flex-1" />
+      </div>
+
+      <div data-welcome-mint="" className="w-full shrink-0 bg-[#f3f7f2] py-[var(--welcome-mint-py)]">
+        <div className="mx-auto w-full min-w-0 max-w-[73.6rem] px-6 text-left">
+          <p className="text-center text-[calc(0.75rem*1.15*1.15)] font-bold uppercase tracking-widest text-gaia-600">
             {t('welcome.gettingStarted')}
           </p>
-          <p className="mt-1 text-center text-sm text-slate-500">{t('welcome.gettingStartedBody')}</p>
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {gettingStartedSteps.map((s, i) => {
-              const Icon = s.icon;
+          <div className="mt-[0.8625rem] grid grid-cols-1 gap-[0.8625rem] sm:grid-cols-2 lg:grid-cols-5">
+            {WORKFLOW_STEPS.map((step) => {
+              const { icon: Icon, chip } = WORKFLOW_STEP_ICONS[step.order];
               return (
                 <button
-                  key={s.screen}
-                  onClick={() => goto(s.screen)}
-                  className="flex items-center gap-3 rounded-xl bg-white px-4 py-3.5 ring-1 ring-slate-100 transition hover:ring-gaia-300 hover:shadow-sm text-left"
+                  key={step.screen}
+                  type="button"
+                  onClick={() => goto(step.screen)}
+                  className="flex flex-col items-center gap-[0.575rem] rounded-xl bg-white px-[0.8625rem] py-[0.8625rem] ring-1 ring-slate-100 transition hover:ring-gaia-300 hover:shadow-sm sm:px-[0.575rem]"
                 >
-                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${s.color}`}>
-                    <Icon className="h-4 w-4" />
+                  <span className={`flex h-[2.875rem] w-[2.875rem] shrink-0 items-center justify-center rounded-xl ${chip}`}>
+                    <Icon className="h-[1.4375rem] w-[1.4375rem]" />
                   </span>
-                  <span className="flex flex-col gap-0.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      {t('common.step', 'Step')} {i + 1}
-                    </span>
-                    <span className="text-sm font-medium text-slate-800">{s.label}</span>
+                  <span className="text-[calc(0.6875rem*1.15*1.15)] font-semibold uppercase tracking-wide text-black">
+                    {t('common.step', 'Step')} {step.order}
+                  </span>
+                  <span className="text-center text-[1.00625rem] font-medium leading-snug text-slate-800">
+                    {t(step.labelKey, step.defaultLabel)}
                   </span>
                 </button>
               );
             })}
           </div>
-        </div>
-
-        <div className="mt-8 grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {steps.map((s, i) => {
-            const Icon = s.icon;
-            return (
-              <div key={s.label} className="card flex flex-col items-center gap-3 text-center">
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gaia-100 text-gaia-700">
-                  <Icon className="h-6 w-6" />
-                </span>
-                <span className="text-sm font-semibold text-slate-400">
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <p className="text-sm text-slate-700">{s.label}</p>
-              </div>
-            );
-          })}
         </div>
       </div>
     </div>

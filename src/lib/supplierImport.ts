@@ -8,9 +8,9 @@
 //          case we throw a friendly error and the manual fields remain.
 //   2. Lightweight local scrape (no AI, no extra network): JSON-LD Product
 //      schema, OpenGraph/meta price tags, then price/size regexes.
-//   3. BUNDLED LOCAL AI (desktop only, 100% offline inference): the in-app
-//      Qwen3-4B model reads the page text and returns grammar-enforced JSON
-//      — no API key, nothing leaves the machine.
+//   3. LOCAL AI: Ollama structured JSON when a URL is set (external server,
+//      not bundled). Nothing leaves the machine unless Gemini fallback is
+//      configured.
 //   4. Gemini cloud fallback, only if a Google AI Studio key is stored in
 //      Settings and the earlier tiers came back incomplete.
 //
@@ -18,6 +18,7 @@
 // written to the database — the importer never silently overwrites pricing.
 // ---------------------------------------------------------------------------
 
+import { runAiTask } from '@/lib/aiTask';
 import { extractSupplierProduct, type LocalAiSettingsSlice, type SupplierTextExtractionResult, extractSupplierTextWithOllama } from '@/lib/localAi';
 
 export interface SupplierParseResult {
@@ -301,8 +302,8 @@ export async function extractWithGemini(
 
 /**
  * Fetches a supplier product page and extracts { price, size, unit }.
- * Tier order: local structured/heuristic scrape → bundled offline AI
- * (desktop, when enabled) → Gemini (when a key is stored). Each tier only
+ * Tier order: local structured/heuristic scrape → external Ollama
+ * (when enabled and reachable) → Gemini (when a key is stored). Each tier only
  * fills the gaps the previous one left. Throws with a user-readable message
  * when nothing could be detected (the manual fields are the fallback).
  */
@@ -317,7 +318,7 @@ export async function importFromSupplierUrl(
   // Page text is shared by both AI tiers; computed lazily only when needed.
   const pageText = htmlToText(html);
 
-  // -- Tier 3: bundled offline model (no key, nothing leaves the machine) ----
+  // -- Tier 3: external Ollama (no key; nothing leaves the machine) ----------
   const local = await extractSupplierProduct(pageText, settings);
   if (local) {
     result = {
@@ -350,10 +351,14 @@ export async function importFromSupplierUrl(
   );
 }
 
-/** Parses raw Temu/Amazon paste text via Ollama (Settings must use Ollama backend). */
+/** Parses raw Temu/Amazon paste text via external Ollama when configured. */
 export async function importFromSupplierText(
   text: string,
   settings: LocalAiSettingsSlice,
 ): Promise<SupplierTextExtractionResult> {
-  return extractSupplierTextWithOllama(text, settings);
+  const task = await runAiTask('supplier-paste', { text, settings }, () =>
+    extractSupplierTextWithOllama(text, settings),
+  );
+  if (task.ok) return task.data;
+  return { ok: false, error: task.error };
 }

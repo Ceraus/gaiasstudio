@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next';
 import i18n from '@/i18n';
 import { displayStoredBenefitLabel } from '@/lib/benefitI18n';
+import type { Recipe } from '@/types';
 
 /** Stable slug for recipeBenefits.* i18n keys. */
 export function recipeNameKey(name: string): string {
@@ -78,6 +79,18 @@ export function localizeRecipeBenefit(
   return trimmed;
 }
 
+/** Picks the stored benefit for a label/export language. */
+export function resolveRecipeBenefitForLang(
+  recipe: Pick<Recipe, 'benefit' | 'benefitEn' | 'benefitEs'>,
+  lang: 'en' | 'es',
+): string {
+  const en = recipe.benefitEn?.trim() ?? '';
+  const es = recipe.benefitEs?.trim() ?? '';
+  if (lang === 'en' && en) return en;
+  if (lang === 'es' && es) return es;
+  return recipe.benefit?.trim() || en || es;
+}
+
 export function isKnownRecipeBenefitVariant(recipeName: string, value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return true;
@@ -94,6 +107,36 @@ export function localizeRecipeWarnings(stored: string | undefined, t: TFunction)
   const trimmed = stored?.trim() ?? '';
   if (trimmed && trimmed !== EN_DEFAULT_WARNINGS) return trimmed;
   return t('recipes.defaultWarnings');
+}
+
+function bilingualDefaultPair(
+  stored: string | undefined,
+  enDefault: string,
+  esDefault: string,
+): { en: string; es: string } {
+  const trimmed = stored?.trim() ?? '';
+  if (!trimmed || trimmed === enDefault || trimmed === esDefault) {
+    return { en: enDefault, es: esDefault };
+  }
+  return { en: trimmed, es: trimmed };
+}
+
+/** EN + ES directions for label preview (defaults stay paired). */
+export function bilingualRecipeDirections(stored?: string): { en: string; es: string } {
+  return bilingualDefaultPair(
+    stored,
+    i18n.getFixedT('en')('recipes.defaultDirections'),
+    i18n.getFixedT('es')('recipes.defaultDirections'),
+  );
+}
+
+/** EN + ES warnings for label preview (defaults stay paired). */
+export function bilingualRecipeWarnings(stored?: string): { en: string; es: string } {
+  return bilingualDefaultPair(
+    stored,
+    i18n.getFixedT('en')('recipes.defaultWarnings'),
+    i18n.getFixedT('es')('recipes.defaultWarnings'),
+  );
 }
 
 export function relocalizeRecipeFormFields(

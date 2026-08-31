@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, ClipboardList,
   Copy, DollarSign, Factory, FileDown, Loader2, Package, Plus, Printer, ReceiptText,
-  RotateCcw, Trash2, UserRound, X,
+  RotateCcw, Sparkles, Trash2, UserRound, X,
 } from 'lucide-react';
 import type { Client, Ingredient, Recipe, WorkOrder, WorkOrderItem } from '@/types';
 import {
@@ -34,6 +34,9 @@ import {
   type OrderUsageComputation,
 } from '@/db/repositories';
 import { buildReceiptPdf, receiptFileName, saveReceiptPdf } from '@/lib/orderReceiptPdf';
+import { parseOrderText, type ParsedOrderItem } from '@/lib/localAi';
+import { useLocalAiOnline } from '@/hooks/useLocalAiOnline';
+import { runAiTask } from '@/lib/aiTask';
 import Modal from '@/components/common/Modal';
 import TipBanner from '@/components/tour/TipBanner';
 import { useAppStore } from '@/store/useAppStore';
@@ -42,6 +45,18 @@ const fmtMoney = (n: number) =>
   `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleDateString();
+
+function matchRecipeByName(name: string, recipes: Recipe[]): { recipe?: Recipe; confidence: 'exact' | 'partial' | 'none' } {
+  const n = name.trim().toLowerCase();
+  if (!n) return { confidence: 'none' };
+  const exact = recipes.find((r) => r.name.trim().toLowerCase() === n);
+  if (exact) return { recipe: exact, confidence: 'exact' };
+  const partial = recipes.find(
+    (r) => n.includes(r.name.trim().toLowerCase()) || r.name.trim().toLowerCase().includes(n),
+  );
+  if (partial) return { recipe: partial, confidence: 'partial' };
+  return { confidence: 'none' };
+}
 
 // ---------------------------------------------------------------------------
 // Main screen
@@ -72,6 +87,15 @@ export default function WorkOrdersScreen() {
   const [completeTarget, setCompleteTarget] = useState<WorkOrder | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
+  const [quickAddText, setQuickAddText] = useState('');
+  const [parsingOrder, setParsingOrder] = useState(false);
+  const [parsedPreview, setParsedPreview] = useState<{
+    clientName?: string;
+    notes?: string;
+    items: Array<ParsedOrderItem & { match?: Recipe; confidence: 'exact' | 'partial' | 'none' }>;
+  } | null>(null);
+  const [parseOrderError, setParseOrderError] = useState<string | null>(null);
+  const { online: aiConnected } = useLocalAiOnline(settings);
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -107,6 +131,46 @@ export default function WorkOrdersScreen() {
   };
 
   useEffect(() => { void reload(); }, []);
+
+  const handleParseQuickAdd = async () => {
+    setParsingOrder(true);
+    setParseOrderError(null);
+    setParsedPreview(null);
+    try {
+      const task = await runAiTask('order-text', quickAddText, () => parseOrderText(quickAddText, settings));
+      if (!task.ok || !task.data.ok || !task.data.data) {
+        setParseOrderError(task.ok ? task.data.error ?? 'Parse failed.' : task.error);
+        return;
+      }
+      const data = task.data.data;
+      setParsedPreview({
+        clientName: data.clientName,
+        notes: data.notes,
+        items: data.items.map((item) => {
+          const { recipe, confidence } = matchRecipeByName(item.recipeName, recipes);
+          return { ...item, match: recipe, confidence };
+        }),
+      });
+    } finally {
+      setParsingOrder(false);
+    }
+  };
+
+  const openParsedOrder = () => {
+    if (!parsedPreview) return;
+    setRepeatSeed({
+      clientName: parsedPreview.clientName ?? '',
+      notes: parsedPreview.notes,
+      items: parsedPreview.items.map((item) => ({
+        recipeId: item.match?.id ?? recipes[0]?.id ?? '',
+        quantity: item.quantity,
+        unitPrice: item.unitPrice ?? item.match?.retailPrice ?? 0,
+      })),
+    });
+    setShowNewOrder(true);
+    setParsedPreview(null);
+    setQuickAddText('');
+  };
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -278,6 +342,64 @@ export default function WorkOrdersScreen() {
             </div>
           </div>
 
+          {settings.localAiEnabled && recipes.length > 0 && (
+            <div className="mt-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Sparkles className="h-4 w-4 text-violet-600" />
+                {t('orders.quickAddTitle', 'Quick add by text')}
+              </p>
+              <p className="mb-2 text-xs text-slate-500">
+                {t('orders.quickAddHint', 'Paste informal notes like “María bought 3 Lavender Bliss and 2 Oatmeal Honey, paid $45”.')}
+              </p>
+              <textarea
+                className="input min-h-20 text-sm"
+                placeholder={t('orders.quickAddPlaceholder', 'Describe the sale in plain language…')}
+                value={quickAddText}
+                onChange={(e) => setQuickAddText(e.target.value)}
+                disabled={!aiConnected}
+              />
+              {!aiConnected && settings.localAiEnabled && (
+                <p className="mt-1 text-[11px] text-slate-400">{t('orders.quickAddOffline', 'Local AI must be online — check Settings.')}</p>
+              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary text-sm"
+                  disabled={!quickAddText.trim() || parsingOrder || !aiConnected}
+                  onClick={() => void handleParseQuickAdd()}
+                >
+                  {parsingOrder ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  {t('orders.quickAddParse', 'Extract Order')}
+                </button>
+              </div>
+              {parseOrderError && <p className="mt-2 text-xs text-amber-600">{parseOrderError}</p>}
+              {parsedPreview && (
+                <div className="mt-3 rounded-xl border border-gaia-200 bg-gaia-50/50 p-3 text-sm">
+                  {parsedPreview.clientName && (
+                    <p><span className="text-slate-500">{t('orders.clientName', "Client's name")}:</span> {parsedPreview.clientName}</p>
+                  )}
+                  <ul className="mt-2 space-y-1">
+                    {parsedPreview.items.map((item, idx) => (
+                      <li key={idx} className="flex flex-wrap items-center gap-2 text-xs">
+                        <span>{item.quantity}× {item.recipeName}</span>
+                        {item.match ? (
+                          <span className={`rounded px-1.5 py-0.5 ${item.confidence === 'exact' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
+                            → {item.match.name} ({item.confidence === 'exact' ? t('orders.matchExact', 'exact') : t('orders.matchPartial', 'similar')})
+                          </span>
+                        ) : (
+                          <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{t('orders.matchNone', 'no recipe match — pick manually')}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <button type="button" className="btn-primary mt-3 py-1.5 text-xs" onClick={openParsedOrder}>
+                    {t('orders.quickAddOpenForm', 'Review In Order Form')}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <TipBanner
             id="orders-complete-deducts"
             textDefault="Marking an order Completed deducts the exact ingredients from stock and saves the client's PDF receipt automatically — and Reopen undoes it."
@@ -288,23 +410,23 @@ export default function WorkOrdersScreen() {
             <div className="mt-4 flex flex-wrap gap-3">
               <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
                 <span className="font-semibold">{stats.openCount}</span>
-                <span className="opacity-80">{t('orders.open', 'open')}</span>
+                <span className="opacity-80">{t('orders.open', 'Open')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
                 <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                 <span className="font-semibold">{stats.completedCount}</span>
-                <span className="text-slate-400">{t('orders.completed', 'completed')}</span>
+                <span className="text-slate-400">{t('orders.completed', 'Completed')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-gaia-600 px-4 py-2 text-sm text-white">
                 <DollarSign className="h-4 w-4 opacity-80" />
                 <span className="font-semibold">{fmtMoney(stats.revenue)}</span>
-                <span className="opacity-80">{t('orders.revenue', 'revenue')}</span>
+                <span className="opacity-80">{t('orders.revenue', 'Revenue')}</span>
               </div>
               {stats.cogs > 0 && (
                 <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
                   <Package className="h-4 w-4 text-slate-400" />
                   <span className="font-semibold">{fmtMoney(stats.cogs)}</span>
-                  <span className="text-slate-400">{t('orders.materials', 'materials')}</span>
+                  <span className="text-slate-400">{t('orders.materials', 'Materials')}</span>
                 </div>
               )}
             </div>
@@ -342,7 +464,7 @@ export default function WorkOrdersScreen() {
                     className="input w-auto min-w-[180px] text-sm"
                     value={clientFilter}
                     onChange={(e) => setClientFilter(e.target.value)}
-                    aria-label={t('orders.filterByClient', 'Filter by client')}
+                    aria-label={t('orders.filterByClient', 'Filter By Client')}
                   >
                     <option value="">{t('orders.allClients', 'All clients')}</option>
                     {clientsWithOrders.map((c) => (
@@ -598,7 +720,7 @@ function OrderCard({
           title={t('orders.printLabelsTitle', 'Queue the label designs for these soaps onto a batch print sheet')}
         >
           <Printer className="h-3.5 w-3.5" />
-          {t('orders.printLabels', 'Print labels')}
+          {t('orders.printLabels', 'Print Labels')}
         </button>
         {!isInternal && (
           <button
@@ -895,7 +1017,7 @@ function NewOrderModal({ open, onClose, clients, recipes, seed, mode = 'client',
               onClick={addItem}
             >
               <Plus className="h-3.5 w-3.5" />
-              {t('orders.addItem', 'Add another soap')}
+              {t('orders.addItem', 'Add Another Soap')}
             </button>
           </div>
 
@@ -980,7 +1102,7 @@ function CompleteOrderModal({
                   className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-400"
                   title={t('orders.notTrackedTitle', 'Not deducted — stock tracking is off for this ingredient')}
                 >
-                  {t('orders.notTracked', 'untracked')}
+                  {t('orders.notTracked', 'Untracked')}
                 </span>
               )}
             </div>

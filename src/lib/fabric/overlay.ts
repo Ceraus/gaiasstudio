@@ -1,5 +1,6 @@
 import type { Canvas } from 'fabric';
 import type { LabelShape } from '@/types';
+import { EDITOR_PPI } from '@/lib/units';
 
 export interface OverlayConfig {
   shape: LabelShape;
@@ -8,16 +9,53 @@ export interface OverlayConfig {
   /** Safe margin in canvas pixels (inside the trim line). */
   safePx: number;
   cornerRadiusPx: number;
+  /** When false, the die-cut mask still hides the square plate; dashed rings hide. */
   visible: boolean;
+  /** Avery alignment grid over the trim (die-cut) area. */
+  gridVisible?: boolean;
+  /** Grid spacing in canvas pixels. Defaults to 1/8" at EDITOR_PPI. */
+  gridSpacingPx?: number;
+  /** Drag-only: object bbox reached the outer bleed ring. */
+  bleedHit?: boolean;
+  /** Drag-only: object bbox reached/left the safety ring. */
+  safeHit?: boolean;
 }
 
-// Colors chosen to read clearly over any artwork.
-const CUT_COLOR = 'rgba(236, 72, 153, 0.95)'; // magenta trim / die line
-const SAFE_COLOR = 'rgba(37, 99, 235, 0.55)'; // blue safe zone
-const MASK_COLOR = 'rgba(30, 30, 34, 0.45)'; // dimmed bleed area
+/** Avery-style square alignment grid: 1/8" reads cleanly on a 2.5" round. */
+export const ALIGNMENT_GRID_IN = 0.125;
+export const ALIGNMENT_GRID_PX = ALIGNMENT_GRID_IN * EDITOR_PPI;
 
-/** Path the trim (cut) outline for the current shape into ctx. */
-function traceTrim(
+/** Matches the editor workspace so punched-out corners disappear. */
+export const EDITOR_WORKSPACE_BG = '#e9ecef';
+
+// Rest: cyan bleed, gray cut, red safety. Hit rings switch to warning-red (drag-only).
+const BLEED_COLOR = '#55c5d9';
+const CUT_COLOR = 'rgba(107, 114, 128, 0.92)';
+const SAFE_COLOR = '#f45c61';
+const HIT_COLOR = '#e11d2e';
+const STICKER_SHADOW = 'rgba(15, 23, 42, 0.2)';
+const GRID_COLOR = 'rgba(148, 163, 184, 0.34)';
+
+/** Append a trim outline. Does not call beginPath — needed for even-odd fills. */
+function addTrimPath(
+  ctx: CanvasRenderingContext2D,
+  shape: LabelShape,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  if (shape === 'circle' || shape === 'oval') {
+    ctx.ellipse(x + w / 2, y + h / 2, Math.max(0, w / 2), Math.max(0, h / 2), 0, 0, Math.PI * 2);
+  } else if (shape === 'rounded-rectangle') {
+    roundedRectPath(ctx, x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+}
+
+function strokeTrim(
   ctx: CanvasRenderingContext2D,
   shape: LabelShape,
   x: number,
@@ -27,14 +65,9 @@ function traceTrim(
   r: number,
 ) {
   ctx.beginPath();
-  if (shape === 'circle' || shape === 'oval') {
-    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-  } else if (shape === 'rounded-rectangle') {
-    roundedRectPath(ctx, x, y, w, h, r);
-  } else {
-    ctx.rect(x, y, w, h);
-  }
+  addTrimPath(ctx, shape, x, y, w, h, r);
   ctx.closePath();
+  ctx.stroke();
 }
 
 function roundedRectPath(
@@ -53,13 +86,54 @@ function roundedRectPath(
   ctx.arcTo(x, y, x + w, y, rr);
 }
 
+/** Interior grid lines (skips the trim edges — the cut ring already marks those). */
+export function alignmentGridLines(origin: number, size: number, spacing: number): number[] {
+  const lines: number[] = [];
+  if (!(spacing > 0) || !(size > spacing)) return lines;
+  const end = origin + size;
+  for (let p = origin + spacing; p < end - 0.5; p += spacing) {
+    lines.push(p);
+  }
+  return lines;
+}
+
+function drawAlignmentGrid(
+  ctx: CanvasRenderingContext2D,
+  shape: LabelShape,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  spacing: number,
+) {
+  ctx.save();
+  ctx.beginPath();
+  addTrimPath(ctx, shape, x, y, w, h, r);
+  ctx.closePath();
+  ctx.clip();
+
+  ctx.strokeStyle = GRID_COLOR;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  for (const gx of alignmentGridLines(x, w, spacing)) {
+    ctx.moveTo(gx, y);
+    ctx.lineTo(gx, y + h);
+  }
+  for (const gy of alignmentGridLines(y, h, spacing)) {
+    ctx.moveTo(x, gy);
+    ctx.lineTo(x + w, gy);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 /**
- * Draws the "visual bleed mask": a dimmed ring outside the cut line, a magenta
- * cut line, and a dashed blue safe zone. Call from the canvas 'after:render'
- * handler where the context is in identity (screen) space.
+ * Avery-style artboard: hide the square canvas plate, sit the die-cut on the
+ * workspace, and (when visible) draw bleed / cut / safety rings.
  */
 export function drawBleedOverlay(canvas: Canvas, cfg: OverlayConfig) {
-  if (!cfg.visible) return;
   const ctx = canvas.getContext();
   const cw = canvas.getWidth();
   const ch = canvas.getHeight();
@@ -71,28 +145,61 @@ export function drawBleedOverlay(canvas: Canvas, cfg: OverlayConfig) {
 
   ctx.save();
 
-  // 1) Dim everything, then punch out the trim shape so only the bleed ring stays dim.
-  if (cfg.bleedPx > 0.5) {
-    ctx.fillStyle = MASK_COLOR;
-    ctx.beginPath();
-    ctx.rect(0, 0, cw, ch);
-    traceTrim(ctx, cfg.shape, tx, ty, tw, th, cfg.cornerRadiusPx);
-    ctx.fill('evenodd');
+  // Punch the die-cut out of a workspace fill so corners never read as a plate.
+  ctx.fillStyle = EDITOR_WORKSPACE_BG;
+  ctx.beginPath();
+  ctx.rect(0, 0, cw, ch);
+  addTrimPath(ctx, cfg.shape, tx, ty, tw, th, cfg.cornerRadiusPx);
+  ctx.closePath();
+  ctx.fill('evenodd');
+
+  // Soft edge like a physical sticker on the desk.
+  ctx.save();
+  ctx.shadowColor = STICKER_SHADOW;
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 3;
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.06)';
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([]);
+  strokeTrim(ctx, cfg.shape, tx, ty, tw, th, cfg.cornerRadiusPx);
+  ctx.restore();
+
+  const spacing = cfg.gridSpacingPx ?? ALIGNMENT_GRID_PX;
+  if (cfg.gridVisible && spacing > 0.5) {
+    drawAlignmentGrid(ctx, cfg.shape, tx, ty, tw, th, cfg.cornerRadiusPx, spacing);
   }
 
-  // 2) Trim / die-cut line.
-  ctx.lineWidth = 1.5;
+  if (!cfg.visible) {
+    ctx.restore();
+    return;
+  }
+
+  if (cfg.bleedPx > 0.5) {
+    const inset = 1;
+    ctx.lineWidth = cfg.bleedHit ? 2.15 : 1.25;
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = cfg.bleedHit ? HIT_COLOR : BLEED_COLOR;
+    strokeTrim(
+      ctx,
+      cfg.shape,
+      inset,
+      inset,
+      cw - inset * 2,
+      ch - inset * 2,
+      cfg.cornerRadiusPx + cfg.bleedPx - inset,
+    );
+  }
+
+  ctx.lineWidth = 1.35;
   ctx.setLineDash([]);
   ctx.strokeStyle = CUT_COLOR;
-  traceTrim(ctx, cfg.shape, tx, ty, tw, th, cfg.cornerRadiusPx);
-  ctx.stroke();
+  strokeTrim(ctx, cfg.shape, tx, ty, tw, th, cfg.cornerRadiusPx);
 
-  // 3) Safe zone (keep important text inside this).
   if (cfg.safePx > 0.5) {
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 4]);
-    ctx.strokeStyle = SAFE_COLOR;
-    traceTrim(
+    ctx.lineWidth = cfg.safeHit ? 2.15 : 1.25;
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = cfg.safeHit ? HIT_COLOR : SAFE_COLOR;
+    strokeTrim(
       ctx,
       cfg.shape,
       tx + cfg.safePx,
@@ -101,7 +208,6 @@ export function drawBleedOverlay(canvas: Canvas, cfg: OverlayConfig) {
       th - cfg.safePx * 2,
       Math.max(0, cfg.cornerRadiusPx - cfg.safePx),
     );
-    ctx.stroke();
   }
 
   ctx.restore();

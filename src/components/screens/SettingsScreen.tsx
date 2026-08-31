@@ -1,17 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Cloud, Database, Download, FolderOpen, GraduationCap, Instagram, KeyRound, Languages, Loader2, Palette, Plus, Ruler, Share2, Smartphone, Star, Store, Trash2, Upload, WifiOff, X, ZoomIn, AlertTriangle } from 'lucide-react';
+import { Bot, Building2, Bug, CheckCircle2, ChevronDown, ChevronRight, Database, Download, FolderOpen, GraduationCap, Image as ImageIcon, Instagram, KeyRound, Languages, Loader2, Share2, Star, Store, Trash2, Upload, WifiOff, X, ZoomIn } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { db } from '@/db/db';
 import { useLibraryStore } from '@/store/useLibraryStore';
-import { testLocalAiConnection, type LocalAiStatus } from '@/lib/localAi';
+import { testLocalAiConnection, fetchOllamaTags, type LocalAiStatus } from '@/lib/localAi';
 import { exportBackup, restoreBackup } from '@/lib/backup';
-import {
-  fetchCloudSyncMeta,
-  pullCloudBackup,
-  pushCloudBackup,
-  runCloudSync,
-} from '@/lib/cloudSync';
 import averyData from '@/data/averyTemplates.json';
 import type { AveryDataset } from '@/types';
 import { describeSize } from '@/lib/units';
@@ -29,10 +23,13 @@ import { getOAuthRedirectUri } from '@/lib/pwa';
 import {
   clearSessionUnlock,
   hashPin,
+  setSessionUnlocked,
   verifyPin,
   hasPinConfigured,
 } from '@/lib/appLock';
 import { activateVaultFromPin, clearVaultKey } from '@/lib/secretVault';
+import { useComfyUiOnline } from '@/hooks/useComfyUiOnline';
+import { getOfflineIngredientIconStats } from '@/lib/ingredientCatalog';
 
 /** Interface zoom presets. 100% is the default. */
 const UI_SCALES = [1, 1.1, 1.25, 1.4];
@@ -64,10 +61,6 @@ export default function SettingsScreen() {
   // ── Backup & Restore ───────────────────────────────────────────────────────
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [syncConflict, setSyncConflict] = useState(false);
-  const [syncMeta, setSyncMeta] = useState<string | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const handleExportBackup = async () => {
@@ -86,118 +79,6 @@ export default function SettingsScreen() {
       setBackupBusy(false);
     }
   };
-
-  async function refreshSyncMeta() {
-    if (!settings.cloudSyncEnabled) {
-      setSyncMeta(null);
-      return;
-    }
-    const meta = await fetchCloudSyncMeta(settings);
-    setSyncMeta(
-      meta?.exportedAt
-        ? t('settings.cloudSyncMeta', 'Cloud copy: {{when}}', {
-            when: new Date(meta.exportedAt).toLocaleString(),
-          })
-        : t('settings.cloudSyncMetaEmpty', 'No cloud copy yet.'),
-    );
-  }
-
-  useEffect(() => {
-    void refreshSyncMeta();
-  }, [settings.cloudSyncEnabled, settings.cloudSyncUrl, settings.cloudSyncToken]);
-
-  async function handleCloudPush() {
-    setSyncBusy(true);
-    setSyncMessage(null);
-    setSyncConflict(false);
-    try {
-      const result = await pushCloudBackup(settings);
-      if (result.status === 'pushed') {
-        const when = result.remoteExportedAt ?? new Date().toISOString();
-        await updateSettings({
-          cloudSyncLastPushedAt: when,
-          cloudSyncLastPulledAt: when,
-        });
-        setSyncMessage(t('settings.cloudSyncPushed', 'Uploaded to cloud.'));
-        void refreshSyncMeta();
-      } else if (result.status === 'sync_conflict') {
-        setSyncConflict(true);
-        setSyncMessage(
-          t('settings.cloudSyncConflict', {
-            defaultValue:
-              'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
-          }),
-        );
-      } else {
-        setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
-      }
-    } finally {
-      setSyncBusy(false);
-    }
-  }
-
-  async function handleCloudPull() {
-    if (!window.confirm(t('settings.cloudSyncPullConfirm'))) return;
-    setSyncBusy(true);
-    setSyncMessage(null);
-    try {
-      const result = await pullCloudBackup(settings);
-      if (result.status === 'pulled') {
-        await updateSettings({
-          cloudSyncLastPulledAt: result.remoteExportedAt ?? new Date().toISOString(),
-        });
-        setSyncMessage(t('settings.cloudSyncPulled', 'Downloaded from cloud — reloading…'));
-        setTimeout(() => window.location.reload(), 1200);
-      } else {
-        setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
-        setSyncBusy(false);
-      }
-    } catch (err) {
-      setSyncMessage(String(err instanceof Error ? err.message : err));
-      setSyncBusy(false);
-    }
-  }
-
-  async function handleCloudSyncNow() {
-    setSyncBusy(true);
-    setSyncMessage(null);
-    setSyncConflict(false);
-    try {
-      const result = await runCloudSync(settings, { autoPull: true, autoPush: true });
-      if (result.status === 'pushed') {
-        const when = result.remoteExportedAt ?? new Date().toISOString();
-        await updateSettings({
-          cloudSyncLastPushedAt: when,
-          cloudSyncLastPulledAt: when,
-        });
-        setSyncMessage(t('settings.cloudSyncPushed', 'Uploaded to cloud.'));
-      } else if (result.status === 'pulled') {
-        await updateSettings({
-          cloudSyncLastPulledAt: result.remoteExportedAt ?? new Date().toISOString(),
-        });
-        setSyncMessage(t('settings.cloudSyncPulled', 'Downloaded from cloud — reloading…'));
-        setTimeout(() => window.location.reload(), 1200);
-        return;
-      } else if (result.status === 'sync_conflict') {
-        setSyncConflict(true);
-        setSyncMessage(
-          t('settings.cloudSyncConflict', {
-            defaultValue:
-              'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
-          }),
-        );
-      } else if (result.status === 'in_sync') {
-        setSyncMessage(t('settings.cloudSyncInSync', 'Already up to date.'));
-      } else if (result.status === 'remote_newer') {
-        setSyncMessage(t('settings.cloudSyncRemoteNewer', 'Cloud copy is newer — use Download from cloud.'));
-      } else {
-        setSyncMessage(result.message ?? t('settings.cloudSyncFailed', 'Sync failed.'));
-      }
-      void refreshSyncMeta();
-    } finally {
-      setSyncBusy(false);
-    }
-  }
 
   const handleRestoreFile = async (file: File) => {
     if (!window.confirm(t('settings.restoreConfirm',
@@ -230,18 +111,18 @@ export default function SettingsScreen() {
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   const [maintenanceResult, setMaintenanceResult] = useState<string | null>(null);
 
-  const runRosaMaintenance = async () => {
-    if (!window.confirm(t('settings.rosaMaintenanceConfirm'))) return;
+  const resetInitialSetup = async () => {
+    if (!window.confirm(t('settings.initialSetupResetConfirm'))) return;
     setMaintenanceBusy(true);
     setMaintenanceResult(null);
     try {
-      const { runRosaMaintenance: run } = await import('@/lib/maintenance');
+      const { resetInitialSetup: run } = await import('@/lib/maintenance');
       const result = await run();
       await loadLibrary();
       setMaintenanceResult(
-        t('settings.rosaMaintenanceDone', {
+        t('settings.initialSetupResetDone', {
           deactivated: result.ingredientsDeactivated,
-          restored: result.recipesRestored,
+          removed: result.recipesRemoved,
         }),
       );
     } catch (err) {
@@ -356,48 +237,6 @@ export default function SettingsScreen() {
           </section>
 
           <section className="card">
-            <p className="label flex items-center gap-2">
-              <Smartphone className="h-4 w-4" /> {t('settings.mobileLayout', 'Phone layout')}
-            </p>
-            <p className="mb-3 text-xs text-slate-400">
-              {t(
-                'settings.mobileLayoutHint',
-                'Choose how Gaia behaves on a phone. Streamlined focuses on the 5-step label workflow; Classic keeps the full app with responsive layout.',
-              )}
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                aria-pressed={(settings.mobileLayout ?? 'classic') === 'streamlined' || (settings.mobileLayout as string) === 'auto'}
-                className={`btn flex-1 text-left ${
-                  (settings.mobileLayout ?? 'classic') === 'streamlined' || (settings.mobileLayout as string) === 'auto'
-                    ? 'btn-primary'
-                    : 'btn-secondary'
-                }`}
-                onClick={() => void updateSettings({ mobileLayout: 'streamlined' })}
-              >
-                <span className="block font-semibold">{t('settings.mobileLayoutStreamlined', 'Streamlined')}</span>
-                <span className="mt-0.5 block text-[11px] font-normal opacity-80">
-                  {t('settings.mobileLayoutStreamlinedHint', 'Bottom tabs + simple 3-layer editor')}
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={(settings.mobileLayout ?? 'classic') === 'classic'}
-                className={`btn flex-1 text-left ${
-                  (settings.mobileLayout ?? 'classic') === 'classic' ? 'btn-primary' : 'btn-secondary'
-                }`}
-                onClick={() => void updateSettings({ mobileLayout: 'classic' })}
-              >
-                <span className="block font-semibold">{t('settings.mobileLayoutClassic', 'Classic')}</span>
-                <span className="mt-0.5 block text-[11px] font-normal opacity-80">
-                  {t('settings.mobileLayoutClassicHint', 'Full app — scrollable nav & responsive editor')}
-                </span>
-              </button>
-            </div>
-          </section>
-
-          <section className="card">
             <label className="label">{t('settings.filenamePrefix')}</label>
             <input
               className="input max-w-xs"
@@ -416,15 +255,6 @@ export default function SettingsScreen() {
               <KeyRound className="h-4 w-4" /> {t('settings.keys')}
             </p>
             <p className="text-xs text-slate-400">{t('settings.keysHint')}</p>
-            <div>
-              <label className="label">{t('settings.googleAiKey')}</label>
-              <input
-                type="password"
-                className="input"
-                value={settings.googleAiApiKey ?? ''}
-                onChange={(e) => void updateSettings({ googleAiApiKey: e.target.value })}
-              />
-            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="label">{t('settings.unsplashKey')}</label>
@@ -446,6 +276,23 @@ export default function SettingsScreen() {
                 </p>
               </div>
               <div>
+                <label className="label">{t('settings.unsplashSecretKey', 'Unsplash secret key')}</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={settings.unsplashSecretKey ?? ''}
+                  onChange={(e) => void updateSettings({ unsplashSecretKey: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">{t('settings.unsplashAppId', 'Unsplash application ID')}</label>
+                <input
+                  className="input"
+                  value={settings.unsplashAppId ?? ''}
+                  onChange={(e) => void updateSettings({ unsplashAppId: e.target.value })}
+                />
+              </div>
+              <div>
                 <label className="label">{t('settings.pixabayKey')}</label>
                 <input
                   type="password"
@@ -464,17 +311,28 @@ export default function SettingsScreen() {
                   </a>
                 </p>
               </div>
+              <div>
+                <label className="label">{t('settings.googleTranslateKey', 'Google Translate API key (optional)')}</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={settings.googleTranslateApiKey ?? ''}
+                  onChange={(e) => void updateSettings({ googleTranslateApiKey: e.target.value })}
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  {t('settings.googleTranslateKeyHint', 'Optional Cloud Translation key for Export label language. The button still works without it.')}
+                </p>
+              </div>
             </div>
           </section>
 
           <LocalAiSection />
+          <ComfyUiSection />
           <AppLockSection />
 
           <EtsySection />
 
           <SocialSection />
-
-          <PwaSection />
 
           {/* Business / Maker Info — required for FDA-compliant labels */}
           <section className="card space-y-3">
@@ -524,7 +382,7 @@ export default function SettingsScreen() {
               <label className="label">{t('settings.contact', 'Contact Info')}</label>
               <input
                 className="input"
-                placeholder={t('settings.contactPlaceholder', 'e.g. Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/')}
+                placeholder={t('settings.contactPlaceholder', 'e.g. customercare@gaiasessences.com · https://www.gaiasessences.com/')}
                 value={settings.contact ?? ''}
                 onChange={(e) => void updateSettings({ contact: e.target.value })}
               />
@@ -534,94 +392,9 @@ export default function SettingsScreen() {
             </div>
           </section>
 
-          {/* Brand Color Palette */}
           <section className="card">
             <p className="label flex items-center gap-2">
-              <Palette className="h-4 w-4" /> {t('settings.brandColors', 'Brand Colors')}
-            </p>
-            <p className="mb-3 text-xs text-slate-400">
-              {t('settings.brandColorsHint', 'Save up to 8 brand colors. They appear at the top of every color picker so your labels stay on-brand instantly.')}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {(settings.brandColors ?? []).map((color, i) => (
-                <div key={i} className="group relative">
-                  <input
-                    type="color"
-                    value={color}
-                    className="h-9 w-9 cursor-pointer rounded-xl border-2 border-slate-200 p-0.5 transition hover:border-gaia-400"
-                    title={color}
-                    onChange={(e) => {
-                      const next = [...(settings.brandColors ?? [])];
-                      next[i] = e.target.value;
-                      void updateSettings({ brandColors: next });
-                    }}
-                  />
-                  <button
-                    className="absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-white group-hover:flex"
-                    onClick={() => {
-                      const next = (settings.brandColors ?? []).filter((_, j) => j !== i);
-                      void updateSettings({ brandColors: next });
-                    }}
-                    title={t('common.remove', 'Remove')}
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              ))}
-              {(settings.brandColors ?? []).length < 8 && (
-                <button
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 text-slate-400 transition hover:border-gaia-400 hover:text-gaia-600"
-                  title={t('settings.addBrandColor', 'Add a brand color')}
-                  onClick={() => {
-                    const next = [...(settings.brandColors ?? []), '#a7c4a0'];
-                    void updateSettings({ brandColors: next });
-                  }}
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          </section>
-
-          <section className="card">
-            <p className="label flex items-center gap-2">
-              <Ruler className="h-4 w-4" /> {t('settings.print')}
-            </p>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="label">
-                  {t('settings.bleed')} · {settings.bleedIn}"
-                </label>
-                <input
-                  type="range"
-                  min={0}
-                  max={0.25}
-                  step={0.0625}
-                  className="w-full accent-gaia-600"
-                  value={settings.bleedIn}
-                  onChange={(e) => void updateSettings({ bleedIn: Number(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="label">
-                  {t('settings.safe')} · {settings.safeIn}"
-                </label>
-                <input
-                  type="range"
-                  min={0}
-                  max={0.25}
-                  step={0.0625}
-                  className="w-full accent-gaia-600"
-                  value={settings.safeIn}
-                  onChange={(e) => void updateSettings({ safeIn: Number(e.target.value) })}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section className="card">
-            <p className="label flex items-center gap-2">
-              <Star className="h-4 w-4" /> {t('settings.labelSizes')}
+              <Star className="h-4 w-4 fill-amber-400 text-amber-400" /> {t('settings.labelSizes')}
             </p>
             <p className="mb-3 text-xs text-slate-400">{t('settings.labelSizesHint')}</p>
             {favoriteTemplates.length === 0 ? (
@@ -685,86 +458,6 @@ export default function SettingsScreen() {
 
           <section className="card">
             <p className="label flex items-center gap-2">
-              <Cloud className="h-4 w-4" /> {t('settings.cloudSync')}
-            </p>
-            <p className="mb-3 text-xs text-slate-400">{t('settings.cloudSyncHint')}</p>
-            <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="rounded border-slate-300 text-gaia-600 focus:ring-gaia-500"
-                checked={settings.cloudSyncEnabled ?? false}
-                onChange={(e) => void updateSettings({ cloudSyncEnabled: e.target.checked })}
-              />
-              {t('settings.cloudSyncEnable')}
-            </label>
-            <div className="space-y-3">
-              <div>
-                <label className="label">{t('settings.cloudSyncUrl')}</label>
-                <input
-                  className="input font-mono text-xs"
-                  placeholder={t('settings.cloudSyncUrlPlaceholder', 'https://gaiasessences.com/studio/sync/sync.php')}
-                  value={settings.cloudSyncUrl ?? ''}
-                  onChange={(e) => void updateSettings({ cloudSyncUrl: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">{t('settings.cloudSyncToken')}</label>
-                <input
-                  type="password"
-                  className="input font-mono text-xs"
-                  placeholder="••••••••"
-                  value={settings.cloudSyncToken ?? ''}
-                  onChange={(e) => void updateSettings({ cloudSyncToken: e.target.value })}
-                />
-              </div>
-            </div>
-            {syncMeta && (
-              <p className="mt-3 text-xs text-slate-500">{syncMeta}</p>
-            )}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={syncBusy || !settings.cloudSyncEnabled}
-                onClick={() => void handleCloudSyncNow()}
-              >
-                {syncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
-                {t('settings.cloudSyncNow')}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={syncBusy || !settings.cloudSyncEnabled}
-                onClick={() => void handleCloudPush()}
-              >
-                <Upload className="h-4 w-4" /> {t('settings.cloudSyncPush')}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={syncBusy || !settings.cloudSyncEnabled}
-                onClick={() => void handleCloudPull()}
-              >
-                <Download className="h-4 w-4" /> {t('settings.cloudSyncPull')}
-              </button>
-            </div>
-            {syncMessage && (
-              <p
-                className={`mt-3 flex items-start gap-2 text-xs ${
-                  syncConflict
-                    ? 'rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 font-medium text-rose-800'
-                    : 'text-slate-500'
-                }`}
-                role={syncConflict ? 'alert' : 'status'}
-              >
-                {syncConflict && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />}
-                <span>{syncMessage}</span>
-              </p>
-            )}
-          </section>
-
-          <section className="card">
-            <p className="label flex items-center gap-2">
               <Database className="h-4 w-4" /> {t('settings.data')}
             </p>
             <p className="mb-3 text-xs text-slate-400">{t('settings.dataHint')}</p>
@@ -787,7 +480,7 @@ export default function SettingsScreen() {
                 disabled={backupBusy}
                 onClick={() => restoreInputRef.current?.click()}
               >
-                <Upload className="h-4 w-4" /> {t('settings.importData', 'Restore from backup…')}
+                <Upload className="h-4 w-4" /> {t('settings.importData', 'Restore From Backup…')}
               </button>
               <input
                 ref={restoreInputRef}
@@ -803,12 +496,12 @@ export default function SettingsScreen() {
               <button
                 className="btn-secondary"
                 disabled={maintenanceBusy}
-                onClick={() => void runRosaMaintenance()}
+                onClick={() => void resetInitialSetup()}
               >
                 {maintenanceBusy
                   ? <Loader2 className="h-4 w-4 animate-spin" />
                   : <Database className="h-4 w-4" />}
-                {t('settings.rosaMaintenance')}
+                {t('settings.initialSetupReset')}
               </button>
               <button className="btn-danger" onClick={() => void clearAll()}>
                 <Trash2 className="h-4 w-4" /> {t('settings.clearData')}
@@ -818,7 +511,7 @@ export default function SettingsScreen() {
               <p className="mt-3 break-all text-xs text-slate-500">{backupMessage}</p>
             )}
             <p className="mt-3 text-[11px] text-slate-400">
-              {t('settings.autoBackupHint', "The desktop app also keeps a daily automatic backup (newest 14) in the backups folder inside Gaia's Save System.")}
+              {t('settings.autoBackupHint', "The desktop app also keeps a daily automatic backup (newest 14) in the backups folder inside Gaia's Essences Save.")}
             </p>
             {maintenanceResult && (
               <p className="mt-3 text-xs text-slate-500">{maintenanceResult}</p>
@@ -872,7 +565,7 @@ export default function SettingsScreen() {
                       {t('settings.debugMode', 'Debug Mode')}
                     </p>
                     <p className="text-xs text-slate-400">
-                      {t('settings.debugModeHint', 'Shows the floating debug panel (🐛) in production builds.')}
+                      {t('settings.debugModeHint', 'Shows the floating debug panel (🐛). Off unless you turn it on.')}
                     </p>
                   </div>
                   <button
@@ -900,8 +593,63 @@ export default function SettingsScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Local AI — Ollama first (Tailscale HTTPS), bundled ~700MB fallback.
+// Local AI — optional external Ollama (Tailscale / LAN / HTTPS).
 // ---------------------------------------------------------------------------
+function OllamaModelField({
+  label,
+  hint,
+  value,
+  tags,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  tags: string[];
+  placeholder: string;
+  onChange: (v: string) => void;
+}) {
+  const listId = `ollama-models-${label.replace(/\s+/g, '-').toLowerCase()}`;
+  return (
+    <div>
+      <label className="label">{label}</label>
+      {tags.length > 0 ? (
+        <select
+          className="input font-mono text-sm"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {!tags.includes(value) && value ? (
+            <option value={value}>{value}</option>
+          ) : null}
+          {tags.map((tag) => (
+            <option key={tag} value={tag}>
+              {tag}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          className="input font-mono text-sm"
+          list={listId}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+      {tags.length > 0 && (
+        <datalist id={listId}>
+          {tags.map((tag) => (
+            <option key={tag} value={tag.split(':')[0]} />
+          ))}
+        </datalist>
+      )}
+      {hint ? <p className="mt-1 text-[11px] text-slate-400">{hint}</p> : null}
+    </div>
+  );
+}
+
 function LocalAiSection() {
   const { t } = useTranslation();
   const settings = useAppStore((s) => s.settings);
@@ -909,6 +657,7 @@ function LocalAiSection() {
 
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
+  const [ollamaTags, setOllamaTags] = useState<string[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -931,27 +680,20 @@ function LocalAiSection() {
   const testConnection = async () => {
     setTesting(true);
     setStatus(null);
+    const tags = await fetchOllamaTags(settings.ollamaUrl);
+    setOllamaTags(tags);
     const result = await testLocalAiConnection(settings);
 
     if (result.effective === 'ollama') {
       setStatus(result.ollama);
       showToast(t('settings.localAiTestOllamaOk', 'Ollama is ready.'));
-    } else if (result.effective === 'bundled') {
-      setStatus(result.bundled);
-      if (settings.ollamaUrl?.trim()) {
-        showToast(
-          t('settings.localAiTestOllamaFallback', 'Ollama unreachable, but bundled AI is ready.'),
-        );
-      } else {
-        showToast(t('settings.localAiTestBundledOnly', 'Using bundled AI (Ollama URL not set).'));
-      }
     } else {
       setStatus({
         state: 'unreachable',
-        message: result.ollama.message ?? result.bundled.message,
+        message: result.ollama.message,
       });
       showToast(
-        t('settings.localAiTestBothFail', 'Neither Ollama nor the bundled model is available.'),
+        t('settings.localAiTestOllamaFail', 'Could not reach Ollama. Check the URL and that the server is running.'),
       );
     }
     setTesting(false);
@@ -982,14 +724,14 @@ function LocalAiSection() {
       <p className="text-xs text-slate-400">
         {t(
           'settings.localAiHint',
-          'Adds an optional "✨ Suggest" button in the Recipe Builder that drafts a benefit statement from your selected ingredients. 100% local and offline — nothing is ever sent to the cloud.',
+          'Adds an optional "✨ Suggest" button in the Recipe Builder that drafts a benefit statement from your selected ingredients. Uses your Ollama server when configured — nothing is bundled in the app.',
         )}
       </p>
 
       <p className="text-xs text-slate-400">
         {t(
           'settings.localAiHybridHint',
-          'The app tries your Ollama server first for best quality, then falls back to a ~700MB built-in model in the desktop app if Ollama is unreachable.',
+          'Point the URL at an Ollama server you already run (this PC, LAN, or Tailscale). The app does not ship a built-in language model.',
         )}
       </p>
 
@@ -1000,24 +742,26 @@ function LocalAiSection() {
               <label className="label">{t('settings.ollamaUrl', 'Ollama URL')}</label>
               <input
                 className="input font-mono text-sm"
-                placeholder={t('settings.ollamaUrlPlaceholder', 'https://gaming-pc.tail0123.ts.net')}
+                placeholder={t('settings.ollamaUrlPlaceholder', 'https://alaster.tail18528d.ts.net')}
                 value={settings.ollamaUrl ?? ''}
                 onChange={(e) => void updateSettings({ ollamaUrl: e.target.value })}
               />
             </div>
-            <div>
-              <label className="label">{t('settings.ollamaModel', 'Model')}</label>
-              <input
-                className="input font-mono text-sm"
-                placeholder={t('settings.ollamaModelPlaceholder', 'llama3.1:8b')}
-                value={settings.ollamaModel ?? 'llama3.1:8b'}
-                onChange={(e) => void updateSettings({ ollamaModel: e.target.value })}
-              />
-            </div>
+            <OllamaModelField
+              label={t('settings.ollamaModelText', 'Copywriting model')}
+              hint={t(
+                'settings.ollamaModelTextHint',
+                'Used for benefit lines and label copy. A 7B instruct model is faster than gpt-oss for this.',
+              )}
+              value={settings.ollamaModelText ?? settings.ollamaModel ?? 'qwen2.5:7b-instruct'}
+              tags={ollamaTags}
+              placeholder="qwen2.5:7b-instruct"
+              onChange={(v) => void updateSettings({ ollamaModel: v, ollamaModelText: v })}
+            />
             <p className="sm:col-span-2 text-[11px] text-slate-400">
               {t(
                 'settings.ollamaTailscaleHint',
-                'Enter your Tailscale MagicDNS URL with HTTPS (e.g., https://gaming-pc.tail0123.ts.net). The app will attempt to use this powerful server first. If it is unreachable, it will seamlessly fall back to the bundled 700MB local model.',
+                'Enter your Tailscale MagicDNS URL with HTTPS (e.g., https://gaming-pc.tail0123.ts.net), or a LAN URL if Ollama is on the same network.',
               )}
             </p>
           </div>
@@ -1036,17 +780,13 @@ function LocalAiSection() {
             {status?.state === 'connected' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                {status.backend === 'ollama'
-                  ? t('settings.localAiOllamaConnected', 'Ollama is ready.')
-                  : settings.ollamaUrl?.trim()
-                    ? t('settings.localAiFallbackConnected', 'Using bundled fallback model.')
-                    : t('settings.localAiBundledConnected', 'Built-in model is ready.')}
+                {t('settings.localAiOllamaConnected', 'Ollama is ready.')}
               </span>
             )}
             {status?.state === 'unreachable' && (
               <span className="flex items-center gap-1.5 text-xs font-medium text-rose-600">
                 <WifiOff className="h-4 w-4 shrink-0" />
-                {status.message ?? t('settings.localAiTestBothFail', 'Neither Ollama nor the bundled model is available.')}
+                {status.message ?? t('settings.localAiTestOllamaFail', 'Could not reach Ollama.')}
               </span>
             )}
             {status?.state === 'loading' && (
@@ -1068,6 +808,93 @@ function LocalAiSection() {
   );
 }
 
+function ComfyUiSection() {
+  const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const comfy = useComfyUiOnline(settings);
+  const iconStats = getOfflineIngredientIconStats();
+
+  return (
+    <section className="card">
+      <div className="flex items-center justify-between">
+        <p className="label mb-0 flex items-center gap-2">
+          <ImageIcon className="h-4 w-4" /> {t('settings.comfyUi', 'ComfyUI Image Generation')}
+        </p>
+        <button
+          role="switch"
+          aria-checked={!!settings.comfyUiEnabled}
+          onClick={() => void updateSettings({ comfyUiEnabled: !settings.comfyUiEnabled })}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gaia-500 ${
+            settings.comfyUiEnabled ? 'bg-gaia-600' : 'bg-slate-300'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+              settings.comfyUiEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
+      <p className="text-xs text-slate-400">
+        {t(
+          'settings.comfyUiHint',
+          'Connects to a local ComfyUI server to generate custom icons. On Tailscale, start ComfyUI with --enable-cors-header if you use the browser; the desktop app talks to it directly.',
+        )}
+      </p>
+
+      <p className="text-sm font-medium text-slate-700">
+        {t('settings.offlineCatalogIcons', '{{icons}} of {{names}} catalog icons generated', iconStats)}
+      </p>
+      <p className="text-[11px] text-slate-400">
+        {t(
+          'settings.offlineCatalogIconsHint',
+          'These names stay in a hidden backlog until you add them from recipe search. They are not imported into inventory.',
+        )}
+      </p>
+
+      {settings.comfyUiEnabled && (
+        <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+          <div>
+            <label className="label">{t('settings.comfyUiUrl', 'ComfyUI URL')}</label>
+            <input
+              className="input font-mono text-sm"
+              placeholder={t('settings.comfyUiUrlPlaceholder', 'http://127.0.0.1:8188')}
+              value={settings.comfyUiUrl ?? ''}
+              onChange={(e) => void updateSettings({ comfyUiUrl: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className={`text-[11px] ${comfy.online ? 'text-emerald-700' : 'text-slate-500'}`}>
+              {comfy.checking && !comfy.status
+                ? t('settings.comfyUiChecking', 'Checking ComfyUI…')
+                : (comfy.status?.message
+                    ?? t('settings.comfyUiHeartbeatDown', 'Not reachable yet — retrying saved URL and localhost.'))}
+            </p>
+            <button
+              type="button"
+              className="btn-secondary px-2.5 py-1 text-[11px]"
+              onClick={() => void comfy.refresh()}
+              disabled={comfy.checking}
+            >
+              {comfy.checking
+                ? <><Loader2 className="h-3 w-3 animate-spin" /> {t('settings.comfyUiChecking', 'Checking ComfyUI…')}</>
+                : t('settings.comfyUiCheckNow', 'Check Now')}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            {t(
+              'settings.comfyUiTailscaleHint',
+              'Enter your local API endpoint (e.g., http://127.0.0.1:8188) or a Tailscale URL. ComfyUI must be running with --listen. The app keeps a heartbeat and falls back to localhost if Tailscale drops.',
+            )}
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AppLockSection() {
   const { t } = useTranslation();
   const settings = useAppStore((s) => s.settings);
@@ -1084,6 +911,53 @@ function AppLockSection() {
     window.location.reload();
   };
 
+  const persistPinAndEncrypt = async (pin: string, currentPin?: string) => {
+    if (currentPin) {
+      const ok = await verifyPin(currentPin, settings);
+      if (!ok) {
+        setMessage(t('settings.pinChangeWrong', 'Current PIN is incorrect.'));
+        return false;
+      }
+    }
+    const { hash, salt, iterations } = await hashPin(pin);
+    await activateVaultFromPin(pin, { lockPinSalt: salt, lockPinIterations: iterations });
+    const decrypted = { ...settings };
+    await updateSettings({
+      lockPinHash: hash,
+      lockPinSalt: salt,
+      lockPinIterations: iterations,
+      googleAiApiKey: decrypted.googleAiApiKey,
+      googleTranslateApiKey: decrypted.googleTranslateApiKey,
+      unsplashKey: decrypted.unsplashKey,
+      unsplashSecretKey: decrypted.unsplashSecretKey,
+      pixabayKey: decrypted.pixabayKey,
+      etsyShop: decrypted.etsyShop,
+    });
+    setSessionUnlocked();
+    return true;
+  };
+
+  const setPin = async () => {
+    if (hasPinConfigured(settings)) return;
+    if (nextPin.length < 4 || nextPin !== confirm) {
+      setMessage(t('settings.pinChangeMismatch', 'New PINs must match and be at least 4 characters.'));
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const ok = await persistPinAndEncrypt(nextPin);
+      if (!ok) return;
+      setMessage(t('settings.setPinDone', 'PIN saved. API keys will be encrypted with it.'));
+      setNextPin('');
+      setConfirm('');
+    } catch (err) {
+      setMessage(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const changePin = async () => {
     if (!hasPinConfigured(settings)) return;
     if (nextPin.length < 4 || nextPin !== confirm) {
@@ -1093,24 +967,8 @@ function AppLockSection() {
     setBusy(true);
     setMessage(null);
     try {
-      const ok = await verifyPin(current, settings);
-      if (!ok) {
-        setMessage(t('settings.pinChangeWrong', 'Current PIN is incorrect.'));
-        return;
-      }
-      const { hash, salt, iterations } = await hashPin(nextPin);
-      await activateVaultFromPin(current, settings);
-      const decrypted = { ...settings };
-      await updateSettings({
-        lockPinHash: hash,
-        lockPinSalt: salt,
-        lockPinIterations: iterations,
-        googleAiApiKey: decrypted.googleAiApiKey,
-        unsplashKey: decrypted.unsplashKey,
-        pixabayKey: decrypted.pixabayKey,
-        etsyShop: decrypted.etsyShop,
-      });
-      await activateVaultFromPin(nextPin, { lockPinSalt: salt, lockPinIterations: iterations });
+      const ok = await persistPinAndEncrypt(nextPin, current);
+      if (!ok) return;
       setMessage(t('settings.pinChangeDone', 'PIN updated. API keys re-encrypted.'));
       setCurrent('');
       setNextPin('');
@@ -1128,7 +986,7 @@ function AppLockSection() {
         <KeyRound className="h-4 w-4" /> {t('settings.appLock', 'App lock & encryption')}
       </p>
       <p className="mb-3 text-xs text-slate-400">{t('settings.appLockHint')}</p>
-      {hasPinConfigured(settings) && (
+      {hasPinConfigured(settings) ? (
         <div className="mb-4 space-y-2">
           <input
             type="password"
@@ -1163,10 +1021,39 @@ function AppLockSection() {
             {t('settings.changePin', 'Change PIN')}
           </button>
         </div>
+      ) : (
+        <div className="mb-4 space-y-2">
+          <input
+            type="password"
+            className="input w-full"
+            placeholder={t('lock.setupPlaceholder')}
+            value={nextPin}
+            onChange={(e) => setNextPin(e.target.value)}
+            autoComplete="new-password"
+          />
+          <input
+            type="password"
+            className="input w-full"
+            placeholder={t('lock.confirmPlaceholder')}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            className="btn btn-secondary text-sm"
+            disabled={busy || !nextPin || !confirm}
+            onClick={() => void setPin()}
+          >
+            {t('settings.setPin', 'Set a PIN')}
+          </button>
+        </div>
       )}
-      <button type="button" className="btn btn-secondary text-sm" onClick={lockNow}>
-        {t('settings.lockApp', 'Lock studio now')}
-      </button>
+      {hasPinConfigured(settings) && (
+        <button type="button" className="btn btn-secondary text-sm" onClick={lockNow}>
+          {t('settings.lockApp', 'Lock Studio Now')}
+        </button>
+      )}
       {message && <p className="mt-2 text-xs text-slate-600">{message}</p>}
     </section>
   );
@@ -1298,7 +1185,7 @@ function EtsySection() {
           {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Store className="h-4 w-4" />}
           {status === 'connected'
             ? t('settings.etsyConnectedBtn', 'Connected')
-            : t('settings.etsyConnect', 'Connect to Etsy')}
+            : t('settings.etsyConnect', 'Connect To Etsy')}
         </button>
         {status === 'connected' && (
           <button
@@ -1368,63 +1255,3 @@ function SocialSection() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// PWA — install hint for the browser-hosted Studio on Hostinger.
-// ---------------------------------------------------------------------------
-function PwaSection() {
-  const { t } = useTranslation();
-  const isElectron = !!(window as unknown as { electronAPI?: unknown }).electronAPI;
-  const [deferredPrompt, setDeferredPrompt] = useState<{ prompt: () => Promise<void> } | null>(null);
-  const [installed, setInstalled] = useState(false);
-
-  useEffect(() => {
-    if (isElectron) return;
-    const standalone =
-      window.matchMedia('(display-mode: standalone)').matches
-      || (window.navigator as Navigator & { standalone?: boolean }).standalone;
-    setInstalled(!!standalone);
-
-    const onBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as unknown as { prompt: () => Promise<void> });
-    };
-    window.addEventListener('beforeinstallprompt', onBeforeInstall);
-    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-  }, [isElectron]);
-
-  if (isElectron) return null;
-
-  return (
-    <section className="card space-y-3">
-      <p className="label flex items-center gap-2">
-        <Smartphone className="h-4 w-4" /> {t('settings.pwa', 'Install App')}
-      </p>
-      <p className="text-xs text-slate-400">
-        {t(
-          'settings.pwaHint',
-          'When hosted on gaiasessences.com, install Gaia\'s Studio on your phone or tablet like a native app. Your data stays in this browser (IndexedDB) and works offline.',
-        )}
-      </p>
-      {installed ? (
-        <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
-          <CheckCircle2 className="h-4 w-4" /> {t('settings.pwaInstalled', 'App is installed')}
-        </p>
-      ) : deferredPrompt ? (
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => void deferredPrompt.prompt()}
-        >
-          <Smartphone className="h-4 w-4" /> {t('settings.pwaInstall', 'Install Gaia\'s Studio')}
-        </button>
-      ) : (
-        <p className="text-xs text-slate-500">
-          {t(
-            'settings.pwaManual',
-            'Tip: In Chrome or Edge, open the browser menu → "Install Gaia\'s Studio" (or "Add to Home Screen" on mobile).',
-          )}
-        </p>
-      )}
-    </section>
-  );
-}

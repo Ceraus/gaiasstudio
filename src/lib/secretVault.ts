@@ -11,7 +11,9 @@ const IV_BYTES = 12;
 
 export interface SecretsPayload {
   googleAiApiKey?: string;
+  googleTranslateApiKey?: string;
   unsplashKey?: string;
+  unsplashSecretKey?: string;
   pixabayKey?: string;
   etsyShop?: EtsyShopConfig;
 }
@@ -60,7 +62,9 @@ function fromBase64(b64: string): Uint8Array {
 export function extractSecrets(settings: AppSettings): SecretsPayload {
   const payload: SecretsPayload = {};
   if (settings.googleAiApiKey) payload.googleAiApiKey = settings.googleAiApiKey;
+  if (settings.googleTranslateApiKey) payload.googleTranslateApiKey = settings.googleTranslateApiKey;
   if (settings.unsplashKey) payload.unsplashKey = settings.unsplashKey;
+  if (settings.unsplashSecretKey) payload.unsplashSecretKey = settings.unsplashSecretKey;
   if (settings.pixabayKey) payload.pixabayKey = settings.pixabayKey;
   if (settings.etsyShop) payload.etsyShop = { ...settings.etsyShop };
   return payload;
@@ -69,7 +73,9 @@ export function extractSecrets(settings: AppSettings): SecretsPayload {
 function hasAnySecrets(payload: SecretsPayload): boolean {
   return !!(
     payload.googleAiApiKey
+    || payload.googleTranslateApiKey
     || payload.unsplashKey
+    || payload.unsplashSecretKey
     || payload.pixabayKey
     || payload.etsyShop?.apiKey
     || payload.etsyShop?.accessToken
@@ -105,7 +111,9 @@ export async function decryptSecretsBlob(blob: string): Promise<SecretsPayload |
 export function stripPlaintextSecrets(settings: AppSettings): AppSettings {
   const next = { ...settings };
   delete next.googleAiApiKey;
+  delete next.googleTranslateApiKey;
   delete next.unsplashKey;
+  delete next.unsplashSecretKey;
   delete next.pixabayKey;
   delete next.etsyShop;
   return next;
@@ -117,7 +125,9 @@ export function mergeSecrets(settings: AppSettings, payload: SecretsPayload | nu
   return {
     ...settings,
     googleAiApiKey: payload.googleAiApiKey ?? settings.googleAiApiKey,
+    googleTranslateApiKey: payload.googleTranslateApiKey ?? settings.googleTranslateApiKey,
     unsplashKey: payload.unsplashKey ?? settings.unsplashKey,
+    unsplashSecretKey: payload.unsplashSecretKey ?? settings.unsplashSecretKey,
     pixabayKey: payload.pixabayKey ?? settings.pixabayKey,
     etsyShop: payload.etsyShop ?? settings.etsyShop,
   };

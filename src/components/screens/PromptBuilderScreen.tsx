@@ -3,76 +3,134 @@
  *
  * LEFT  : recipe banner, visual style preset cards, ingredient checklist.
  * RIGHT : generated prompt (read-only textarea + copy button) + embedded
- *         AI Studio webview panel for direct paste.
+ *         Gemini webview panel for direct paste.
  *
  * The embedded browser uses Electron's <webview> tag (requires
  * webviewTag: true in the main-process webPreferences, which is set in
  * electron/main.cjs).  In a plain browser build the panel falls back to a
- * prominent "Open in AI Studio" button instead.
+ * Gemini companion window.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  BookmarkPlus,
   Check,
-  ChevronDown,
-  ChevronRight,
   ClipboardCopy,
   ExternalLink,
-  Plus,
-  Search,
+  Loader2,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import { ingredientsRepo, recipesRepo } from '@/db/repositories';
+import { assetsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { db } from '@/db/db';
-import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
+import IngredientIcon from '@/components/common/IngredientIcon';
+import HsvColorPicker from '@/components/common/HsvColorPicker';
 import RecipePicker from '@/components/common/RecipePicker';
-import { getRecipeColor } from '@/lib/recipeColors';
-import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
+import { getIngredientDisplayName } from '@/lib/ingredientI18n';
+import { isGeminiLibraryAsset } from '@/lib/assetFilters';
+import { generateIngredientIcon } from '@/lib/comfyUiApi';
+import { suggestBackgroundStyleName } from '@/lib/localAi';
+import { nameStyleFromHex } from '@/lib/styleNames';
+import { harvestGeminiImage, injectGeminiPrompt, waitForWebviewReady } from '@/lib/geminiWebview';
+import { useLibraryStore } from '@/store/useLibraryStore';
+import { uid } from '@/lib/id';
 import type { AssetRecord, Ingredient, IngredientCategory, Recipe } from '@/types';
 
 // ── Style presets ─────────────────────────────────────────────────────────────
 
-const STYLE_PRESETS = [
-  { id: 'warm-cream-linen',    colorName: 'Warm off-white cream', hexCode: '#E8E1D6', textureName: 'linen weave',        icon: '🧵' },
-  { id: 'sage-cotton',         colorName: 'Soft sage green',      hexCode: '#B5C4B1', textureName: 'cotton fiber',       icon: '☁️' },
-  { id: 'dusty-rose-silk',     colorName: 'Dusty rose blush',     hexCode: '#D4A5A5', textureName: 'smooth silk',        icon: '🌸' },
-  { id: 'ivory-paper',         colorName: 'Antique ivory',        hexCode: '#F5F0E8', textureName: 'handmade paper',     icon: '📜' },
-  { id: 'terracotta-clay',     colorName: 'Warm terracotta',      hexCode: '#C17F5A', textureName: 'raw clay',           icon: '🪨' },
-  { id: 'forest-moss',         colorName: 'Deep forest green',    hexCode: '#4A7C59', textureName: 'pressed moss',       icon: '🌿' },
-  { id: 'midnight-charcoal',   colorName: 'Charcoal black',       hexCode: '#2C2C2C', textureName: 'activated charcoal', icon: '🖤' },
-  { id: 'lavender-mist',       colorName: 'Lavender mist',        hexCode: '#C5B8D4', textureName: 'soft velvet',        icon: '💜' },
-  { id: 'golden-honey',        colorName: 'Golden amber',         hexCode: '#D4A017', textureName: 'raw beeswax',        icon: '🍯' },
-  { id: 'ocean-blue',          colorName: 'Ocean teal',           hexCode: '#5B8FA8', textureName: 'sea glass',          icon: '🌊' },
-  { id: 'espresso-wood',       colorName: 'Espresso brown',       hexCode: '#3E1F0A', textureName: 'dark wood grain',    icon: '🪵' },
-  { id: 'petal-pink',          colorName: 'Petal pink',           hexCode: '#F2C6C2', textureName: 'rose petal',         icon: '🌹' },
-  { id: 'muted-gold',          colorName: 'Muted gold',           hexCode: '#B8A06A', textureName: 'raw jute',           icon: '🌾' },
-  { id: 'slate-mineral',       colorName: 'Slate gray',           hexCode: '#708090', textureName: 'polished stone',     icon: '🪨' },
-  { id: 'cream-marble',        colorName: 'Cream marble',         hexCode: '#F0EDE4', textureName: 'veined marble',      icon: '✨' },
-  { id: 'soft-mint',           colorName: 'Soft mint',            hexCode: '#B5D5C5', textureName: 'smooth linen',       icon: '🍃' },
-  { id: 'warm-peach',          colorName: 'Warm peach',           hexCode: '#FFCBA4', textureName: 'hammered copper',    icon: '🍑' },
-  { id: 'burgundy-velvet',     colorName: 'Deep burgundy',        hexCode: '#722F37', textureName: 'crushed velvet',     icon: '🍷' },
-  { id: 'sand-dune',           colorName: 'Warm sand',            hexCode: '#C2A87D', textureName: 'fine sand',          icon: '🏖️' },
-  { id: 'olive-linen',         colorName: 'Olive green',          hexCode: '#8A9A5B', textureName: 'rustic linen',       icon: '🌿' },
-  { id: 'vanilla-cream',       colorName: 'Vanilla cream',        hexCode: '#F3E5C3', textureName: 'whipped cream',      icon: '🍦' },
-  { id: 'midnight-blue',       colorName: 'Midnight navy',        hexCode: '#1B2A4A', textureName: 'matte canvas',       icon: '🌙' },
-  { id: 'copper-rust',         colorName: 'Copper rust',          hexCode: '#A0522D', textureName: 'patinated copper',   icon: '🔶' },
-  { id: 'pearl-white',         colorName: 'Pearl white',          hexCode: '#F8F4EF', textureName: 'woven gauze',        icon: '🤍' },
-  { id: 'deep-forest-green',   colorName: 'Deep Forest Green',    hexCode: '#2D4A3E', textureName: 'moss velvet',        icon: '🌿' },
-  { id: 'saddle-brown',        colorName: 'Saddle Brown',         hexCode: '#8B4513', textureName: 'worn leather',       icon: '🪵' },
-  { id: 'wheat',               colorName: 'Wheat',                hexCode: '#E8D5B7', textureName: 'raw linen',          icon: '🌾' },
-  { id: 'cornflower-blue',     colorName: 'Cornflower Blue',      hexCode: '#4A90D9', textureName: 'washed denim',       icon: '💧' },
-  { id: 'caramel',             colorName: 'Caramel',              hexCode: '#C9A96E', textureName: 'spun silk',          icon: '🍯' },
-  { id: 'dusty-plum',          colorName: 'Dusty Plum',           hexCode: '#7B6F8A', textureName: 'brushed suede',      icon: '💜' },
-  { id: 'linen-white',         colorName: 'Linen White',          hexCode: '#F5E6D3', textureName: 'bleached cotton',    icon: '🤍' },
-  { id: 'hunter-green',        colorName: 'Hunter Green',         hexCode: '#3D5A4C', textureName: 'aged patina',        icon: '🍃' },
-  { id: 'terracotta-peach',    colorName: 'Terracotta Peach',     hexCode: '#D4956A', textureName: 'sun-baked clay',     icon: '🏺' },
-  { id: 'sage-mist',           colorName: 'Sage Mist',            hexCode: '#B8C4BB', textureName: 'frosted glass',      icon: '🌫️' },
-  { id: 'toasted-almond',      colorName: 'Toasted Almond',       hexCode: '#C8A878', textureName: 'raw almond shell',   icon: '🌰' },
-  { id: 'walnut-shell',        colorName: 'Walnut Shell',         hexCode: '#5A3E2B', textureName: 'cracked walnut wood', icon: '🟤' },
-] as const;
+type StylePreset = {
+  id: string;
+  colorName: string;
+  hexCode: string;
+  textureName: string;
+  icon: string;
+  iconKey?: string;
+};
 
-type StylePreset = typeof STYLE_PRESETS[number];
+const STYLE_PRESETS: StylePreset[] = [
+  { id: 'warm-cream-linen',  colorName: 'Cream',       hexCode: '#E8E1D6', textureName: 'Linen Weave',        icon: '🧵' },
+  { id: 'sage-cotton',       colorName: 'Sage',        hexCode: '#B5C4B1', textureName: 'Cotton Fiber',       icon: '☁️' },
+  { id: 'dusty-rose-silk',   colorName: 'Rose',        hexCode: '#D4A5A5', textureName: 'Smooth Silk',        icon: '🌸' },
+  { id: 'terracotta-clay',   colorName: 'Terracotta',  hexCode: '#C17F5A', textureName: 'Raw Clay',           icon: '🪨' },
+  { id: 'forest-moss',       colorName: 'Forest',      hexCode: '#4A7C59', textureName: 'Pressed Moss',       icon: '🌿' },
+  { id: 'midnight-charcoal', colorName: 'Charcoal',    hexCode: '#2C2C2C', textureName: 'Activated Charcoal', icon: '🖤' },
+  { id: 'lavender-mist',     colorName: 'Lavender',    hexCode: '#C5B8D4', textureName: 'Soft Velvet',        icon: '💜' },
+  { id: 'golden-honey',      colorName: 'Amber',       hexCode: '#D4A017', textureName: 'Raw Beeswax',        icon: '🍯' },
+  { id: 'ocean-blue',        colorName: 'Ocean',       hexCode: '#5B8FA8', textureName: 'Sea Glass',          icon: '🌊' },
+  { id: 'espresso-wood',     colorName: 'Espresso',    hexCode: '#3E1F0A', textureName: 'Dark Wood Grain',    icon: '🪵' },
+  { id: 'burgundy-velvet',   colorName: 'Burgundy',    hexCode: '#722F37', textureName: 'Crushed Velvet',     icon: '🍷' },
+  { id: 'sand-dune',         colorName: 'Sand',        hexCode: '#C2A87D', textureName: 'Fine Sand',          icon: '🏖️' },
+  { id: 'midnight-blue',     colorName: 'Navy',        hexCode: '#1B2A4A', textureName: 'Matte Canvas',       icon: '🌙' },
+  { id: 'copper-rust',       colorName: 'Copper',      hexCode: '#A0522D', textureName: 'Patinated Copper',   icon: '🔶' },
+  { id: 'dusty-plum',        colorName: 'Plum',        hexCode: '#7B6F8A', textureName: 'Brushed Suede',      icon: '💜' },
+  { id: 'caramel',           colorName: 'Caramel',     hexCode: '#C9A96E', textureName: 'Spun Silk',          icon: '🍯' },
+  { id: 'slate-mineral',     colorName: 'Slate',       hexCode: '#708090', textureName: 'Polished Stone',     icon: '🪨' },
+  { id: 'olive-leaf',        colorName: 'Olive',       hexCode: '#7A8450', textureName: 'Pressed Leaf',       icon: '🫒' },
+];
+
+const HIDDEN_STYLE_PRESETS_KEY = 'gaia:hidden-style-presets';
+
+function loadHiddenStyleIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_STYLE_PRESETS_KEY);
+    const ids = raw ? JSON.parse(raw) as unknown : [];
+    return new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []);
+  } catch (err) {
+    console.error('[gaia] promptBuilder.loadHiddenStyleIds failed', err);
+    return new Set();
+  }
+}
+
+function saveHiddenStyleIds(ids: Set<string>) {
+  localStorage.setItem(HIDDEN_STYLE_PRESETS_KEY, JSON.stringify([...ids]));
+}
+
+const SAVED_STYLE_PRESETS_KEY = 'gaia:saved-style-presets';
+
+function isStylePreset(value: unknown): value is StylePreset {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as StylePreset;
+  return typeof p.id === 'string'
+    && typeof p.colorName === 'string'
+    && typeof p.hexCode === 'string'
+    && typeof p.textureName === 'string'
+    && typeof p.icon === 'string';
+}
+
+function loadSavedStyles(): StylePreset[] {
+  try {
+    const raw = localStorage.getItem(SAVED_STYLE_PRESETS_KEY);
+    const list = raw ? JSON.parse(raw) as unknown : [];
+    return Array.isArray(list) ? list.filter(isStylePreset) : [];
+  } catch (err) {
+    console.error('[gaia] promptBuilder.loadSavedStyles failed', err);
+    return [];
+  }
+}
+
+function saveSavedStyles(presets: StylePreset[]) {
+  localStorage.setItem(SAVED_STYLE_PRESETS_KEY, JSON.stringify(presets));
+}
+
+function StylePresetIcon({ preset }: { preset: StylePreset }) {
+  const [assetUrl, setAssetUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!preset.iconKey?.startsWith('asset_')) {
+      setAssetUrl(null);
+      return;
+    }
+    const id = preset.iconKey.replace('asset_', '');
+    void assetsRepo.get(id).then((asset) => {
+      setAssetUrl(asset && !asset.archived ? asset.dataUrl : null);
+    });
+  }, [preset.iconKey]);
+
+  if (assetUrl) {
+    return <img src={assetUrl} alt="" className="h-5 w-5 shrink-0 rounded object-cover" />;
+  }
+  return <span className="shrink-0 text-sm leading-none">{preset.icon}</span>;
+}
 
 // ── Ingredient seed ───────────────────────────────────────────────────────────
 
@@ -183,6 +241,7 @@ const VISUAL_ALIAS_RULES: Array<{ pattern: RegExp; tokens: string[] }> = [
   { pattern: /shea/, tokens: ['shea nuts'] },
   { pattern: /cocoa/, tokens: ['cocoa pods'] },
   { pattern: /mango/, tokens: ['mango halves'] },
+  { pattern: /watermelon/, tokens: ['watermelon slices'] },
   { pattern: /coconut/, tokens: ['cracked coconuts'] },
   { pattern: /olive/, tokens: ['olive branches'] },
   { pattern: /jojoba/, tokens: ['jojoba branches'] },
@@ -264,16 +323,20 @@ function matchSingleCatalogName(name: string): string[] {
   return tokens;
 }
 
-function matchRecipeIngredientsToTokens(names: string[]): Set<string> {
-  const matched = new Set<string>();
-  for (const rawName of names) {
-    for (const variant of expandCatalogNames(rawName)) {
-      for (const token of matchSingleCatalogName(variant)) {
-        matched.add(token);
-      }
-    }
+function isPromptExcludedName(name: string): boolean {
+  return /glycerin\s*base|melt\s*&\s*pour\s*base|melt-and-pour\s*base/i.test(name);
+}
+
+function isPromptExcludedIngredient(ing: Pick<Ingredient, 'name' | 'isSoapBase'>): boolean {
+  return ing.isSoapBase || isPromptExcludedName(ing.name);
+}
+
+function promptPhraseForName(name: string): string {
+  for (const variant of expandCatalogNames(name)) {
+    const token = matchSingleCatalogName(variant)[0];
+    if (token) return token;
   }
-  return matched;
+  return name;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -290,38 +353,23 @@ function buildPrompt(
   hexCode: string,
   textureName: string,
   selected: string[],
-  productName?: string,
 ): string {
   const ingList = joinWithAnd(selected);
   const color   = colorName.trim() || 'a warm neutral';
   const hex     = hexCode.trim()   || '#E8E1D6';
   const texture = textureName      || 'linen weave';
-  const product = productName?.trim() ? `${productName.trim()} ` : '';
-  return `4K horizontal ribbon background (21:9 aspect ratio) for ${product}soap packaging. Full-bleed edge-to-edge design completely filling the canvas. ${color} ${hex} background with ${texture} texture. Highly decorative, continuous and elaborate botanical pattern covering 100% of the space featuring ${ingList}. Dense, intricate, and seamless composition with no empty space anywhere. Dimensional organic vector style, deep espresso brown tapered linework, layered tonal shading, rich earthy palette. NO text, NO words, NO mockups, NO 3D objects, NO borders, NO white space.`;
+  return `4K horizontal ribbon background (21:9 aspect ratio) for soap packaging. Full-bleed edge-to-edge design completely filling the canvas. ${color} ${hex} background with ${texture} texture. Highly decorative, continuous and elaborate botanical pattern covering 100% of the space featuring ${ingList}. Dense, intricate, and seamless composition with no empty space anywhere. Dimensional organic vector style, deep espresso brown tapered linework, layered tonal shading, rich earthy palette. NO text, NO words, NO mockups, NO 3D objects, NO borders, NO white space.`;
 }
 
-const AI_STUDIO_URL = 'https://aistudio.google.com/app/prompts/new_chat';
-const GEMINI_URL    = 'https://gemini.google.com/app';
+const GEMINI_URL = 'https://gemini.google.com/app';
 /** Named popup so reopening focuses the same companion window beside Studio. */
 const AI_COMPANION_WINDOW = 'gaia-ai-companion';
 const AI_WINDOW_FEATURES =
   'popup=yes,width=1280,height=900,menubar=no,toolbar=yes,location=yes,status=no,resizable=yes,scrollbars=yes';
 
-type AiTarget = 'aistudio' | 'gemini';
-
-function urlForAiTarget(target: AiTarget): string {
-  return target === 'gemini' ? GEMINI_URL : AI_STUDIO_URL;
-}
-
-function aiTargetFromUrl(url: string): AiTarget | null {
-  if (url.includes('gemini.google.com')) return 'gemini';
-  if (url.includes('aistudio.google.com')) return 'aistudio';
-  return null;
-}
-
-/** Open AI Studio / Gemini in a reusable companion window (browser/PWA). */
-function openAiCompanionWindow(target: AiTarget, existing: Window | null): Window | null {
-  const url = urlForAiTarget(target);
+/** Open Gemini in a reusable companion window (browser/PWA). */
+function openAiCompanionWindow(existing: Window | null): Window | null {
+  const url = GEMINI_URL;
   if (existing && !existing.closed) {
     try {
       existing.location.href = url;
@@ -388,53 +436,56 @@ export default function PromptBuilderScreen({
   const setActiveRecipeId      = useAppStore((s) => s.setActiveRecipeId);
   const goto                   = useAppStore((s) => s.goto);
   const setPromptBuilderOutput = useAppStore((s) => s.setPromptBuilderOutput);
+  const setBackgroundImageUrl  = useAppStore((s) => s.setBackgroundImageUrl);
 
   // ── Local UI state ─────────────────────────────────────────────────────────
+  const settings = useAppStore((s) => s.settings);
+  const [hiddenStyleIds, setHiddenStyleIds] = useState<Set<string>>(loadHiddenStyleIds);
+  const [savedStyles, setSavedStyles] = useState<StylePreset[]>(loadSavedStyles);
+  const [savingStyle, setSavingStyle] = useState(false);
+  const [saveStyleMsg, setSaveStyleMsg] = useState<string | null>(null);
+  const visiblePresets = useMemo(
+    () => [
+      ...savedStyles,
+      ...STYLE_PRESETS.filter((preset) => !hiddenStyleIds.has(preset.id)),
+    ],
+    [hiddenStyleIds, savedStyles],
+  );
   const [selectedPresetId, setSelectedPresetId] = useState<string>(STYLE_PRESETS[0].id);
   const [colorName,   setColorName]   = useState<string>(STYLE_PRESETS[0].colorName);
   const [hexCode,     setHexCode]     = useState<string>(STYLE_PRESETS[0].hexCode);
   const [texture,     setTexture]     = useState<string>(STYLE_PRESETS[0].textureName);
   const [selected,    setSelected]    = useState<Set<string>>(new Set());
-  const [productName, setProductName] = useState('');
   const [copied,      setCopied]      = useState(false);
+  const [injectStatus, setInjectStatus] = useState<string | null>(null);
   const [recentAiAssets, setRecentAiAssets] = useState<AssetRecord[]>([]);
 
   // ── Recipe state ───────────────────────────────────────────────────────────
   const [recipes,               setRecipes]               = useState<Recipe[]>([]);
   const [activeRecipe,          setActiveRecipe]          = useState<Recipe | null>(null);
-  const [recipeIngredientNames, setRecipeIngredientNames] = useState<string[]>([]);
+  const [recipeIngredients, setRecipeIngredients] = useState<Ingredient[]>([]);
 
   // ── DB ingredient state ────────────────────────────────────────────────────
-  const [activeDbIngredients, setActiveDbIngredients] = useState<Ingredient[]>([]);
   const [allDbIngredients,    setAllDbIngredients]    = useState<Ingredient[]>([]);
-
-  // ── Catalog UI state ───────────────────────────────────────────────────────
-  const [catalogOpen,    setCatalogOpen]    = useState(false);
-  const [catalogQuery,   setCatalogQuery]   = useState('');
 
   // ── Embedded AI webview ────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const webviewRef = useRef<any>(null);
-  const [urlBarValue, setUrlBarValue] = useState(AI_STUDIO_URL);
-  const [aiTarget, setAiTarget] = useState<AiTarget>('aistudio');
+  const harvestTimerRef = useRef<number | null>(null);
+  const [urlBarValue, setUrlBarValue] = useState(GEMINI_URL);
   const [companionOpen, setCompanionOpen] = useState(false);
   const aiCompanionRef = useRef<Window | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
-  const openCompanion = (target: AiTarget = aiTarget) => {
-    setAiTarget(target);
-    setUrlBarValue(urlForAiTarget(target));
+  const openCompanion = () => {
+    setUrlBarValue(GEMINI_URL);
     if (isElectron) {
-      webviewRef.current?.loadURL(urlForAiTarget(target));
+      webviewRef.current?.loadURL(GEMINI_URL);
       return;
     }
-    aiCompanionRef.current = openAiCompanionWindow(target, aiCompanionRef.current);
+    aiCompanionRef.current = openAiCompanionWindow(aiCompanionRef.current);
     setCompanionOpen(!!aiCompanionRef.current && !aiCompanionRef.current.closed);
-  };
-
-  const switchAiTarget = (target: AiTarget) => {
-    openCompanion(target);
   };
 
   // Track whether the companion popup is still open
@@ -449,42 +500,20 @@ export default function PromptBuilderScreen({
     return () => window.clearInterval(id);
   }, [isElectron]);
 
-  // ── Add ingredient form ────────────────────────────────────────────────────
-  const [newIngName,     setNewIngName]     = useState('');
-  const [newIngCategory, setNewIngCategory] = useState<IngredientCategory>('botanical');
-  const [addingIng,      setAddingIng]      = useState(false);
-  const [ingAddedMsg,    setIngAddedMsg]    = useState(false);
-
-  const activeRecipeIdRef = useRef(activeRecipeId);
-
-  useEffect(() => {
-    activeRecipeIdRef.current = activeRecipeId;
-  }, [activeRecipeId]);
-
   // ── Load all recipes for the switcher dropdown ────────────────────────────
   useEffect(() => {
-    recipesRepo.all().then(setRecipes).catch(() => {});
+    recipesRepo.all().then(setRecipes).catch((err) => {
+      console.error('[gaia] promptBuilder.loadRecipes failed', err);
+    });
   }, []);
 
   // ── Load DB ingredients on mount, pre-select from active ──────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [active, all] = await Promise.all([
-        ingredientsRepo.active(),
-        ingredientsRepo.all(),
-      ]);
+      const all = await ingredientsRepo.all();
       if (cancelled) return;
-      setActiveDbIngredients(active);
       setAllDbIngredients(all);
-
-      // Only pre-select from active DB ingredients if no recipe is loaded
-      // (the recipe effect handles pre-selection when a recipe is active)
-      if (!activeRecipeIdRef.current) {
-        const names = active.map((i) => i.name);
-        const matched = matchRecipeIngredientsToTokens(names);
-        setSelected(matched);
-      }
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -494,7 +523,7 @@ export default function PromptBuilderScreen({
   useEffect(() => {
     if (!activeRecipeId) {
       setActiveRecipe(null);
-      setRecipeIngredientNames([]);
+      setRecipeIngredients([]);
       return;
     }
 
@@ -505,21 +534,15 @@ export default function PromptBuilderScreen({
       if (cancelled || !recipe) return;
 
       setActiveRecipe(recipe);
-      setProductName(recipe.name);
 
       const ingRecords = await Promise.all(
         recipe.ingredientIds.map((id) => db.ingredients.get(id)),
       );
       if (cancelled) return;
 
-      const names = ingRecords
-        .filter((rec): rec is NonNullable<typeof rec> => rec != null)
-        .map((rec) => rec.name);
-
-      setRecipeIngredientNames(names);
-
-      const matched = matchRecipeIngredientsToTokens(names);
-      setSelected(matched);
+      const loaded = ingRecords.filter((rec): rec is Ingredient => rec != null);
+      setRecipeIngredients(loaded);
+      setSelected(new Set(loaded.filter((ing) => !isPromptExcludedIngredient(ing)).map((ing) => ing.name)));
     })();
 
     return () => { cancelled = true; };
@@ -527,18 +550,35 @@ export default function PromptBuilderScreen({
 
   // Keep checklist in sync when recipe ingredient list updates
   useEffect(() => {
-    if (!activeRecipe || recipeIngredientNames.length === 0) return;
-    setSelected(matchRecipeIngredientsToTokens(recipeIngredientNames));
-  }, [activeRecipe, recipeIngredientNames]);
+    if (!activeRecipe || recipeIngredients.length === 0) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const ing of recipeIngredients) {
+        if (isPromptExcludedIngredient(ing)) next.delete(ing.name);
+        else next.add(ing.name);
+      }
+      return next;
+    });
+  }, [activeRecipe, recipeIngredients]);
 
-  // ── Load + refresh recently auto-imported AI images ───────────────────────
   const loadRecentAiAssets = () => {
     db.assets.orderBy('createdAt').reverse()
-      .filter((a) => a.kind === 'ai')
+      .filter((a) => isGeminiLibraryAsset(a))
       .limit(6)
       .toArray()
       .then(setRecentAiAssets)
-      .catch(() => {});
+      .catch((err) => {
+        console.error('[gaia] promptBuilder.loadRecentAiAssets failed', err);
+      });
+  };
+
+  const applyRecentAsset = (dataUrl: string) => {
+    if (embedded && onBackgroundSelect) {
+      onBackgroundSelect(dataUrl);
+      return;
+    }
+    setBackgroundImageUrl(dataUrl);
+    goto('background');
   };
 
   useEffect(() => {
@@ -552,7 +592,10 @@ export default function PromptBuilderScreen({
         onBackgroundSelect(dataUrl);
       }
     });
-    return () => unsub?.();
+    return () => {
+      unsub?.();
+      if (harvestTimerRef.current) window.clearInterval(harvestTimerRef.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -562,8 +605,6 @@ export default function PromptBuilderScreen({
     if (!wv) return;
     const onNavigate = (e: { url: string }) => {
       setUrlBarValue(e.url);
-      const target = aiTargetFromUrl(e.url);
-      if (target) setAiTarget(target);
     };
     wv.addEventListener('did-navigate', onNavigate);
     wv.addEventListener('did-navigate-in-page', onNavigate);
@@ -573,28 +614,6 @@ export default function PromptBuilderScreen({
     };
   });
 
-  // ── Add new ingredient to DB ───────────────────────────────────────────────
-  const addIngredient = async () => {
-    if (!newIngName.trim() || addingIng) return;
-    setAddingIng(true);
-    try {
-      const created = await ingredientsRepo.create({
-        name: newIngName.trim(),
-        category: newIngCategory,
-        active: false,
-        benefit: '',
-        inci: '',
-        isSoapBase: false,
-      });
-      setAllDbIngredients((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
-      setNewIngName('');
-      setIngAddedMsg(true);
-      setTimeout(() => setIngAddedMsg(false), 2500);
-    } finally {
-      setAddingIng(false);
-    }
-  };
-
   // ── Style preset selection ─────────────────────────────────────────────────
   const selectPreset = (preset: StylePreset) => {
     setSelectedPresetId(preset.id);
@@ -603,15 +622,85 @@ export default function PromptBuilderScreen({
     setTexture(preset.textureName);
   };
 
+  const deletePreset = (preset: StylePreset) => {
+    if (!window.confirm(
+      t('promptBuilder.confirmDeleteStyle', 'Remove "{{name}}" from your styles? You can still pick a color above.', { name: preset.colorName }),
+    )) return;
+    const remainingSaved = savedStyles.filter((p) => p.id !== preset.id);
+    if (savedStyles.some((p) => p.id === preset.id)) {
+      setSavedStyles(remainingSaved);
+      saveSavedStyles(remainingSaved);
+    } else {
+      const next = new Set(hiddenStyleIds);
+      next.add(preset.id);
+      setHiddenStyleIds(next);
+      saveHiddenStyleIds(next);
+    }
+    if (selectedPresetId === preset.id) {
+      const fallback = remainingSaved[0]
+        ?? STYLE_PRESETS.find((p) => p.id !== preset.id && !hiddenStyleIds.has(p.id) && p.id !== preset.id);
+      if (fallback) selectPreset(fallback);
+      else setSelectedPresetId('');
+    }
+  };
+
+  const saveCurrentColor = async () => {
+    if (savingStyle) return;
+    setSavingStyle(true);
+    setSaveStyleMsg(t('promptBuilder.savingStyleName', 'Naming this color…'));
+    try {
+      const existingNames = visiblePresets.map((p) => p.colorName);
+      const named = await suggestBackgroundStyleName(hexCode, existingNames, settings);
+      const fallback = nameStyleFromHex(hexCode, existingNames);
+      const taken = new Set(existingNames.map((n) => n.trim().toLowerCase()));
+      const color = named?.name && !taken.has(named.name.toLowerCase())
+        ? named.name
+        : fallback.name;
+      const textureName = named?.subtitle && color === named.name
+        ? named.subtitle
+        : fallback.subtitle;
+      setSaveStyleMsg(t('promptBuilder.savingStyleIcon', 'Generating an icon…'));
+      const iconKey = await generateIngredientIcon(settings, color) ?? undefined;
+      const preset: StylePreset = {
+        id: `saved-${uid()}`,
+        colorName: color,
+        hexCode,
+        textureName,
+        icon: '✨',
+        iconKey,
+      };
+      const next = [preset, ...savedStyles];
+      setSavedStyles(next);
+      saveSavedStyles(next);
+      selectPreset(preset);
+      setSaveStyleMsg(t('promptBuilder.styleSaved', 'Saved {{name}}', { name: color }));
+      window.setTimeout(() => setSaveStyleMsg(null), 2500);
+    } catch {
+      setSaveStyleMsg(t('promptBuilder.styleSaveFailed', 'Could not save this color.'));
+    } finally {
+      setSavingStyle(false);
+    }
+  };
+
   // ── Ingredient checklist helpers ───────────────────────────────────────────
-  const toggle    = (ing: string) => setSelected((prev) => { const n = new Set(prev); n.has(ing) ? n.delete(ing) : n.add(ing); return n; });
-  const selectAll = () => setSelected(new Set(INGREDIENTS));
-  const clearAll  = () => setSelected(new Set());
+  const toggle = (ing: string) => {
+    if (isPromptExcludedName(ing)) return;
+    setSelected((prev) => {
+      const n = new Set(prev);
+      n.has(ing) ? n.delete(ing) : n.add(ing);
+      return n;
+    });
+  };
 
   // ── Prompt ─────────────────────────────────────────────────────────────────
   const prompt = useMemo(
-    () => buildPrompt(colorName, hexCode, texture, [...selected], productName),
-    [colorName, hexCode, texture, selected, productName],
+    () => buildPrompt(
+      colorName,
+      hexCode,
+      texture,
+      [...selected].filter((name) => !isPromptExcludedName(name)).map(promptPhraseForName),
+    ),
+    [colorName, hexCode, texture, selected],
   );
 
   // ── Sync prompt to store so the in-editor AI tab can display it ───────────
@@ -628,490 +717,326 @@ export default function PromptBuilderScreen({
     }
   };
 
-  const copyAndOpen = () => {
-    void copyTextToClipboard(prompt).then((ok) => {
-      if (ok) {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+  const harvestAfterSend = () => {
+    const wv = webviewRef.current;
+    if (!wv) return;
+    if (harvestTimerRef.current) window.clearInterval(harvestTimerRef.current);
+    let seenSrc = '';
+    let tries = 0;
+    harvestTimerRef.current = window.setInterval(() => {
+      tries += 1;
+      if (tries > 45) {
+        if (harvestTimerRef.current) window.clearInterval(harvestTimerRef.current);
+        harvestTimerRef.current = null;
+        return;
       }
-    });
-    if (isElectron) {
-      openInDefaultBrowser(urlForAiTarget(aiTarget));
+      void harvestGeminiImage(wv, seenSrc).then(async (got) => {
+        if (got.dataUrl) {
+          if (harvestTimerRef.current) window.clearInterval(harvestTimerRef.current);
+          harvestTimerRef.current = null;
+          try {
+            await useLibraryStore.getState().addFromDataUrl(got.dataUrl, 'ai', `gemini-${Date.now()}.png`);
+            loadRecentAiAssets();
+            if (embedded && onBackgroundSelect) onBackgroundSelect(got.dataUrl);
+            setInjectStatus(t('promptBuilder.autoImported', 'Image saved to My Photos.'));
+          } catch (err) {
+            console.error('[Gaia] Gemini harvest import failed:', err);
+          }
+        } else if (got.clickedDownload) {
+          if (harvestTimerRef.current) window.clearInterval(harvestTimerRef.current);
+          harvestTimerRef.current = null;
+        } else if (got.src) {
+          seenSrc = got.src;
+        }
+      });
+    }, 2000);
+  };
+
+  const sendToGemini = async () => {
+    const ok = await copyTextToClipboard(prompt);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+    if (!isElectron) {
+      openCompanion();
+      return;
+    }
+    const wv = webviewRef.current;
+    if (!wv) {
+      openInDefaultBrowser(GEMINI_URL);
+      return;
+    }
+    setInjectStatus(t('promptBuilder.injecting', 'Sending prompt to Gemini…'));
+    setUrlBarValue(GEMINI_URL);
+    try {
+      wv.loadURL?.(GEMINI_URL);
+    } catch { /* already on Gemini */ }
+    await waitForWebviewReady(wv, 12000);
+    await new Promise((r) => setTimeout(r, 600));
+    const result = await injectGeminiPrompt(wv, prompt);
+    if (result.ok) {
+      setInjectStatus(
+        result.sent
+          ? t('promptBuilder.injectedSent', 'Prompt sent. When the image appears it is saved to My Photos.')
+          : t('promptBuilder.injected', 'Prompt pasted. Press Send in Gemini if it did not start.'),
+      );
+      harvestAfterSend();
     } else {
-      openCompanion(aiTarget);
+      setInjectStatus(t('promptBuilder.injectFailed', 'Could not paste into Gemini. Sign in in the panel, then try again.'));
     }
   };
 
+  const copyAndOpen = () => {
+    void sendToGemini();
+  };
+
   // ── Token lists for checklist sections ─────────────────────────────────────
-  const recipeMatchedTokens = useMemo(
-    () => matchRecipeIngredientsToTokens(recipeIngredientNames),
-    [recipeIngredientNames],
+  const featuredIngredients = useMemo(
+    () => [...recipeIngredients].sort((a, b) => a.name.localeCompare(b.name)),
+    [recipeIngredients],
   );
 
-  const activelyMatchedTokens = useMemo(
-    () => matchRecipeIngredientsToTokens(activeDbIngredients.map((i) => i.name)),
-    [activeDbIngredients],
+  const featuredSet = useMemo(
+    () => new Set(featuredIngredients.map((ing) => ing.name)),
+    [featuredIngredients],
   );
 
-  /** Featured section: recipe ingredients when a recipe is loaded, else all active. */
-  const featuredTokens = useMemo(() => {
-    if (activeRecipe && recipeIngredientNames.length > 0) {
-      return [...recipeMatchedTokens].sort();
-    }
-    return [...activelyMatchedTokens].sort();
-  }, [activeRecipe, recipeIngredientNames.length, recipeMatchedTokens, activelyMatchedTokens]);
-
-  const featuredSet = useMemo(() => new Set(featuredTokens), [featuredTokens]);
-
-  // Tokens NOT in the featured section
-  const nonActiveTokens = useMemo(
-    () => INGREDIENTS.filter((t) => !featuredSet.has(t)),
-    [featuredSet],
+  const extraSelected = useMemo(
+    () => [...selected].filter((token) => !featuredSet.has(token) && !isPromptExcludedName(token)).sort(),
+    [selected, featuredSet],
   );
 
-  // Columns for the "All Botanicals" portion (4 logical columns, 2-col CSS grid)
-  const cols   = 4;
-  const perCol = Math.ceil(nonActiveTokens.length / cols);
-  const nonActiveColumns: string[][] = Array.from({ length: cols }, (_, ci) =>
-    nonActiveTokens.slice(ci * perCol, ci * perCol + perCol),
+  const promptSelectedCount = useMemo(
+    () => [...selected].filter((name) => !isPromptExcludedName(name)).length,
+    [selected],
   );
-
-  // Columns for featured tokens (2-col)
-  const featuredPerCol = Math.ceil(featuredTokens.length / 2);
-  const featuredColumns: string[][] = Array.from({ length: 2 }, (_, ci) =>
-    featuredTokens.slice(ci * featuredPerCol, ci * featuredPerCol + featuredPerCol),
-  );
-
-  // ── Catalog filtered & grouped ─────────────────────────────────────────────
-  const catalogGrouped = useMemo(() => {
-    const q = catalogQuery.trim();
-    const filtered = q
-      ? allDbIngredients.filter((i) => ingredientMatchesQuery(i, q))
-      : allDbIngredients;
-    const grouped = new Map<IngredientCategory | 'other', Ingredient[]>();
-    for (const ing of filtered) {
-      const cat = (ing.category ?? 'other') as IngredientCategory;
-      if (!grouped.has(cat)) grouped.set(cat, []);
-      grouped.get(cat)!.push(ing);
-    }
-    return grouped;
-  }, [allDbIngredients, catalogQuery, t]);
 
   return (
-    <div className="flex h-full min-w-0 overflow-x-hidden overflow-y-hidden">
+    <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden xl:flex-row">
 
       {/* ── LEFT: Controls (scrollable) ──────────────────────────────────── */}
-      <div className="flex w-[28.75rem] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-gaia-50 p-5">
+      <div className={`prompt-builder-controls flex min-h-0 w-full shrink-0 flex-col overflow-y-auto border-slate-200 bg-gaia-50 p-5 xl:w-[34.3rem] xl:border-r ${embedded ? 'max-h-[46%] xl:max-h-none' : ''}`}>
 
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gaia-600 text-white">
-            <Sparkles className="h-5 w-5" />
-          </span>
-          <div>
-            <h1 className="text-lg font-semibold text-gaia-900">
-              {t('promptBuilder.title', 'AI Prompt Builder')}
-            </h1>
-            <p className="text-xs text-slate-500">
-              {t('promptBuilder.subtitle', 'Build a background prompt and paste it into your AI generator.')}
-            </p>
-          </div>
-        </div>
+        {!embedded && (
+          <h1 className="flex items-center justify-center gap-2 text-lg font-semibold text-gaia-900">
+            <Sparkles className="h-5 w-5 text-gaia-600" />
+            {t('promptBuilder.title', 'AI Prompt Builder')}
+          </h1>
+        )}
 
-        {/* ── Recipe switcher dropdown ───────────────────────────────────── */}
-        <div className="mt-4 flex items-center gap-2">
-          <span className="whitespace-nowrap text-xs font-medium text-gray-500">{t('promptBuilder.recipeLabel', 'Recipe:')}</span>
+        {/* ── Recipe switcher ─────────────────────────────────────────────── */}
+        <div className={`flex items-start gap-2 ${embedded ? '' : 'mt-4'}`}>
+          <span className="mt-2 whitespace-nowrap text-xs font-medium text-gray-500">{t('promptBuilder.recipeLabel', 'Recipe:')}</span>
+          <div className="min-w-0 flex-1">
           {recipes.length === 0 ? (
             <p className="text-xs italic text-slate-400">
               {t('promptBuilder.noRecipesHint', 'No recipes yet — create one in Recipes')}
             </p>
           ) : (
             <RecipePicker
-              className="flex-1"
+              className="w-full"
               recipes={recipes}
               ingredients={allDbIngredients}
               value={activeRecipeId}
               onChange={setActiveRecipeId}
-              placeholder={t('promptBuilder.chooseRecipe', '— Choose a recipe —')}
+              placeholder={t('promptBuilder.chooseRecipe', '— Choose A Recipe —')}
             />
           )}
-        </div>
-
-        {/* ── Recipe banner ──────────────────────────────────────────────── */}
-        {(() => {
-          const bannerTheme = activeRecipe
-            ? getRecipeColor(activeRecipe, allDbIngredients)
-            : null;
-          return (
-        <div className={`mt-3 rounded-xl p-3 ring-1 ${activeRecipe && bannerTheme ? `${bannerTheme.bg} ${bannerTheme.activeBorder}` : activeRecipe ? 'bg-gaia-50 ring-gaia-200' : 'bg-amber-50 ring-amber-200'}`}>
-          {activeRecipe ? (
-            <>
-              <div className="flex items-start justify-between gap-2">
-                <p className={`flex items-center gap-2 text-xs font-semibold ${bannerTheme?.text ?? 'text-gaia-800'}`}>
-                  {bannerTheme && (
-                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${bannerTheme.dot}`} />
-                  )}
-                  {t('promptBuilder.recipeLoaded', 'Using recipe:')} {activeRecipe.name}
-                </p>
-                <button onClick={() => goto('recipes')} className="shrink-0 text-xs text-gaia-600 hover:underline">
-                  {t('promptBuilder.changeRecipe', 'Change Recipe')}
-                </button>
-              </div>
-              {recipeIngredientNames.length > 0 && (
-                <p className={`mt-1 text-xs ${bannerTheme?.text ?? 'text-gaia-700'}`}>
-                  <span className="font-medium">{t('promptBuilder.recipeKeyIngredients', 'Key ingredients:')}</span>{' '}
-                  {recipeIngredientNames.slice(0, 5).join(', ')}
-                  {recipeIngredientNames.length > 5 && (
-                    <span className="text-gaia-500"> +{recipeIngredientNames.length - 5} {t('promptBuilder.moreIngredients', 'more')}</span>
-                  )}
-                </p>
-              )}
-              {activeRecipe.benefit && (
-                <p className={`mt-1 text-xs italic opacity-80 ${bannerTheme?.text ?? 'text-gaia-600'}`}>{activeRecipe.benefit}</p>
-              )}
-            </>
-          ) : (
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-amber-700">
-                {t('promptBuilder.noRecipe', 'No recipe selected — go to Build Recipe first.')}
-              </p>
-              <button onClick={() => goto('recipes')} className="shrink-0 text-xs font-medium text-amber-700 hover:underline">
-                {t('promptBuilder.goToRecipes', 'Recipes →')}
-              </button>
-            </div>
-          )}
-        </div>
-          );
-        })()}
-
-        <div className="mt-5 space-y-4">
-
-          {/* ── Visual Style Preset Cards ─────────────────────────────────── */}
-          <div className="card space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">
-                {t('promptBuilder.styleSection', 'Background Style')}
-              </h2>
-              {/* Active swatch preview */}
-              <div className="flex items-center gap-1.5">
-                <div
-                  className="h-4 w-4 rounded-full ring-1 ring-slate-200"
-                  style={{ backgroundColor: hexCode }}
-                />
-                <span className="font-mono text-xs text-slate-400">{hexCode}</span>
-              </div>
-            </div>
-
-            {/* 4-column preset grid */}
-            <div className="grid grid-cols-4 gap-1.5">
-              {STYLE_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  onClick={() => selectPreset(preset)}
-                  className={`overflow-hidden rounded-xl text-left transition-all ${
-                    selectedPresetId === preset.id
-                      ? 'ring-2 ring-gaia-500 shadow-sm'
-                      : 'ring-1 ring-slate-100 hover:ring-gaia-300 hover:shadow-sm'
-                  }`}
-                  title={`${preset.colorName} – ${preset.textureName}`}
-                >
-                  {/* Color swatch */}
-                  <div className="h-10 w-full" style={{ backgroundColor: preset.hexCode }} />
-                  {/* Card info */}
-                  <div className="bg-white px-1.5 py-1">
-                    <div className="flex items-center gap-0.5">
-                      <span className="shrink-0 text-xs leading-none">{preset.icon}</span>
-                      <span className="truncate text-[9px] font-semibold leading-snug text-slate-700">
-                        {preset.colorName}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 truncate text-[8px] leading-snug text-slate-400">
-                      {preset.textureName}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Manual override row */}
-            <div className="flex items-center gap-2 border-t border-slate-100 pt-2">
-              <label
-                htmlFor="colorPicker"
-                className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-md ring-1 ring-slate-200 hover:ring-gaia-400"
-                title={t('promptBuilder.pickCustomColor', 'Pick custom colour')}
-              >
-                <span className="block h-full w-full" style={{ backgroundColor: hexCode }} />
-              </label>
-              <input
-                id="colorPicker"
-                type="color"
-                className="sr-only"
-                value={hexCode}
-                onChange={(e) => { setHexCode(e.target.value); setSelectedPresetId(''); }}
-              />
-              <input
-                type="text"
-                className="input h-7 w-24 font-mono text-xs"
-                placeholder="#E8E1D6"
-                value={hexCode}
-                onChange={(e) => { setHexCode(e.target.value); setSelectedPresetId(''); }}
-              />
-              <input
-                type="text"
-                className="input h-7 min-w-0 flex-1 text-xs"
-                placeholder={t('promptBuilder.colorNamePlaceholder', 'Color name')}
-                value={colorName}
-                onChange={(e) => { setColorName(e.target.value); setSelectedPresetId(''); }}
-              />
-            </div>
           </div>
+        </div>
 
-          {/* ── Product Name ──────────────────────────────────────────────── */}
-          <div className="card space-y-2">
+        <div className="mt-4 card space-y-3">
             <h2 className="text-sm font-semibold text-slate-700">
-              {t('promptBuilder.productName', 'Product Name')}
+              {t('promptBuilder.ingredientsSection', 'Ingredients in this prompt')}
+              {promptSelectedCount > 0 && (
+                <span className="ml-2 inline-flex h-5 items-center rounded-full bg-gaia-100 px-2 text-xs font-medium text-gaia-700">
+                  {promptSelectedCount}
+                </span>
+              )}
             </h2>
-            <input
-              type="text"
-              className="input"
-              placeholder={t('promptBuilder.productNamePlaceholder', 'e.g. Lavender Oatmeal Bar')}
-              value={productName}
-              onChange={(e) => setProductName(e.target.value)}
-            />
-            <p className="text-xs text-slate-400">
-              {t('promptBuilder.productNameHint', 'Optional — personalises the prompt for your product.')}
-            </p>
-          </div>
 
-          {/* ── Ingredient Checklist ──────────────────────────────────────── */}
-          <div className="card space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">
-                {t('promptBuilder.ingredientsSection', 'Botanical Ingredients')}
-                {selected.size > 0 && (
-                  <span className="ml-2 inline-flex h-5 items-center rounded-full bg-gaia-100 px-2 text-xs font-medium text-gaia-700">
-                    {selected.size}
-                  </span>
-                )}
-              </h2>
-              <div className="flex gap-2">
-                <button className="text-xs text-gaia-600 hover:underline" onClick={selectAll}>
-                  {t('common.selectAll', 'Select all')}
-                </button>
-                <span className="text-slate-300">|</span>
-                <button className="text-xs text-slate-500 hover:underline" onClick={clearAll}>
-                  {t('common.clearAll', 'Clear')}
-                </button>
-              </div>
-            </div>
-
-            {activeRecipe && selected.size > 0 && (
-              <p className="rounded-lg bg-gaia-100 px-2 py-1.5 text-xs text-gaia-700">
-                ✓ {t('promptBuilder.recipeAutoFilled', 'Ingredients auto-selected from recipe — you can adjust below.')}
+            {featuredIngredients.length === 0 && extraSelected.length === 0 && (
+              <p className="text-xs text-slate-500">
+                {t('promptBuilder.noFeaturedYet', 'Nothing selected yet. Pick a recipe to load its ingredients.')}
               </p>
             )}
 
-            {/* ── Recipe / Active Ingredients ───────────────────────────── */}
-            {featuredTokens.length > 0 && (
+            {featuredIngredients.length > 0 && (
               <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                    {activeRecipe
-                      ? t('promptBuilder.recipeIngredients', 'Recipe Ingredients')
-                      : t('promptBuilder.yourActiveIngredients', 'Your Active Ingredients')}
-                  </p>
+                <p className="ui-label font-semibold uppercase tracking-wide text-emerald-700">
+                  {t('promptBuilder.recipeIngredients', 'Recipe Ingredients')}
+                </p>
+                <div className="space-y-0.5">
+                  {featuredIngredients.map((ing) => {
+                    const excluded = isPromptExcludedIngredient(ing);
+                    return (
+                    <label
+                      key={ing.id}
+                      className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition ${
+                        excluded
+                          ? 'cursor-not-allowed bg-slate-100 text-slate-400 opacity-60'
+                          : selected.has(ing.name)
+                            ? 'cursor-pointer bg-emerald-50 text-emerald-800'
+                            : 'cursor-pointer text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 shrink-0 accent-emerald-600 disabled:cursor-not-allowed"
+                        checked={!excluded && selected.has(ing.name)}
+                        disabled={excluded}
+                        onChange={() => toggle(ing.name)}
+                      />
+                      <IngredientIcon category={ing.category} name={ing.name} iconKey={ing.iconKey} size="sm" />
+                      <span className="min-w-0 leading-snug">{getIngredientDisplayName(ing.name, t)}</span>
+                      <span className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-xs font-semibold ${
+                        excluded
+                          ? 'bg-slate-200 text-slate-500'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {excluded
+                          ? t('promptBuilder.soapBaseExcluded', 'Not in prompt')
+                          : t('promptBuilder.fromRecipe', 'In recipe')}
+                      </span>
+                    </label>
+                    );
+                  })}
                 </div>
-                <div className="grid grid-cols-2 gap-x-3">
-                  {featuredColumns.map((col, ci) => (
-                    <div key={ci} className="space-y-0.5">
-                      {col.map((ing) => (
-                        <label
-                          key={ing}
-                          className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition ${
-                            selected.has(ing) ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600 hover:bg-slate-50'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            className="h-3.5 w-3.5 shrink-0 accent-emerald-600"
-                            checked={selected.has(ing)}
-                            onChange={() => toggle(ing)}
-                          />
-                          <IngredientIcon category={INGREDIENT_ICON_CATEGORY[ing] ?? 'other'} name={ing} size="sm" />
-                          <span className="leading-snug">{ing}</span>
-                          {activeRecipe ? (
-                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
-                              {t('promptBuilder.fromRecipe', 'In recipe')}
-                            </span>
-                          ) : (
-                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
-                              Active
-                            </span>
-                          )}
-                        </label>
-                      ))}
-                    </div>
+              </div>
+            )}
+
+            {extraSelected.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="ui-label font-semibold uppercase tracking-wide text-slate-500">
+                  {t('promptBuilder.addedIngredients', 'Added')}
+                </p>
+                <div className="space-y-0.5">
+                  {extraSelected.map((ing) => (
+                    <label
+                      key={ing}
+                      className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gaia-50 px-2 py-1 text-xs text-gaia-800"
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 shrink-0 accent-gaia-600"
+                        checked
+                        onChange={() => toggle(ing)}
+                      />
+                      <IngredientIcon category={INGREDIENT_ICON_CATEGORY[ing] ?? 'other'} name={ing} size="sm" />
+                      <span className="leading-snug">{ing}</span>
+                    </label>
                   ))}
                 </div>
               </div>
             )}
+        </div>
 
-            {/* ── All Botanicals ────────────────────────────────────────── */}
-            <div className="space-y-1.5">
-              {featuredTokens.length > 0 && (
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  {t('promptBuilder.allBotanicals', 'All Botanicals')}
-                </p>
-              )}
-              <div className="grid grid-cols-2 gap-x-3">
-                {nonActiveColumns.map((col, ci) => (
-                  <div key={ci} className="space-y-0.5">
-                    {col.map((ing) => (
-                      <label
-                        key={ing}
-                        className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition ${
-                          selected.has(ing) ? 'bg-gaia-50 text-gaia-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-3.5 w-3.5 shrink-0 accent-gaia-600"
-                          checked={selected.has(ing)}
-                          onChange={() => toggle(ing)}
-                        />
-                        <IngredientIcon category={INGREDIENT_ICON_CATEGORY[ing] ?? 'other'} name={ing} size="sm" />
-                        <span className="leading-snug">{ing}</span>
-                      </label>
-                    ))}
+        <div className="mt-5 space-y-4">
+
+          {/* ── Color picker (custom HSV — not the OS dialog) ─────────────── */}
+          <div className="card space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-700">
+                {t('promptBuilder.colorSection', 'Background color')}
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {t('promptBuilder.colorPickerHint', 'Drag in the square or along the hue bar to choose a color.')}
+              </p>
+            </div>
+            <HsvColorPicker
+              value={hexCode}
+              onChange={(hex) => { setHexCode(hex); setSelectedPresetId(''); }}
+            />
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gaia-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-gaia-700 disabled:opacity-60"
+              disabled={savingStyle}
+              onClick={() => void saveCurrentColor()}
+            >
+              {savingStyle
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <BookmarkPlus className="h-4 w-4" />}
+              {savingStyle
+                ? t('promptBuilder.savingStyle', 'Saving…')
+                : t('promptBuilder.saveStyle', 'Save This Color')}
+            </button>
+            {saveStyleMsg && (
+              <p className="text-center text-xs text-slate-500">{saveStyleMsg}</p>
+            )}
+          </div>
+
+          {/* ── Visual Style Preset Cards ─────────────────────────────────── */}
+          <div className="card space-y-3">
+            <h2 className="text-sm font-semibold text-slate-700">
+              {t('promptBuilder.styleSection', 'Background Style')}
+            </h2>
+
+            {visiblePresets.length === 0 ? (
+              <p className="text-xs text-slate-500">
+                {t('promptBuilder.noStylesLeft', 'All styles removed. Use the color picker above.')}
+              </p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {visiblePresets.map((preset) => (
+                  <div
+                    key={preset.id}
+                    className={`relative overflow-hidden rounded-xl transition-all ${
+                      selectedPresetId === preset.id
+                        ? 'ring-2 ring-gaia-500 shadow-sm'
+                        : 'ring-1 ring-slate-100 hover:ring-gaia-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectPreset(preset)}
+                      className="w-full text-left"
+                    >
+                      <div className="h-10 w-full" style={{ backgroundColor: preset.hexCode }} />
+                      <div className="bg-white px-1.5 py-1.5">
+                        <div className="flex items-center justify-center gap-1">
+                          <StylePresetIcon preset={preset} />
+                          <span className="text-xs font-semibold leading-snug text-slate-700">
+                            {preset.colorName}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-center text-xs leading-snug text-slate-400">
+                          {preset.textureName}
+                        </p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-slate-400 shadow-sm ring-1 ring-slate-200 hover:bg-rose-50 hover:text-rose-600"
+                      title={t('common.delete', 'Delete')}
+                      aria-label={t('promptBuilder.deleteStyle', 'Remove {{name}}', { name: preset.colorName })}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deletePreset(preset);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
                   </div>
                 ))}
               </div>
-            </div>
-          </div>
-
-          {/* ── Browse Full Catalog ────────────────────────────────────────── */}
-          <div className="card space-y-3">
-            <button
-              onClick={() => setCatalogOpen((v) => !v)}
-              className="flex w-full items-center justify-between"
-            >
-              <h2 className="text-sm font-semibold text-slate-700">
-                {t('promptBuilder.browseCatalog', 'Browse Full Catalog')}
-              </h2>
-              {catalogOpen
-                ? <ChevronDown className="h-4 w-4 text-slate-400" />
-                : <ChevronRight className="h-4 w-4 text-slate-400" />
-              }
-            </button>
-
-            {catalogOpen && (
-              <div className="space-y-3">
-                {/* Search */}
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    className="input h-8 pl-8 text-xs"
-                    placeholder={t('common.search', 'Search…')}
-                    value={catalogQuery}
-                    onChange={(e) => setCatalogQuery(e.target.value)}
-                  />
-                </div>
-
-                {/* Ingredient list + Add form in a single scrollable container so the
-                    form is never clipped below the viewport */}
-                <div className="max-h-80 overflow-y-auto pr-1 space-y-3">
-                  {/* Grouped ingredient list */}
-                  {catalogGrouped.size === 0 ? (
-                    <p className="py-3 text-center text-xs text-slate-400">
-                      {t('ingredients.noResults', 'No results')}
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {[...catalogGrouped.entries()].map(([cat, ings]) => (
-                        <div key={cat}>
-                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                            {getCategoryLabel(cat as IngredientCategory, t)}
-                          </p>
-                          <div className="grid grid-cols-2 gap-x-3">
-                            {ings.map((ing) => (
-                              <label
-                                key={ing.id}
-                                className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition ${
-                                  selected.has(ing.name) ? 'bg-gaia-50 text-gaia-800' : 'text-slate-600 hover:bg-slate-50'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  className="h-3.5 w-3.5 shrink-0 accent-gaia-600"
-                                  checked={selected.has(ing.name)}
-                                  onChange={() => toggle(ing.name)}
-                                />
-                                <IngredientIcon category={ing.category} name={ing.name} size="sm" />
-                                <span className="truncate leading-snug">{getIngredientDisplayName(ing.name, t)}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Add new ingredient — inside the scroll container so it's always reachable */}
-                  <div className="space-y-2 border-t border-slate-100 pt-3">
-                    <p className="text-xs font-semibold text-slate-600">
-                      {t('promptBuilder.addIngredient', 'Add New Ingredient')}
-                    </p>
-                    <div className="flex gap-2">
-                      <input
-                        className="input h-8 min-w-0 flex-1 text-xs"
-                        placeholder={t('ingredients.namePlaceholder', 'e.g. Lavender EO')}
-                        value={newIngName}
-                        onChange={(e) => setNewIngName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && void addIngredient()}
-                      />
-                      <select
-                        className="input h-8 shrink-0 py-0 text-xs"
-                        value={newIngCategory}
-                        onChange={(e) => setNewIngCategory(e.target.value as IngredientCategory)}
-                      >
-                        {(Object.entries(CATEGORY_LABELS) as [IngredientCategory, string][]).map(([k, v]) => (
-                          <option key={k} value={k}>{v}</option>
-                        ))}
-                      </select>
-                      <button
-                        className="flex shrink-0 items-center gap-1 rounded-lg bg-gaia-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-gaia-700 disabled:opacity-50"
-                        disabled={addingIng || !newIngName.trim()}
-                        onClick={() => void addIngredient()}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        {t('common.add', 'Add')}
-                      </button>
-                    </div>
-                    {ingAddedMsg && (
-                      <p className="flex items-center gap-1 text-xs text-emerald-600">
-                        <Check className="h-3.5 w-3.5" />
-                        {t('promptBuilder.ingredientAdded', 'Ingredient added!')}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
             )}
           </div>
+
         </div>
       </div>
 
       {/* ── RIGHT: Prompt output + AI launch ──────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="prompt-builder-controls flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 
         {/* Prompt output panel */}
         <div className="flex-shrink-0 border-b border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-700">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <div />
+            <h2 className="text-center text-sm font-semibold text-slate-700">
               {t('promptBuilder.outputSection', 'Generated Prompt')}
             </h2>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {/* Copy */}
               <button
                 onClick={() => void copy()}
@@ -1127,16 +1052,6 @@ export default function PromptBuilderScreen({
                 }
               </button>
 
-              {/* Copy & Open — uses aiTarget selector below */}
-              <select
-                className="input h-8 w-[7.5rem] shrink-0 py-0 text-xs"
-                value={aiTarget}
-                onChange={(e) => switchAiTarget(e.target.value as AiTarget)}
-                aria-label={t('promptBuilder.aiDestination', 'Open in')}
-              >
-                <option value="aistudio">{t('promptBuilder.openAiStudio', 'AI Studio')}</option>
-                <option value="gemini">{t('promptBuilder.openGemini', 'Gemini')}</option>
-              </select>
               <button
                 type="button"
                 onClick={copyAndOpen}
@@ -1155,24 +1070,19 @@ export default function PromptBuilderScreen({
             value={prompt}
             onClick={(e) => (e.target as HTMLTextAreaElement).select()}
           />
-
-          <p className="mt-1.5 text-[11px] text-slate-400">
-            {t('promptBuilder.outputHint', 'Click the text area to select all. Use "Copy & Open" to copy the prompt and launch your AI generator.')}
-          </p>
         </div>
 
         {/* AI browser panel — webview in Electron, iframe in browser/PWA */}
-        <div className="flex min-h-[520px] flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {isElectron && (
           <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-2 py-1.5">
-            {isElectron && (
-              <>
                 <button
                   type="button"
                   onClick={() => webviewRef.current?.goBack()}
                   className="shrink-0 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
-                  title="Go back"
+                  title={t('promptBuilder.webviewBack')}
                 >
-                  ← Back
+                  {t('promptBuilder.webviewBack')}
                 </button>
                 <button
                   type="button"
@@ -1190,66 +1100,33 @@ export default function PromptBuilderScreen({
                     if (e.key === 'Enter') webviewRef.current?.loadURL(urlBarValue);
                   }}
                 />
-              </>
-            )}
-            <button
-              type="button"
-              onClick={() => switchAiTarget('aistudio')}
-              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition ${
-                aiTarget === 'aistudio'
-                  ? 'bg-gaia-100 text-gaia-700 ring-1 ring-gaia-200'
-                  : 'text-gaia-600 hover:bg-gaia-50'
-              }`}
-            >
-              {t('promptBuilder.openAiStudio', 'AI Studio')}
-            </button>
-            <button
-              type="button"
-              onClick={() => switchAiTarget('gemini')}
-              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition ${
-                aiTarget === 'gemini'
-                  ? 'bg-slate-200 text-slate-800 ring-1 ring-slate-300'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              {t('promptBuilder.openGemini', 'Gemini')}
-            </button>
-            <button
-              type="button"
-              onClick={() => openInDefaultBrowser(urlForAiTarget(aiTarget))}
-              className="ml-auto flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-700"
-              title={t('promptBuilder.openInTab', 'Open in a new browser tab')}
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{t('promptBuilder.openInTab', 'Open in tab')}</span>
-            </button>
           </div>
+          )}
 
           {isElectron ? (
-            <webview
-              ref={webviewRef}
-              src={AI_STUDIO_URL}
-              partition="persist:aistudio"
-              useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-              allowpopups
-              webpreferences="contextIsolation=yes, nodeIntegration=no, javascript=yes"
-              style={{ flex: 1, width: '100%', minHeight: '480px' }}
-            />
+            <>
+              {injectStatus && (
+                <p className="border-b border-gaia-100 bg-gaia-50 px-3 py-1.5 text-xs font-medium text-gaia-800">
+                  {injectStatus}
+                </p>
+              )}
+              <webview
+                ref={webviewRef}
+                src={GEMINI_URL}
+                partition="persist:aistudio"
+                useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                allowpopups
+                webpreferences="contextIsolation=yes, nodeIntegration=no, javascript=yes"
+                style={{ flex: 1, width: '100%', minHeight: 0 }}
+              />
+            </>
           ) : (
-            <div className="flex min-h-[480px] flex-1 flex-col items-center justify-center gap-6 bg-gradient-to-b from-slate-50 to-white p-8">
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto bg-gradient-to-b from-slate-50 to-white p-6">
               <div className="w-full max-w-lg text-center">
                 <Sparkles className="mx-auto mb-3 h-10 w-10 text-gaia-500" />
                 <h3 className="text-lg font-semibold text-slate-800">
-                  {aiTarget === 'gemini'
-                    ? t('promptBuilder.companionGeminiTitle', 'Gemini companion window')
-                    : t('promptBuilder.companionStudioTitle', 'AI Studio companion window')}
+                  {t('promptBuilder.companionGeminiTitle', 'Gemini companion window')}
                 </h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  {t(
-                    'promptBuilder.companionNote',
-                    'Google blocks embedding their sign-in pages inside other sites. Studio opens AI Studio or Gemini in a separate window beside this app — arrange both windows side by side on your screen.',
-                  )}
-                </p>
                 {companionOpen && (
                   <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
                     <span className="h-2 w-2 rounded-full bg-emerald-500" />
@@ -1261,73 +1138,46 @@ export default function PromptBuilderScreen({
               <div className="flex w-full max-w-md flex-col gap-3">
                 <button
                   type="button"
-                  onClick={() => openCompanion('aistudio')}
-                  className={`flex w-full items-center justify-center gap-3 rounded-xl px-6 py-4 text-base font-semibold shadow-sm transition active:scale-[0.98] ${
-                    aiTarget === 'aistudio'
-                      ? 'bg-gaia-600 text-white hover:bg-gaia-700'
-                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
+                  onClick={() => openCompanion()}
+                  className="flex w-full items-center justify-center gap-3 rounded-xl bg-gaia-600 px-6 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-gaia-700 active:scale-[0.98]"
                 >
                   <ExternalLink className="h-5 w-5 shrink-0" />
-                  {companionOpen && aiTarget === 'aistudio'
-                    ? t('promptBuilder.focusAiStudio', 'Focus AI Studio window')
-                    : t('promptBuilder.openAiStudio', 'Open AI Studio')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openCompanion('gemini')}
-                  className={`flex w-full items-center justify-center gap-3 rounded-xl px-6 py-4 text-base font-semibold shadow-sm transition active:scale-[0.98] ${
-                    aiTarget === 'gemini'
-                      ? 'bg-slate-800 text-white hover:bg-slate-900'
-                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <ExternalLink className="h-5 w-5 shrink-0" />
-                  {companionOpen && aiTarget === 'gemini'
+                  {companionOpen
                     ? t('promptBuilder.focusGemini', 'Focus Gemini window')
                     : t('promptBuilder.openGemini', 'Open Gemini')}
                 </button>
               </div>
 
-              <ol className="w-full max-w-md space-y-2 text-left text-xs text-slate-600">
+              <ol className="w-full max-w-md space-y-2 text-left text-sm text-slate-600">
                 <li className="flex gap-2">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-[10px] font-bold text-gaia-700">1</span>
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-xs font-bold text-gaia-700">1</span>
                   {t('promptBuilder.companionStep1', 'Click Copy & Open — your prompt is copied automatically.')}
                 </li>
                 <li className="flex gap-2">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-[10px] font-bold text-gaia-700">2</span>
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-xs font-bold text-gaia-700">2</span>
                   {t('promptBuilder.companionStep2', 'Paste into the companion window and generate your background.')}
                 </li>
                 <li className="flex gap-2">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-[10px] font-bold text-gaia-700">3</span>
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gaia-100 text-xs font-bold text-gaia-700">3</span>
                   {t('promptBuilder.companionStep3', 'Download the image, then upload it under My Photos in this step.')}
                 </li>
               </ol>
             </div>
           )}
 
-          {!isElectron && (
-            <p className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-              {t(
-                'promptBuilder.companionFooter',
-                'Tip: On desktop, snap Gaia\'s Studio and the AI window side-by-side. The desktop app embeds AI Studio directly without a separate window.',
-              )}
-            </p>
-          )}
-
           {recentAiAssets.length > 0 && (
             <div className="border-t border-slate-200 bg-white px-3 py-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <p className="mb-2 ui-label font-semibold uppercase tracking-wide text-slate-400">
                 {t('promptBuilder.recentImports', 'Recently Imported')}
               </p>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <div className="grid max-w-xl grid-cols-3 gap-2 sm:grid-cols-4">
                 {recentAiAssets.map((asset) => (
                   <button
                     key={asset.id}
                     type="button"
                     className="aspect-video overflow-hidden rounded-lg ring-1 ring-slate-200 transition hover:ring-gaia-400"
                     title={asset.name}
-                    onClick={() => embedded && onBackgroundSelect?.(asset.dataUrl)}
+                    onClick={() => applyRecentAsset(asset.dataUrl)}
                   >
                     <img
                       src={asset.dataUrl}

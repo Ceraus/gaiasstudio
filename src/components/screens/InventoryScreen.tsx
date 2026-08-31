@@ -17,12 +17,12 @@
 //   • STOCK ON HAND — optional per-ingredient stock that completed Work
 //     Orders deduct automatically.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, Check, ChevronDown, ChevronUp, Database, DollarSign,
   Link as LinkIcon, Loader2, MinusCircle, Package, PackageCheck, PackagePlus, Plus,
-  Search, ShoppingBag, Sparkles, Tags, Trash2, X, Zap, ClipboardPaste,
+  Search, ShoppingBag, Sparkles, Tags, Trash2, X, Zap,
 } from 'lucide-react';
 import type { CustomMaterial, Ingredient, IngredientCategory, MaterialCategory, Recipe, SetPurchase } from '@/types';
 import {
@@ -34,12 +34,19 @@ import {
   baseUnitOf,
   VOLUME_CATEGORIES,
 } from '@/db/repositories';
-import { calculateFractionalCost } from '@/lib/inventoryMath';
+import {
+  calculateFractionalCost,
+  isRecipeAmountUnit,
+  recipeLineAmountInBaseUnits,
+  resolveRecipeAmountUnit,
+} from '@/lib/inventoryMath';
+import { recipeAmountUnitLabel } from '@/components/recipes/RecipeAmountUnitSelect';
 import { importFromSupplierUrl, type SupplierParseResult } from '@/lib/supplierImport';
 import IngredientIcon from '@/components/common/IngredientIcon';
+import { rankByQuery } from '@/lib/catalogSearchRank';
 import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
 import Modal from '@/components/common/Modal';
-import SmartPasteModal from '@/components/common/SmartPasteModal';
+import SmartPastePanel from '@/components/common/SmartPastePanel';
 import { useAppStore } from '@/store/useAppStore';
 
 // ---------------------------------------------------------------------------
@@ -81,7 +88,7 @@ const PANTRY_GROUPS: PantryGroup[] = [
   {
     id: 'carrier-oils',
     labelKey: 'inventory.groupCarrierOils', defaultLabel: 'Carrier Oils & Butters',
-    hintKey: 'inventory.groupCarrierOilsHint', defaultHint: 'Base oils, butters & waxes',
+    hintKey: 'inventory.groupCarrierOilsHint', defaultHint: 'Oils in drops; butters and waxes in grams',
     categories: ['oil', 'butter', 'wax'],
     measurement: 'weight',
     tint: 'bg-amber-50 text-amber-600',
@@ -216,7 +223,6 @@ export default function InventoryScreen() {
   const [inUseOnly, setInUseOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const [smartPasteOpen, setSmartPasteOpen] = useState(false);
   const inUseInitialized = useRef(false);
 
   const reload = async () => {
@@ -286,8 +292,13 @@ export default function InventoryScreen() {
     const map = new Map<PantryGroupId, Ingredient[]>();
     for (const g of PANTRY_GROUPS) map.set(g.id, []);
     for (const ing of visibleIngredients) map.get(groupOf(ing))!.push(ing);
-    // Missing-price ingredients bubble to the top of every shelf.
     for (const list of map.values()) {
+      if (q) {
+        const ranked = rankByQuery(list, q);
+        list.splice(0, list.length, ...ranked);
+        continue;
+      }
+      // Missing-price ingredients bubble to the top of every shelf.
       list.sort((a, b) => {
         const am = a.fractionalCost === undefined ? 0 : 1;
         const bm = b.fractionalCost === undefined ? 0 : 1;
@@ -295,7 +306,7 @@ export default function InventoryScreen() {
       });
     }
     return map;
-  }, [visibleIngredients]);
+  }, [visibleIngredients, q]);
 
   // Stats
   const pricedCount   = visibleIngredients.filter((i) => i.fractionalCost !== undefined).length;
@@ -306,6 +317,7 @@ export default function InventoryScreen() {
   const recipeCostSummary = useMemo(() => {
     if (!activeRecipe) return null;
     const amounts = activeRecipe.ingredientAmounts ?? {};
+    const units = activeRecipe.ingredientUnits ?? {};
     let total = 0;
     let costed = 0;
     let missing = 0;
@@ -315,9 +327,9 @@ export default function InventoryScreen() {
       const amount = amounts[id];
       const ing = allIngredients.find((i) => i.id === id);
       if (!amount || !ing) continue;
-      const unit = baseUnitOf(ing);
+      const unit = resolveRecipeAmountUnit(ing, units[id]);
       if (ing.fractionalCost !== undefined) {
-        const lineCost = amount * ing.fractionalCost;
+        const lineCost = recipeLineAmountInBaseUnits(amount, ing, unit) * ing.fractionalCost;
         total += lineCost;
         costed++;
         lines.push({ id, name: ing.name, amount, unit, cost: lineCost });
@@ -339,24 +351,18 @@ export default function InventoryScreen() {
         <div className="mx-auto max-w-3xl px-4 py-6">
 
           {/* Header */}
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="flex items-center gap-2 text-2xl font-semibold text-gaia-900">
-                <Package className="h-6 w-6 text-gaia-600" />
-                {t('inventory.title', 'Smart Pantry — Inventory & Pricing')}
-              </h1>
-              <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                {t('inventory.subtitle', 'Everything is grouped into shelves. Open a shelf, set prices once (or paste a supplier link), and your recipe costs calculate themselves.')}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="btn-secondary shrink-0"
-              onClick={() => setSmartPasteOpen(true)}
-            >
-              <ClipboardPaste className="h-4 w-4" />
-              {t('inventory.smartPaste', 'Smart Paste (Temu/Amazon)')}
-            </button>
+          <div>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold text-gaia-900">
+              <Package className="h-6 w-6 text-gaia-600" />
+              {t('inventory.title', 'Smart Pantry — Inventory & Pricing')}
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm text-slate-600">
+              {t('inventory.subtitle', 'Everything is grouped into shelves. Open a shelf, set prices once (or paste a supplier link), and your recipe costs calculate themselves.')}
+            </p>
+          </div>
+
+          <div className="card mt-4">
+            <SmartPastePanel onSaved={() => void reload()} />
           </div>
 
           {/* ── Filter bar: prominent In-Use toggle + search ─────────────────── */}
@@ -415,11 +421,11 @@ export default function InventoryScreen() {
               <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
                 <Package className="h-4 w-4 text-slate-400" />
                 <span className="font-semibold">{visibleIngredients.length}</span>
-                <span className="text-slate-400">{t('inventory.shown', 'shown')}</span>
+                <span className="text-slate-400">{t('inventory.shown', 'Shown')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-gaia-600 px-4 py-2 text-sm text-white">
                 <span className="font-semibold">{pricedCount}</span>
-                <span className="opacity-80">{t('inventory.priced', 'priced')}</span>
+                <span className="opacity-80">{t('inventory.priced', 'Priced')}</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
                 <span className="font-semibold">{missingCount}</span>
@@ -467,7 +473,7 @@ export default function InventoryScreen() {
               </p>
               {inUseOnly && (
                 <button className="btn-secondary mx-auto mt-3" onClick={toggleInUse}>
-                  {t('inventory.showAll', 'Show all ingredients')}
+                  {t('inventory.showAll', 'Show All Ingredients')}
                 </button>
               )}
             </div>
@@ -505,11 +511,6 @@ export default function InventoryScreen() {
         </div>
       </div>
 
-      <SmartPasteModal
-        open={smartPasteOpen}
-        onClose={() => setSmartPasteOpen(false)}
-        onSaved={() => void reload()}
-      />
     </div>
   );
 }
@@ -748,7 +749,7 @@ const emptySetForm: SetForm = {
   assignedIngredientIds: [],
 };
 
-function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchasesCardProps) {
+const SetPurchasesCard = memo(function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchasesCardProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -1051,7 +1052,7 @@ function SetPurchasesCard({ ingredients, setPurchases, onChanged }: SetPurchases
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Custom Materials & Packaging — a reusable library of materials costs
@@ -1156,7 +1157,7 @@ function CustomMaterialsLibraryCard({
                   </span>
                   <button
                     onClick={() => void handleToggleActive(m.id)}
-                    title={t('materials.deactivate', 'Move to inactive')}
+                    title={t('materials.deactivate', 'Move To Inactive')}
                     className="shrink-0"
                   >
                     <MinusCircle className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-amber-500" />
@@ -1177,8 +1178,8 @@ function CustomMaterialsLibraryCard({
                 onClick={() => setShowInactive((v) => !v)}
               >
                 {showInactive
-                  ? t('materials.hideInactive', 'Hide inactive ({{count}})', { count: inactive.length })
-                  : t('materials.showInactive', 'Show inactive ({{count}})', { count: inactive.length })}
+                  ? t('materials.hideInactive', 'Hide Inactive ({{count}})', { count: inactive.length })
+                  : t('materials.showInactive', 'Show Inactive ({{count}})', { count: inactive.length })}
               </button>
               {showInactive && (
                 <div className="mt-2 space-y-1.5">
@@ -1285,7 +1286,7 @@ interface RecipeCostPanelProps {
   };
 }
 
-function RecipeCostPanel({ summary }: RecipeCostPanelProps) {
+const RecipeCostPanel = memo(function RecipeCostPanel({ summary }: RecipeCostPanelProps) {
   const { t } = useTranslation();
   const [barCount, setBarCount] = useState('');
   const bars = parseInt(barCount, 10);
@@ -1311,7 +1312,7 @@ function RecipeCostPanel({ summary }: RecipeCostPanelProps) {
             <div key={line.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
               <span className="text-slate-600 truncate max-w-[55%] font-medium">{line.name}</span>
               <span className="text-slate-400 text-[11px] shrink-0">
-                {line.amount} {line.unit}
+                {line.amount} {isRecipeAmountUnit(line.unit) ? recipeAmountUnitLabel(line.unit, t) : line.unit}
               </span>
               <span className="font-semibold text-slate-700 shrink-0">
                 ${line.cost.toFixed(4)}
@@ -1364,7 +1365,7 @@ function RecipeCostPanel({ summary }: RecipeCostPanelProps) {
       </div>
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Single ingredient pricing card
@@ -1394,7 +1395,7 @@ interface PricingCardProps {
   onRecipeUpdated: () => void;
 }
 
-function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: PricingCardProps) {
+const PricingCard = memo(function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: PricingCardProps) {
   const { t } = useTranslation();
   const [card, setCard] = useState<CardState>(() => ingToCard(ing));
   const [saving, setSaving] = useState(false);
@@ -1474,6 +1475,8 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
   // ── Recipe usage row ──────────────────────────────────────────────────────
   const isVol = isVolumeIngredient(ing);
   const recipeAmount = recipe?.ingredientAmounts?.[ing.id];
+  const recipeUnit = resolveRecipeAmountUnit(ing, recipe?.ingredientUnits?.[ing.id]);
+  const recipeUnitLabel = recipeAmountUnitLabel(recipeUnit, t);
 
   const [dropsInput, setDropsInput] = useState<string>(
     recipeAmount !== undefined ? String(recipeAmount) : '',
@@ -1498,13 +1501,13 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
 
   const weightUsageCost =
     !isVol && recipeAmount !== undefined && computedCost !== undefined
-      ? recipeAmount * computedCost
+      ? recipeLineAmountInBaseUnits(recipeAmount, ing, recipeUnit) * computedCost
       : undefined;
 
   const dropsVal = parseFloat(dropsInput);
   const dropsUsageCost =
     isVol && !isNaN(dropsVal) && dropsVal > 0 && computedCost !== undefined
-      ? dropsVal * computedCost
+      ? recipeLineAmountInBaseUnits(dropsVal, ing, recipeUnit) * computedCost
       : undefined;
 
   return (
@@ -1637,7 +1640,7 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500 shrink-0">
-                  {t('inventory.dropsUsed', 'Drops used:')}
+                  {recipeUnitLabel}:
                 </span>
                 <input
                   type="number"
@@ -1655,7 +1658,7 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
               </div>
               {dropsUsageCost !== undefined && (
                 <p className="text-xs font-semibold text-amber-600">
-                  {dropsVal} drops × ${computedCost!.toFixed(4)}/drop = ${dropsUsageCost.toFixed(4)}
+                  {dropsVal} {recipeUnitLabel} × ${computedCost!.toFixed(4)}{isVol ? '/drop' : '/g'} = ${dropsUsageCost.toFixed(4)}
                 </p>
               )}
               {(isNaN(dropsVal) || dropsInput === '') && computedCost !== undefined && (
@@ -1670,11 +1673,11 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
                 <p className="text-sm text-slate-700">
                   {t('inventory.used', 'Used:')}
                   {' '}
-                  <span className="font-semibold">{recipeAmount}g</span>
+                  <span className="font-semibold">{recipeAmount} {recipeUnitLabel}</span>
                 </p>
                 {weightUsageCost !== undefined && (
                   <p className="text-xs font-semibold text-amber-600">
-                    {recipeAmount}g × ${computedCost!.toFixed(4)}/g = ${weightUsageCost.toFixed(4)}
+                    {recipeAmount} {recipeUnitLabel} × ${computedCost!.toFixed(4)}/g = ${weightUsageCost.toFixed(4)}
                   </p>
                 )}
               </div>
@@ -1689,7 +1692,7 @@ function PricingCard({ ing, recipe, usedInRecipes, onSaved, onRecipeUpdated }: P
 
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Supplier URL importer row — "Paste supplier link to auto-fill pricing."
@@ -1828,7 +1831,7 @@ function SupplierImportRow({ ing, onSaved }: SupplierImportRowProps) {
           <div className="mt-2 flex gap-2">
             <button className="btn-primary px-3 py-1.5 text-xs" disabled={applying} onClick={() => void applyFound()}>
               {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-              {t('inventory.applyFound', 'Use these values')}
+              {t('inventory.applyFound', 'Use These Values')}
             </button>
             <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setFound(null)}>
               {t('common.cancel', 'Cancel')}
@@ -1925,12 +1928,12 @@ function StockRow({ ing, onSaved }: StockRowProps) {
 
         {out && (
           <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200">
-            {t('inventory.outOfStock', 'out of stock')}
+            {t('inventory.outOfStock', 'Out of stock')}
           </span>
         )}
         {low && !out && (
           <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
-            {t('inventory.lowStock', 'running low')}
+            {t('inventory.lowStock', 'Running low')}
           </span>
         )}
         {!tracked && (

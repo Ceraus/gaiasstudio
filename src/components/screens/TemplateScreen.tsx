@@ -1,12 +1,24 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, ChevronDown, Circle, Layers, Library, Search, Square, Star, Sticker, Zap } from 'lucide-react';
+import { ChevronDown, Cylinder, FlipHorizontal, LayoutGrid, Library, RectangleHorizontal, Search, Star, X } from 'lucide-react';
 import averyData from '@/data/averyTemplates.json';
 import type { AveryDataset, AveryTemplate, LabelContext, LabelShape } from '@/types';
 import { describeSize } from '@/lib/units';
+import {
+  averyQueryDigits,
+  isAveryNumberQuery,
+  isHighCountSheet,
+  isLowCountSheet,
+  isTemplateSuggestQuery,
+  splitCatalogByPerSheet,
+  suggestTemplates,
+  templateMatchesQuery,
+} from '@/lib/templateCatalogGroups';
+import { shapeColorTokens } from '@/lib/shapeColors';
 import { useAppStore } from '@/store/useAppStore';
 import ShapeThumb from '@/components/common/ShapeThumb';
 import SheetMiniPreview from '@/components/common/SheetMiniPreview';
+import Modal from '@/components/common/Modal';
 import WorkflowNav from '@/components/WorkflowNav';
 import TemplateFavoritesSetup from '@/components/screens/TemplateFavoritesSetup';
 import {
@@ -38,32 +50,11 @@ function getSizeCategory(tpl: AveryTemplate): Exclude<SizeCategory, 'all'> {
 // Static data
 // ---------------------------------------------------------------------------
 
-const CONTAINER_GUIDE = [
-  { container: '2 oz round jar / tin',          labelSize: '1.5" circle',     tip: 'circle',            ids: ['round-1-5'] },
-  { container: '4 oz round jar',                 labelSize: '2" circle',       tip: 'circle',            ids: ['round-2']   },
-  { container: '8 oz round jar / mason jar',     labelSize: '3" circle',       tip: 'circle',            ids: ['round-3']   },
-  { container: '2 oz lotion / squeeze bottle',   labelSize: '1"×3" rectangle', tip: 'rectangle',         ids: ['6871']      },
-  { container: '4–8 oz lotion bottle',           labelSize: '2"×4" rectangle', tip: 'rectangle',         ids: ['22826']     },
-  { container: '4 oz bar soap (wrap)',            labelSize: '1.5"×8" ribbon',  tip: 'side ribbon',       ids: ['ribbon-9x1-2'] },
-  { container: 'Lip balm tube',                  labelSize: '0.5"×1.75" oval', tip: 'oval',              ids: ['oval-1-3-4'] },
-  { container: 'Body butter / whipped soap tub', labelSize: '2"×4" rectangle', tip: 'rectangle',         ids: ['22826']     },
-] as const;
-
-/** Popular size presets — clicking one filters the grid to matching templates. */
-const COMMON_SIZES: { label: string; sublabel: string; ids: string[] }[] = [
-  { label: '2" Round',    sublabel: 'jar top',          ids: ['round-2']      },
-  { label: '1.5" Round',  sublabel: '2 oz jar',         ids: ['round-1-5']    },
-  { label: '3" Round',    sublabel: '8 oz jar',         ids: ['round-3']      },
-  { label: '2"×4"',       sublabel: 'lotion bottle',    ids: ['22826']        },
-  { label: '1"×3"',       sublabel: 'squeeze bottle',   ids: ['6871']         },
-  { label: 'Ribbon Wrap', sublabel: 'bar soap',         ids: ['ribbon-9x1-2'] },
-];
-
-const SIZE_FILTER_OPTIONS: { id: SizeCategory; label: string; hint: string }[] = [
-  { id: 'all',    label: 'All sizes',  hint: ''        },
-  { id: 'small',  label: 'Small',      hint: '< 2"'    },
-  { id: 'medium', label: 'Medium',     hint: '2"–3.5"' },
-  { id: 'large',  label: 'Large',      hint: '> 3.5"'  },
+const SIZE_FILTER_OPTIONS: { id: SizeCategory; labelKey: string; hintKey?: string }[] = [
+  { id: 'all',    labelKey: 'template.allSizes' },
+  { id: 'small',  labelKey: 'template.smallLabels',  hintKey: 'template.smallHint' },
+  { id: 'medium', labelKey: 'template.mediumLabels', hintKey: 'template.mediumHint' },
+  { id: 'large',  labelKey: 'template.largeLabels',  hintKey: 'template.largeHint' },
 ];
 
 const SHAPE_FILTERS: { id: LabelShape | 'all'; labelKey: string }[] = [
@@ -75,17 +66,222 @@ const SHAPE_FILTERS: { id: LabelShape | 'all'; labelKey: string }[] = [
   { id: 'rounded-rectangle', labelKey: 'template.roundedRectangle'},
 ];
 
-const SIZE_GROUP_DEFS: { key: Exclude<SizeCategory, 'all'>; labelKey: string; hintKey: string }[] = [
-  { key: 'small',  labelKey: 'template.smallLabels',  hintKey: 'template.smallHint'  },
-  { key: 'medium', labelKey: 'template.mediumLabels', hintKey: 'template.mediumHint' },
-  { key: 'large',  labelKey: 'template.largeLabels',  hintKey: 'template.largeHint'  },
-];
+/** Chip outline matches the Avery shape it filters — readable text beats perfect geometry. */
+const SHAPE_FILTER_GEOMETRY: Record<LabelShape | 'all', string> = {
+  all: 'rounded-full px-3 py-1.5',
+  circle: 'rounded-full min-h-[2.75rem] min-w-[2.75rem] px-3.5 py-2.5',
+  oval: 'rounded-full px-6 py-1',
+  square: 'rounded-[4px] min-h-[2.5rem] min-w-[2.5rem] px-3 py-2',
+  rectangle: 'rounded-[2px] px-6 py-1',
+  'rounded-rectangle': 'rounded-2xl px-4 py-2.5',
+};
+
+const FACE_ICONS = {
+  front: RectangleHorizontal,
+  back: FlipHorizontal,
+  side: Cylinder,
+} as const;
 
 const dataset = averyData as AveryDataset;
+
+/** Uniform 85% of the post-2× detail card (column, type, icon, preview). */
+const DETAIL_CARD_SCALE = 0.85;
+const DETAIL_THUMB_PX = Math.round(128 * DETAIL_CARD_SCALE);
+const DETAIL_PREVIEW_MAX_H = Math.round(380 * DETAIL_CARD_SCALE);
+/** Size/shape header (thumb + copy): 15% smaller than the rest of the card. */
+const DETAIL_HEADER_THUMB_PX = Math.round(DETAIL_THUMB_PX * 0.85);
+/** Catalog list row (icon + three text lines) after equalizing line 3 to line 2. */
+const CATALOG_ROW_SCALE = 1.08;
+const CATALOG_THUMB_PX = Math.round(56 * CATALOG_ROW_SCALE);
+const SUGGEST_THUMB_PX = 36;
+const STAR_GOLD = 'fill-amber-400 text-amber-400';
+const STAR_GOLD_HEX = '#fbbf24';
+
+function GoldStar({ className }: { className?: string }) {
+  return (
+    <Star
+      className={`${STAR_GOLD} ${className ?? ''}`}
+      color={STAR_GOLD_HEX}
+      fill={STAR_GOLD_HEX}
+      stroke={STAR_GOLD_HEX}
+      aria-hidden
+    />
+  );
+}
+
+function highlightAveryCode(code: string, query: string): ReactNode {
+  if (!isAveryNumberQuery(query)) return code;
+  const digits = averyQueryDigits(query);
+  if (!digits || !code.toLowerCase().startsWith(digits.toLowerCase())) return code;
+  return (
+    <>
+      <mark className="rounded-sm bg-gaia-100 px-0.5 font-bold text-gaia-800">{code.slice(0, digits.length)}</mark>
+      <span className="font-medium text-slate-500">{code.slice(digits.length)}</span>
+    </>
+  );
+}
+
+function listCardSelector(templateId: string): string {
+  return `[data-tour="template-grid"] [data-template-id="${templateId}"], [data-catalog-lane] [data-template-id="${templateId}"]`;
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+function TemplateSearchField({
+  query,
+  onQueryChange,
+  suggestions,
+  onPick,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  suggestions: AveryTemplate[];
+  onPick: (tpl: AveryTemplate) => void;
+}) {
+  const { t } = useTranslation();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+  const [focused, setFocused] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const canOpen = focused && isTemplateSuggestQuery(query) && suggestions.length > 0;
+  const showList = open && canOpen;
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    if (!showList) return;
+    activeRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, showList]);
+
+  useEffect(() => {
+    if (!showList) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onPointer);
+    return () => window.removeEventListener('mousedown', onPointer);
+  }, [showList]);
+
+  function pick(tpl: AveryTemplate) {
+    onPick(tpl);
+    setOpen(false);
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') {
+      if (open) {
+        event.preventDefault();
+        setOpen(false);
+      }
+      return;
+    }
+    if (!canOpen) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (event.key === 'Enter') {
+      const tpl = suggestions[activeIndex] ?? suggestions[0];
+      if (!tpl) return;
+      event.preventDefault();
+      pick(tpl);
+    }
+  }
+
+  return (
+    <div className="relative w-full" ref={wrapRef}>
+      <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      <input
+        data-testid="template-search"
+        className="input w-full pl-9"
+        placeholder={t('template.searchPlaceholder')}
+        value={query}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={showList}
+        aria-controls="template-search-suggestions"
+        aria-activedescendant={showList ? `template-suggest-${suggestions[activeIndex]?.id ?? ''}` : undefined}
+        onChange={(e) => {
+          onQueryChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => {
+          setFocused(true);
+          setOpen(true);
+        }}
+        onBlur={() => setFocused(false)}
+        onKeyDown={onKeyDown}
+      />
+      {showList && (
+        <ul
+          id="template-search-suggestions"
+          role="listbox"
+          data-testid="template-search-suggestions"
+          aria-label={t('template.searchSuggestions')}
+          className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-2xl bg-white py-1 shadow-xl ring-1 ring-slate-200"
+        >
+          {suggestions.map((tpl, index) => {
+            const colors = shapeColorTokens(tpl.shape);
+            const active = index === activeIndex;
+            return (
+              <li key={tpl.id} role="presentation">
+                <button
+                  type="button"
+                  id={`template-suggest-${tpl.id}`}
+                  role="option"
+                  aria-selected={active}
+                  data-testid={`template-suggest-${tpl.id}`}
+                  ref={active ? activeRef : undefined}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => pick(tpl)}
+                  className={`flex w-full items-center gap-3 px-3 py-2 text-left transition ${
+                    active ? 'bg-gaia-50' : 'bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="shrink-0">
+                    <ShapeThumb template={tpl} size={SUGGEST_THUMB_PX} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-800">
+                      {tpl.averyCode ? (
+                        <>
+                          <span className="font-medium text-slate-500">Avery </span>
+                          {highlightAveryCode(tpl.averyCode, query)}
+                        </>
+                      ) : (
+                        describeSize(tpl)
+                      )}
+                    </span>
+                    <span className="block truncate text-xs leading-snug text-slate-500">
+                      <span style={{ color: colors.text }}>{describeSize(tpl)}</span>
+                      {' · '}
+                      {t('template.perSheet', { count: tpl.perSheet })}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function TemplateCard({
   tpl,
@@ -93,30 +289,54 @@ function TemplateCard({
   onClick,
   isFavorite,
   onToggleFavorite,
-  showFavoriteToggle,
+  favoriteAction,
 }: {
   tpl: AveryTemplate;
   isSelected: boolean;
   onClick: () => void;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
-  showFavoriteToggle?: boolean;
+  favoriteAction?: 'star' | 'remove';
 }) {
   const { t } = useTranslation();
+  const colors = shapeColorTokens(tpl.shape);
   return (
     <button
+      type="button"
+      data-template-id={tpl.id}
+      data-shape-color={colors.hex}
       onClick={onClick}
-      className={`group relative flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 text-center ring-1 transition ${
-        isSelected
-          ? 'ring-2 ring-gaia-500 shadow-sm'
-          : 'ring-slate-100 hover:ring-gaia-200'
-      }`}
+      className="group relative flex w-full items-center gap-3 rounded-2xl bg-white px-3 py-2.5 text-left transition"
+      style={{
+        boxShadow: isSelected
+          ? `0 0 0 2px ${colors.hex}, 0 1px 2px rgb(0 0 0 / 0.05)`
+          : `0 0 0 1px ${colors.border}`,
+      }}
     >
-      {showFavoriteToggle && onToggleFavorite && (
+      {favoriteAction === 'remove' && (
+        <GoldStar className="h-4 w-4 shrink-0" />
+      )}
+      <div className="shrink-0">
+        <ShapeThumb template={tpl} size={CATALOG_THUMB_PX} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <span className="block text-[length:calc(0.875rem*1.08*1.04)] font-bold leading-tight" style={{ color: colors.text }}>
+          {describeSize(tpl)}
+        </span>
+        <span className="block truncate text-[length:calc(11px*1.08*1.04)] leading-snug text-slate-500">
+          {tpl.name}
+        </span>
+        <span className="block truncate text-[length:calc(11px*1.08*1.04)] leading-snug text-slate-500">
+          {t('template.perSheet', { count: tpl.perSheet })}
+          {tpl.averyCode && ` · Avery ${tpl.averyCode}`}
+        </span>
+      </div>
+      {favoriteAction && onToggleFavorite && (
         <span
           role="button"
           tabIndex={0}
           aria-label={isFavorite ? t('template.removeFavorite') : t('template.addFavorite')}
+          data-testid={favoriteAction === 'remove' ? `template-remove-favorite-${tpl.id}` : undefined}
           onClick={(e) => {
             e.stopPropagation();
             onToggleFavorite();
@@ -128,31 +348,205 @@ function TemplateCard({
               onToggleFavorite();
             }
           }}
-          className={`absolute right-1.5 top-1.5 rounded-full p-1.5 transition ${
-            isFavorite ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'
+          className={`shrink-0 rounded-full transition ${
+            favoriteAction === 'remove'
+              ? 'flex h-7 w-7 items-center justify-center bg-rose-600 text-white shadow-md hover:bg-rose-700'
+              : `p-1.5 ${
+                  isFavorite
+                    ? STAR_GOLD
+                    : 'text-slate-300 hover:text-amber-400'
+                }`
           }`}
         >
-          <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
+          {favoriteAction === 'remove'
+            ? <X className="h-4 w-4" />
+            : isFavorite
+              ? <GoldStar className="h-4 w-4" />
+              : <Star className="h-4 w-4" />}
         </span>
       )}
-      <ShapeThumb template={tpl} />
-      {/* Size — most prominent */}
-      <span className="mt-0.5 text-sm font-bold leading-tight text-gaia-700">
-        {describeSize(tpl)}
-      </span>
-      {/* Avery / template name */}
-      <span className="line-clamp-2 text-[11px] leading-snug text-slate-500">
-        {tpl.averyCode ? `Avery ${tpl.averyCode}` : tpl.name}
-      </span>
-      {/* Per-sheet count */}
-      <span className="chip mt-0.5">{t('template.perSheet', { count: tpl.perSheet })}</span>
     </button>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
+function ShapeFilterChip({
+  id,
+  label,
+  selected,
+  onClick,
+}: {
+  id: LabelShape | 'all';
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  if (id === 'all') {
+    return (
+      <button
+        type="button"
+        data-testid={`shape-filter-${id}`}
+        onClick={onClick}
+        data-selected={selected ? 'true' : 'false'}
+        className={`inline-flex items-center justify-center whitespace-nowrap text-sm font-medium ${
+          SHAPE_FILTER_GEOMETRY.all
+        } ${
+          selected
+            ? 'bg-gaia-600 text-white'
+            : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  const colors = shapeColorTokens(id);
+  return (
+    <button
+      type="button"
+      data-testid={`shape-filter-${id}`}
+      data-shape-color={colors.hex}
+      onClick={onClick}
+      data-selected={selected ? 'true' : 'false'}
+      className={`inline-flex items-center justify-center whitespace-nowrap text-sm font-medium ${
+        SHAPE_FILTER_GEOMETRY[id]
+      }`}
+      style={
+        selected
+          ? { backgroundColor: colors.hex, color: '#ffffff' }
+          : {
+              backgroundColor: colors.tint,
+              color: colors.text,
+              boxShadow: `inset 0 0 0 1px ${colors.border}`,
+            }
+      }
+    >
+      {label}
+    </button>
+  );
+}
+
+type SizeGlyphSpec = { w: number; h: number; radius: string };
+
+/** Artwork scales Small < Medium < Large; captions stay readable beside/under the glyph. */
+const SIZE_GLYPH: Record<Exclude<SizeCategory, 'all'>, Record<LabelShape | 'all', SizeGlyphSpec>> = {
+  small: {
+    all: { w: 22, h: 14, radius: '8px' },
+    circle: { w: 18, h: 18, radius: '9999px' },
+    oval: { w: 26, h: 14, radius: '9999px' },
+    square: { w: 16, h: 16, radius: '4px' },
+    rectangle: { w: 24, h: 12, radius: '2px' },
+    'rounded-rectangle': { w: 24, h: 14, radius: '8px' },
+  },
+  medium: {
+    all: { w: 32, h: 20, radius: '10px' },
+    circle: { w: 28, h: 28, radius: '9999px' },
+    oval: { w: 38, h: 20, radius: '9999px' },
+    square: { w: 26, h: 26, radius: '4px' },
+    rectangle: { w: 36, h: 18, radius: '2px' },
+    'rounded-rectangle': { w: 36, h: 20, radius: '12px' },
+  },
+  large: {
+    all: { w: 44, h: 28, radius: '12px' },
+    circle: { w: 38, h: 38, radius: '9999px' },
+    oval: { w: 50, h: 28, radius: '9999px' },
+    square: { w: 36, h: 36, radius: '4px' },
+    rectangle: { w: 48, h: 24, radius: '2px' },
+    'rounded-rectangle': { w: 48, h: 28, radius: '16px' },
+  },
+};
+
+function SizeFilterChip({
+  id,
+  label,
+  hint,
+  shape,
+  selected,
+  onClick,
+}: {
+  id: SizeCategory;
+  label: string;
+  hint: string;
+  shape: LabelShape | 'all';
+  selected: boolean;
+  onClick: () => void;
+}) {
+  if (id === 'all') {
+    return (
+      <button
+        type="button"
+        data-testid="size-filter-all"
+        onClick={onClick}
+        className={`flex min-h-9 items-center gap-1 rounded-full px-3 py-1 text-sm font-medium transition ${
+          selected
+            ? 'bg-gaia-100 text-gaia-700 ring-1 ring-gaia-300'
+            : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  const glyph = SIZE_GLYPH[id][shape];
+  const colors = shape !== 'all' ? shapeColorTokens(shape) : null;
+  const selectedStyle = colors
+    ? { backgroundColor: colors.tint, color: colors.text, boxShadow: `inset 0 0 0 1px ${colors.border}` }
+    : undefined;
+  return (
+    <button
+      type="button"
+      data-testid={`size-filter-${id}`}
+      data-size-shape={shape}
+      onClick={onClick}
+      className={`flex min-h-[5.25rem] min-w-[4.75rem] flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium transition ${
+        selected && colors
+          ? ''
+          : selected
+            ? 'bg-gaia-100 text-gaia-700 ring-1 ring-gaia-300'
+            : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+      }`}
+      style={selected && colors ? selectedStyle : undefined}
+    >
+      <span className="flex w-full items-center justify-center" aria-hidden="true">
+        <span
+          data-size-glyph={id}
+          className={`box-border border-2 ${
+            colors
+              ? ''
+              : selected
+                ? 'border-gaia-600 bg-gaia-200/80'
+                : 'border-slate-300 bg-white'
+          }`}
+          style={{
+            width: glyph.w,
+            height: glyph.h,
+            borderRadius: glyph.radius,
+            ...(colors
+              ? {
+                  borderColor: selected ? colors.hex : colors.border,
+                  backgroundColor: selected ? colors.tint : '#ffffff',
+                }
+              : {}),
+          }}
+        />
+      </span>
+      <span className="flex flex-col items-center leading-tight">
+        <span>{label}</span>
+        {hint && (
+          <span
+            className={`text-[10px] font-normal ${
+              selected && !colors ? 'text-gaia-500' : 'text-slate-400'
+            }`}
+            style={selected && colors ? { color: colors.text } : undefined}
+          >
+            {hint}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
 
 export default function TemplateScreen() {
   const settings = useAppStore((s) => s.settings);
@@ -166,8 +560,10 @@ export default function TemplateScreen() {
 
 function TemplatePickerMain() {
   const { t } = useTranslation();
-  const startNewDesign = useAppStore((s) => s.startNewDesign);
   const setTemplate    = useAppStore((s) => s.setTemplate);
+  const setContext     = useAppStore((s) => s.setContext);
+  const context        = useAppStore((s) => s.context);
+  const storedTemplate = useAppStore((s) => s.template);
   const goto           = useAppStore((s) => s.goto);
   const settings       = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -181,118 +577,171 @@ function TemplatePickerMain() {
     [settings],
   );
 
-  const defaultSelectedId = favoriteTemplates[0]?.id ?? 'round-2';
+  const defaultSelectedId = storedTemplate?.id ?? favoriteTemplates[0]?.id ?? 'round-2';
 
   const [shape,       setShape]       = useState<LabelShape | 'all'>('all');
   const [sizeFilter,  setSizeFilter]  = useState<SizeCategory>('all');
   const [query,       setQuery]       = useState('');
-  const [activePreset, setActivePreset] = useState<number | null>(null);
   const [selectedId,  setSelectedId]  = useState<string>(defaultSelectedId);
-  const [context,     setContext]     = useState<LabelContext>('front');
-  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
+  const [lowCountOpen, setLowCountOpen] = useState(false);
+  const [highCountOpen, setHighCountOpen] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const pendingScrollId = useRef<string | null>(null);
 
   async function handleToggleFavorite(templateId: string) {
-    const patch = toggleFavoriteId(settings, templateId);
+    const patch = toggleFavoriteId(useAppStore.getState().settings, templateId);
     if (Object.keys(patch).length) await updateSettings(patch);
   }
 
-  // When a preset chip is toggled, clear other filters (or restore them on deactivate)
-  function handlePreset(idx: number) {
-    if (activePreset === idx) {
-      setActivePreset(null);
-    } else {
-      setActivePreset(idx);
-      setShape('all');
-      setSizeFilter('all');
-      setQuery('');
-    }
-  }
-
-  function clearPreset() {
-    setActivePreset(null);
+  async function confirmRemoveFavorite() {
+    if (!confirmRemoveId) return;
+    const id = confirmRemoveId;
+    setConfirmRemoveId(null);
+    await handleToggleFavorite(id);
   }
 
   // ── Filtered list ──────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
-    if (viewMode === 'mine' && activePreset === null && !query.trim()) {
-      return favoriteTemplates;
-    }
-
-    // If a size preset is active, show only its templates
-    if (activePreset !== null) {
-      const ids = new Set(COMMON_SIZES[activePreset].ids);
-      return dataset.templates.filter((t) => ids.has(t.id));
-    }
-
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     const pool = viewMode === 'mine' ? favoriteTemplates : dataset.templates;
     return pool.filter((tpl) => {
-      if (shape !== 'all' && tpl.shape !== shape) return false;
-      if (sizeFilter !== 'all' && getSizeCategory(tpl) !== sizeFilter) return false;
-      if (!q) return true;
-      const sizeStr = describeSize(tpl).toLowerCase();
-      const dimStr  = `${tpl.labelWidthIn}x${tpl.labelHeightIn} ${tpl.labelWidthIn}in ${tpl.labelHeightIn}in`;
-      return (
-        tpl.name.toLowerCase().includes(q)         ||
-        (tpl.averyCode ?? '').toLowerCase().includes(q) ||
-        sizeStr.includes(q)                        ||
-        dimStr.includes(q)
-      );
+      if (viewMode === 'catalog') {
+        if (shape !== 'all' && tpl.shape !== shape) return false;
+        if (sizeFilter !== 'all' && getSizeCategory(tpl) !== sizeFilter) return false;
+      }
+      return templateMatchesQuery(tpl, q);
     });
-  }, [shape, sizeFilter, query, activePreset, viewMode, favoriteTemplates]);
+  }, [shape, sizeFilter, query, viewMode, favoriteTemplates]);
+
+  const suggestions = useMemo(
+    () => suggestTemplates(dataset.templates, query, { favoriteIds }),
+    [query, favoriteIds],
+  );
+
+  function pickSuggestion(tpl: AveryTemplate) {
+    setQuery(tpl.averyCode ?? describeSize(tpl));
+    setSelectedId(tpl.id);
+    if (isLowCountSheet(tpl)) setLowCountOpen(true);
+    if (isHighCountSheet(tpl)) setHighCountOpen(true);
+    pendingScrollId.current = tpl.id;
+  }
+
+  useEffect(() => {
+    const id = pendingScrollId.current;
+    if (!id || selectedId !== id) return;
+    pendingScrollId.current = null;
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(listCardSelector(id))?.scrollIntoView({
+        block: 'nearest',
+        behavior: 'smooth',
+      });
+    });
+  }, [selectedId, query, lowCountOpen, highCountOpen, filtered]);
+
+  const { everydayTemplates, lowCountTemplates, highCountTemplates } = useMemo(() => {
+    const { everyday, lowCount, highCount } = splitCatalogByPerSheet(filtered);
+    return {
+      everydayTemplates: everyday,
+      lowCountTemplates: lowCount,
+      highCountTemplates: highCount,
+    };
+  }, [filtered]);
+
+  useEffect(() => {
+    if (!query.trim()) return;
+    if (lowCountTemplates.length > 0) setLowCountOpen(true);
+    if (highCountTemplates.length > 0) setHighCountOpen(true);
+  }, [query, lowCountTemplates.length, highCountTemplates.length]);
 
   const selected = useMemo(
     () => dataset.templates.find((tpl) => tpl.id === selectedId) ?? filtered[0] ?? dataset.templates[0],
     [selectedId, filtered],
   );
 
-  // ── Grouped view (only when no filters are active) ────────────────────────
-  const showGrouped =
-    viewMode === 'catalog' &&
-    shape === 'all' &&
-    sizeFilter === 'all' &&
-    !query.trim() &&
-    activePreset === null;
-
-  const sizeGroups = useMemo(() => {
-    if (!showGrouped) return null;
-    return SIZE_GROUP_DEFS
-      .map((def) => ({
-        ...def,
-        templates: filtered.filter((t) => getSizeCategory(t) === def.key),
-      }))
-      .filter((g) => g.templates.length > 0);
-  }, [showGrouped, filtered]);
-
-  // ── Quick starts ──────────────────────────────────────────────────────────
-  const quickStarts: { icon: typeof Circle; label: string; hint: string; tpl: string; ctx: LabelContext }[] = [
-    { icon: Circle,  label: t('template.front'), hint: t('template.frontHint'), tpl: 'round-2',      ctx: 'front' },
-    { icon: Square,  label: t('template.back'),  hint: t('template.backHint'),  tpl: '6871',          ctx: 'back'  },
-    { icon: Sticker, label: t('template.side'),  hint: t('template.sideHint'),  tpl: 'ribbon-9x1-2', ctx: 'side'  },
-  ];
-
-  const open = () => {
-    if (!selected) return;
-    startNewDesign(selected, selected.contexts.includes(context) ? context : selected.contexts[0]);
-  };
-
   // ── Template grid renderer ────────────────────────────────────────────────
-  function TemplateGrid({ templates }: { templates: AveryTemplate[] }) {
-    const showStars = viewMode === 'catalog';
+  function TemplateGrid({
+    templates,
+    lane = 'everyday',
+  }: {
+    templates: AveryTemplate[];
+    lane?: 'everyday' | 'low-count' | 'high-count';
+  }) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4" data-tour="template-grid">
+      <div
+        className="grid grid-cols-1 gap-2"
+        data-tour={lane === 'everyday' ? 'template-grid' : undefined}
+        data-catalog-lane={lane}
+      >
         {templates.map((tpl) => (
           <TemplateCard
             key={tpl.id}
             tpl={tpl}
             isSelected={selected?.id === tpl.id}
             onClick={() => setSelectedId(tpl.id)}
-            showFavoriteToggle={showStars}
+            favoriteAction={viewMode === 'mine' && favoriteIds.has(tpl.id) ? 'remove' : 'star'}
             isFavorite={favoriteIds.has(tpl.id)}
-            onToggleFavorite={() => void handleToggleFavorite(tpl.id)}
+            onToggleFavorite={() => {
+              if (viewMode === 'mine' && favoriteIds.has(tpl.id)) {
+                setConfirmRemoveId(tpl.id);
+                return;
+              }
+              void handleToggleFavorite(tpl.id);
+            }}
           />
         ))}
       </div>
+    );
+  }
+
+  function PerSheetLane({
+    testId,
+    title,
+    hint,
+    templates,
+    lane,
+    open,
+    onToggle,
+  }: {
+    testId: string;
+    title: string;
+    hint: string;
+    templates: AveryTemplate[];
+    lane: 'low-count' | 'high-count';
+    open: boolean;
+    onToggle: () => void;
+  }) {
+    if (templates.length === 0) return null;
+    return (
+      <section
+        className="overflow-hidden rounded-xl border border-dashed border-slate-300 bg-white"
+        data-testid={testId}
+      >
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50"
+          onClick={onToggle}
+          aria-expanded={open}
+        >
+          <span className="min-w-0">
+            <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700">
+              <LayoutGrid className="h-4 w-4 shrink-0 text-gaia-500" />
+              {title}
+              <span className="text-xs font-normal text-slate-400">
+                {t('template.templateCount', { count: templates.length })}
+              </span>
+            </span>
+            <span className="mt-0.5 block text-xs font-normal text-slate-500">
+              {hint}
+            </span>
+          </span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && (
+          <div className="border-t border-slate-100 px-4 pb-4 pt-3">
+            <TemplateGrid templates={templates} lane={lane} />
+          </div>
+        )}
+      </section>
     );
   }
 
@@ -300,252 +749,107 @@ function TemplatePickerMain() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto bg-gaia-50">
-        <div className="mx-auto max-w-6xl px-6 py-8">
-          <h1 className="text-3xl font-semibold text-gaia-900">{t('template.title')}</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-600">
-            {viewMode === 'mine' ? t('template.subtitleMine') : t('template.subtitleCatalog')}
-          </p>
-
-          {/* My sizes ↔ full catalog */}
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setViewMode('mine');
-                clearPreset();
-                setQuery('');
-                setShape('all');
-                setSizeFilter('all');
-              }}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-                viewMode === 'mine'
-                  ? 'bg-gaia-600 text-white'
-                  : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
-              }`}
-            >
-              <Star className={`h-4 w-4 ${viewMode === 'mine' ? 'fill-current' : ''}`} />
-              {t('template.mySizes', { count: favoriteTemplates.length })}
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('catalog')}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-                viewMode === 'catalog'
-                  ? 'bg-gaia-600 text-white'
-                  : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
-              }`}
-            >
-              <Library className="h-4 w-4" />
-              {t('template.browseCatalog', { count: dataset.count })}
-            </button>
-          </div>
-
-          {/* Quick starts */}
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {quickStarts.map((q) => {
-              const Icon = q.icon;
-              return (
-                <button
-                  key={q.label}
-                  onClick={() => {
-                    setSelectedId(q.tpl);
-                    setContext(q.ctx);
-                    const tpl = dataset.templates.find((x) => x.id === q.tpl);
-                    if (tpl) setShape(tpl.shape);
-                    clearPreset();
-                    setSizeFilter('all');
-                    setQuery('');
-                  }}
-                  className="card flex items-center gap-3 text-left transition hover:ring-gaia-300"
-                >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gaia-100 text-gaia-700">
-                    <Icon className="h-5 w-5" />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-semibold text-slate-800">{q.label}</span>
-                    <span className="block text-xs text-slate-500">{q.hint}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+        <div className="mx-auto max-w-[min(90rem,calc(100vw-2rem))] px-6 py-8">
+          <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
             {/* ── Left: Templates grid ────────────────────────────────────── */}
             <div>
-              {viewMode === 'catalog' && (
-              <>
-              {/* Popular sizes quick-pick */}
-              <div className="mb-4">
-                <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                  <Zap className="h-3.5 w-3.5 text-gaia-500" />
-                  {t('template.popularSizes', 'Popular sizes')}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {COMMON_SIZES.map((preset, idx) => (
-                    <button
-                      key={preset.label}
-                      onClick={() => handlePreset(idx)}
-                      className={`flex flex-col items-center rounded-xl px-3 py-2 text-center ring-1 transition ${
-                        activePreset === idx
-                          ? 'bg-gaia-600 text-white ring-gaia-600'
-                          : 'bg-white text-slate-700 ring-slate-200 hover:ring-gaia-300'
-                      }`}
-                    >
-                      <span className="text-sm font-semibold leading-tight">{preset.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <div className="mb-6 flex flex-col items-center text-center">
+                <h1 className="text-3xl font-semibold text-gaia-900">{t('template.title')}</h1>
 
-              {/* Shape filter + search row */}
-              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap gap-1.5">
-                  {SHAPE_FILTERS.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => { setShape(f.id); clearPreset(); }}
-                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                        shape === f.id && activePreset === null
-                          ? 'bg-gaia-600 text-white'
-                          : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      {t(f.labelKey)}
-                    </button>
-                  ))}
-                </div>
-                <div className="relative w-full sm:w-64">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    className="input pl-9"
-                    placeholder={t('template.searchPlaceholder')}
-                    value={query}
-                    onChange={(e) => { setQuery(e.target.value); clearPreset(); }}
-                  />
-                </div>
-              </div>
-
-              {/* Size filter pills */}
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t('template.sizeLabel', 'Size:')}</span>
-                {SIZE_FILTER_OPTIONS.map((f) => (
+                {/* My sizes ↔ full catalog */}
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                   <button
-                    key={f.id}
-                    onClick={() => { setSizeFilter(f.id); clearPreset(); }}
-                    className={`flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium transition ${
-                      sizeFilter === f.id && activePreset === null
-                        ? 'bg-gaia-100 text-gaia-700 ring-1 ring-gaia-300'
-                        : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+                    type="button"
+                    onClick={() => {
+                      setViewMode('mine');
+                      setQuery('');
+                      setShape('all');
+                      setSizeFilter('all');
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                      viewMode === 'mine'
+                        ? 'bg-gaia-600 text-white'
+                        : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
                     }`}
                   >
-                    {f.label}
-                    {f.hint && (
-                      <span className={`text-[10px] ${sizeFilter === f.id && activePreset === null ? 'text-gaia-500' : 'text-slate-400'}`}>
-                        {f.hint}
-                      </span>
-                    )}
+                    <GoldStar className="h-4 w-4" />
+                    {t('template.mySizes', { count: favoriteTemplates.length })}
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('catalog')}
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                      viewMode === 'catalog'
+                        ? 'bg-gaia-600 text-white'
+                        : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
+                    }`}
+                  >
+                    <Library className="h-4 w-4" />
+                    {t('template.browseCatalog', { count: dataset.count })}
+                  </button>
+                </div>
               </div>
+              {viewMode === 'catalog' && (
+              <>
+              {/* Search, then shape + size filters */}
+              <div className="mb-4 space-y-3">
+                <TemplateSearchField
+                  query={query}
+                  onQueryChange={setQuery}
+                  suggestions={suggestions}
+                  onPick={pickSuggestion}
+                />
 
-              {/* Container size guide accordion */}
-              <div className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
-                <button
-                  className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  onClick={() => setSizeGuideOpen((o) => !o)}
-                  aria-expanded={sizeGuideOpen}
-                >
-                  <span className="flex items-center gap-2">
-                    <Layers className="h-4 w-4 text-gaia-500" />
-                    {t('template.sizeGuideTitle', 'What size label fits my container?')}
-                  </span>
-                  <ChevronDown className={`h-4 w-4 text-slate-400 transition ${sizeGuideOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {sizeGuideOpen && (
-                  <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-                    <p className="mb-3 text-xs text-slate-500">
-                      {t('template.sizeGuideHint', 'Click a row to jump to the right template.')}
-                    </p>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-100 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                            <th className="pb-2 pr-4">{t('template.colContainer', 'Container')}</th>
-                            <th className="pb-2 pr-4">{t('template.colRecommendedSize', 'Recommended label size')}</th>
-                            <th className="pb-2">{t('template.colBestShape', 'Best shape')}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50">
-                          {CONTAINER_GUIDE.map((row) => (
-                            <tr
-                              key={row.container}
-                              className="cursor-pointer hover:bg-gaia-50"
-                              onClick={() => {
-                                const id = row.ids[0];
-                                const tpl = dataset.templates.find((x) => x.id === id);
-                                if (tpl) {
-                                  setSelectedId(id);
-                                  setShape(tpl.shape);
-                                  setQuery('');
-                                  setSizeFilter('all');
-                                  clearPreset();
-                                  setSizeGuideOpen(false);
-                                }
-                              }}
-                            >
-                              <td className="py-2 pr-4 text-slate-700">{row.container}</td>
-                              <td className="py-2 pr-4 font-semibold text-gaia-700">{row.labelSize}</td>
-                              <td className="py-2 capitalize text-slate-500">{row.tip}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <p className="mt-3 text-[10px] text-slate-400">
-                      {t('template.sizeGuideMeasure', "Not sure? Wrap a strip of paper around your container and mark where the edges meet — that's your label width.")}
-                    </p>
+                {/* Shape + size filter chips — centered as a group */}
+                <div className="flex w-full flex-col items-center gap-3">
+                  <div className="flex w-full flex-wrap items-center justify-center gap-1.5">
+                    {SHAPE_FILTERS.map((f) => (
+                      <ShapeFilterChip
+                        key={f.id}
+                        id={f.id}
+                        label={t(f.labelKey)}
+                        selected={shape === f.id}
+                        onClick={() => setShape(f.id)}
+                      />
+                    ))}
                   </div>
-                )}
+                  <div className="flex w-full flex-wrap items-center justify-center gap-2">
+                    <span className="ui-label font-semibold text-slate-400 uppercase tracking-wide">{t('template.sizeLabel', 'Size:')}</span>
+                    {SIZE_FILTER_OPTIONS.map((f) => (
+                      <SizeFilterChip
+                        key={f.id}
+                        id={f.id}
+                        label={t(f.labelKey)}
+                        hint={f.hintKey ? t(f.hintKey) : ''}
+                        shape={shape}
+                        selected={sizeFilter === f.id}
+                        onClick={() => setSizeFilter(f.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
               </>
               )}
 
               {viewMode === 'mine' && (
-                <div className="relative mb-4 w-full sm:max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    className="input pl-9"
-                    placeholder={t('template.searchPlaceholder')}
-                    value={query}
-                    onChange={(e) => { setQuery(e.target.value); clearPreset(); }}
+                <div className="mb-4 w-full">
+                  <TemplateSearchField
+                    query={query}
+                    onQueryChange={setQuery}
+                    suggestions={suggestions}
+                    onPick={pickSuggestion}
                   />
                 </div>
               )}
 
-              {/* Active preset banner */}
-              {activePreset !== null && (
-                <div className="mb-3 flex items-center justify-between rounded-xl bg-gaia-50 px-4 py-2 ring-1 ring-gaia-200">
-                  <span className="text-sm text-gaia-700">
-                    {t('template.showingFor', 'Showing templates for')}{' '}
-                    <span className="font-semibold">{COMMON_SIZES[activePreset].label}</span>
-                  </span>
-                  <button
-                    onClick={clearPreset}
-                    className="text-xs text-gaia-500 hover:text-gaia-700 underline"
-                  >
-                    {t('template.showAll', 'Show all')}
-                  </button>
-                </div>
-              )}
-
               {/* Template list: grouped or flat */}
-              {filtered.length === 0 ? (
-                <div className="rounded-xl bg-white p-8 text-center ring-1 ring-slate-100">
-                  <p className="text-sm text-slate-500">
-                    {viewMode === 'mine' ? t('template.noFavorites') : t('template.noResults')}
-                  </p>
-                  {viewMode === 'mine' && (
+              {viewMode === 'mine' ? (
+                filtered.length === 0 ? (
+                  <div className="rounded-xl bg-white p-8 text-center ring-1 ring-slate-100">
+                    <p className="text-sm text-slate-500">
+                      {query.trim() ? t('template.noResults') : t('template.noFavorites')}
+                    </p>
                     <button
                       type="button"
                       className="btn-secondary mt-4"
@@ -553,94 +857,195 @@ function TemplatePickerMain() {
                     >
                       {t('template.browseCatalogCta')}
                     </button>
-                  )}
-                </div>
-              ) : showGrouped && sizeGroups ? (
-                <div className="space-y-8">
-                  {sizeGroups.map((group) => (
-                    <section key={group.key}>
-                      <div className="mb-3 flex items-baseline gap-2">
-                        <h2 className="text-base font-semibold text-slate-800">{t(group.labelKey)}</h2>
-                        <span className="text-xs text-slate-400">{t(group.hintKey)}</span>
-                        <span className="ml-auto text-xs text-slate-400">{t('template.templateCount', { count: group.templates.length })}</span>
-                      </div>
-                      <TemplateGrid templates={group.templates} />
-                    </section>
-                  ))}
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    {everydayTemplates.length > 0 && (
+                      <TemplateGrid templates={everydayTemplates} />
+                    )}
+                    <PerSheetLane
+                      testId="low-count-section"
+                      title={t('template.lowCountTitle', 'Fewer Per Sheet')}
+                      hint={t('template.lowCountHint', 'Sheets with fewer than 6 labels — larger labels, fewer on a page. Still available if you need them.')}
+                      templates={lowCountTemplates}
+                      lane="low-count"
+                      open={lowCountOpen}
+                      onToggle={() => setLowCountOpen((o) => !o)}
+                    />
+                    <PerSheetLane
+                      testId="high-count-section"
+                      title={t('template.highCountTitle', 'More Per Sheet')}
+                      hint={t('template.highCountHint', 'Sheets with more than 12 labels — handy for tiny stickers, less typical for soap. Still available if you need them.')}
+                      templates={highCountTemplates}
+                      lane="high-count"
+                      open={highCountOpen}
+                      onToggle={() => setHighCountOpen((o) => !o)}
+                    />
+                  </div>
+                )
+              ) : everydayTemplates.length === 0 && lowCountTemplates.length === 0 && highCountTemplates.length === 0 ? (
+                <div className="rounded-xl bg-white p-8 text-center ring-1 ring-slate-100">
+                  <p className="text-sm text-slate-500">{t('template.noResults')}</p>
                 </div>
               ) : (
-                <TemplateGrid templates={filtered} />
+                <div className="space-y-8">
+                  {everydayTemplates.length > 0 && (
+                    <TemplateGrid templates={everydayTemplates} lane="everyday" />
+                  )}
+
+                  <PerSheetLane
+                    testId="low-count-section"
+                    title={t('template.lowCountTitle', 'Fewer Per Sheet')}
+                    hint={t('template.lowCountHint', 'Sheets with fewer than 6 labels — larger labels, fewer on a page. Still available if you need them.')}
+                    templates={lowCountTemplates}
+                    lane="low-count"
+                    open={lowCountOpen}
+                    onToggle={() => setLowCountOpen((o) => !o)}
+                  />
+                  <PerSheetLane
+                    testId="high-count-section"
+                    title={t('template.highCountTitle', 'More Per Sheet')}
+                    hint={t('template.highCountHint', 'Sheets with more than 12 labels — handy for tiny stickers, less typical for soap. Still available if you need them.')}
+                    templates={highCountTemplates}
+                    lane="high-count"
+                    open={highCountOpen}
+                    onToggle={() => setHighCountOpen((o) => !o)}
+                  />
+                </div>
               )}
             </div>
 
             {/* ── Right: Selection panel ──────────────────────────────────── */}
-            <aside className="lg:sticky lg:top-4 lg:self-start">
-              <div className="card">
+            <aside className="flex w-full min-w-0 flex-col md:sticky md:top-8 md:self-start md:h-[calc(100dvh-13rem)] md:max-h-[calc(100dvh-13rem)] md:overflow-y-auto">
+              {/* Equal flex spacers center the card when it fits; they collapse so a tall card scrolls from the top. */}
+              <div className="hidden min-h-0 flex-1 md:block" aria-hidden />
+              {/* Padding 4% tighter than px-5 (1.25rem) / py-6 (1.5rem). */}
+              <div
+                className="card w-full px-[1.2rem] py-[1.44rem]"
+                data-testid="template-detail-card"
+                data-template-id={selected?.id}
+              >
                 {selected && (
-                  <>
-                    <div className="flex items-center gap-3">
-                      <ShapeThumb template={selected} size={64} />
-                      <div>
-                        <p className="text-base font-bold text-gaia-700">{describeSize(selected)}</p>
-                        <p className="text-sm font-medium text-slate-700">{selected.name}</p>
-                        <p className="text-xs text-slate-500">
+                  <div className="flex w-full flex-col items-stretch">
+                    <div
+                      className="flex w-full min-w-0 items-center justify-center gap-[0.9rem]"
+                      data-testid="template-detail-header"
+                    >
+                      <div className="shrink-0">
+                        <ShapeThumb template={selected} size={Math.round(DETAIL_HEADER_THUMB_PX * 1.08)} />
+                      </div>
+                      <div className="min-w-0">
+                        <p
+                          className="text-[length:calc(1.08rem*1.08*1.04)] font-bold leading-tight"
+                          style={{ color: shapeColorTokens(selected.shape).text }}
+                        >
+                          {describeSize(selected)}
+                        </p>
+                        <p className="text-[length:calc(0.72rem*1.08*1.04)] font-medium text-slate-700">{selected.name}</p>
+                        <p className="text-[length:calc(0.72rem*1.08*1.04)] text-slate-500">
                           {t('template.perSheet', { count: selected.perSheet })}
                           {selected.averyCode && ` · Avery ${selected.averyCode}`}
                         </p>
                       </div>
                     </div>
 
-                    <div className="mt-4">
-                      <SheetMiniPreview template={selected} highlight={selected.perSheet} />
+                    <div className="mt-[1.7rem] flex justify-center">
+                      <SheetMiniPreview
+                        template={selected}
+                        highlight={selected.perSheet}
+                        maxHeight={DETAIL_PREVIEW_MAX_H}
+                      />
                     </div>
 
-                    <p className="label mt-5">{t('template.context')}</p>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="my-[1.7rem] grid w-full min-w-0 grid-cols-3 gap-[0.6375rem]" data-testid="label-face-tags">
                       {(['front', 'back', 'side'] as LabelContext[]).map((c) => {
-                        const disabled = !selected.contexts.includes(c);
+                        const FaceIcon = FACE_ICONS[c];
+                        const faceColors = shapeColorTokens(selected.shape);
+                        const faceOn = context === c;
                         return (
                           <button
                             key={c}
-                            disabled={disabled}
+                            type="button"
                             onClick={() => setContext(c)}
-                            className={`flex flex-col items-center gap-1 rounded-xl px-2 py-2.5 text-xs font-medium ring-1 transition disabled:opacity-30 ${
-                              context === c && !disabled
-                                ? 'bg-gaia-600 text-white ring-gaia-600'
-                                : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                            className={`flex min-w-0 w-full flex-col items-center gap-[0.31875rem] rounded-[0.85rem] px-[0.4rem] py-[0.85rem] text-center text-[0.74375rem] font-medium leading-tight transition ${
+                              faceOn ? '' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
                             }`}
+                            style={
+                              faceOn
+                                ? { backgroundColor: faceColors.hex, color: '#ffffff' }
+                                : undefined
+                            }
                           >
-                            <Layers className="h-4 w-4" />
+                            <FaceIcon className="h-[1.4025rem] w-[1.4025rem] shrink-0" />
                             {t(`template.${c}`)}
                           </button>
                         );
                       })}
                     </div>
-                    <p className="mt-2 text-xs text-slate-500">{t(`template.${context}Hint`)}</p>
 
-                    <button className="btn-primary mt-5 w-full py-3" onClick={open}>
-                      {t('template.openEditor')} <ArrowRight className="h-4 w-4" />
-                    </button>
-                  </>
+                    {favoriteIds.has(selected.id) && (
+                      <button
+                        type="button"
+                        data-testid="remove-from-my-sizes"
+                        className="w-full min-w-0 rounded-full bg-rose-500 px-[0.9775rem] py-[0.48875rem] text-[length:calc(0.733125rem*1.13)] font-medium text-white transition hover:bg-rose-600"
+                        onClick={() => setConfirmRemoveId(selected.id)}
+                      >
+                        {t('template.removeFavorite')}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
+              <div className="hidden min-h-0 flex-1 md:block" aria-hidden />
             </aside>
           </div>
         </div>
       </div>
 
       <WorkflowNav
-        nextLabel={t('workflow.nextIngredients', 'Next: Manage Ingredients')}
+        nextLabel={t('workflow.nextRecipe', 'Step 2: Choose Recipe')}
         canProceed={!!selected}
         hint={t('workflow.hintSelectTemplate')}
-        trainingHint={t('trainingMode.hintNextIngredients', 'Click here to activate your ingredients')}
+        missingDetail={t('workflow.hintSelectTemplateBody', 'Pick a shape and size first — the editor needs a template to design on.')}
+        allowOverride={false}
         onNext={() => {
           if (selected) {
-            const ctx = selected.contexts.includes(context) ? context : selected.contexts[0];
-            setTemplate(selected, ctx);
+            setTemplate(selected, context);
           }
-          goto('ingredients');
+          goto('recipes');
         }}
       />
+
+      <Modal
+        open={confirmRemoveId !== null}
+        onClose={() => setConfirmRemoveId(null)}
+        width={360}
+        title={t('template.removeFavoriteTitle')}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="cancel-remove-favorite"
+              onClick={() => setConfirmRemoveId(null)}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="btn-danger"
+              data-testid="confirm-remove-favorite"
+              onClick={() => void confirmRemoveFavorite()}
+            >
+              {t('common.remove')}
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-slate-600" data-testid="remove-favorite-confirm-body">
+          {t('template.removeFavoriteBody')}
+        </p>
+      </Modal>
     </div>
   );
 }

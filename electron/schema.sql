@@ -299,3 +299,17 @@ CREATE TABLE IF NOT EXISTS settings (
   debug_mode        INTEGER NOT NULL DEFAULT 0,
   show_label_sets   INTEGER NOT NULL DEFAULT 0
 );
+
+-- ----------------------------------------------------------------------------
+-- PDF Vault — print-ready exports registered for the in-app vault list.
+-- Electron also writes the file into the portable save system's exports/.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pdf_vault (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  path       TEXT,
+  data_url   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pdf_vault_created ON pdf_vault(created_at);

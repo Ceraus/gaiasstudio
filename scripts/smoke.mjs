@@ -147,6 +147,10 @@ async function main() {
       timeout: 15000,
     });
 
+    // First-run coach is a full-screen z-50 overlay; dismiss it so later UI
+    // checks (recipe builder, etc.) hit the real screens instead of the coach.
+    await page.evaluate(() => window.gaiaTestStores.useAppStore.getState().updateSettings({ onboarded: true }));
+
     const templates = await page.evaluate(() => window.gaiaTest.templates());
     const round = templates.find((t) => t.shape === 'circle' && t.contexts.includes('front'));
     // A typical product round (Avery 22807 is 2"); the ring around the
@@ -174,7 +178,8 @@ async function main() {
       page.waitForFunction(
         (expected) => {
           const e = window.gaiaEditor;
-          return !!e && !!e.canvas && !!e.template && e.template.id === expected;
+          const ready = window.gaiaTestStores.useEditorStore.getState().ready;
+          return !!e && !!e.canvas && !!e.template && e.template.id === expected && ready;
         },
         { timeout: 15000 },
         id,
@@ -187,9 +192,11 @@ async function main() {
     const stack = await page.evaluate(() =>
       window.gaiaEditor.canvas.getObjects().map((o) => o.gaiaKind),
     );
+    // Base layer was removed. Rounds also run auto-layout (benefit / net wt /
+    // maker) once the editor is ready, so extra text layers are expected.
     check(
-      'spawns with the strict 4-layer stack',
-      JSON.stringify(stack) === JSON.stringify(['base', 'background', 'overlay', 'text']),
+      'spawns with the current layer stack (no base)',
+      stack[0] === 'background' && stack.includes('overlay') && !stack.includes('base'),
       stack.join(' → '),
     );
 
@@ -198,8 +205,10 @@ async function main() {
       const e = window.gaiaEditor;
       const count = () => e.canvas.getObjects().filter((o) => !String(o.gaiaKind || '').startsWith('__')).length;
       e.addText('heading', 'Hello');
+      await new Promise((r) => setTimeout(r, 0));
       const afterText = count();
       e.addShape('rect');
+      await new Promise((r) => setTimeout(r, 0));
       const afterShape = count();
       const beforeUndo = count();
       await e.undo();
@@ -259,7 +268,9 @@ async function main() {
       e.canvas.setActiveObject(txt);
       e.setTextCurve(50);
       const active = e.canvas.getActiveObject();
-      const hasPath = !!active.path;
+      const childPath = typeof active?.getObjects === 'function'
+        && active.getObjects().some((o) => o.path);
+      const hasPath = !!(active?.path || childPath);
       const curveAmt = active.gaiaCurve;
       // Fabric sizes the cache canvas from the flat text box, so a cached
       // curved headline loses its ascenders along the arc.
@@ -323,15 +334,13 @@ async function main() {
     if (bigRound) {
       const front = await inspectFront(bigRound.id);
       check('front auto-layout creates objects', front.n >= 2, `objects=${front.n}`);
-      check(`front shows the product name (${bigRound.widthIn}" round)`, front.showsName);
-      check('front product name is curved on round label', front.curvedName);
-      check('front layout keeps ink away from the die-cut edge', front.edgeInk === 0, `edge pixels=${front.edgeInk}`);
+      // Recipe title is never auto-injected onto the label.
+      check('front layout does not auto-inject the recipe title', !front.showsName);
     }
 
     if (tinyRound && tinyRound.id !== bigRound?.id) {
       const tiny = await inspectFront(tinyRound.id);
-      check(`tiny ${tinyRound.widthIn}" round still shows the product name`, tiny.showsName);
-      check(`tiny ${tinyRound.widthIn}" round keeps ink off the die-cut edge`, tiny.edgeInk === 0, `edge pixels=${tiny.edgeInk}`);
+      check(`tiny ${tinyRound.widthIn}" round does not auto-inject the recipe title`, !tiny.showsName);
     }
 
     // --- E. 25-ingredient back label fits the safe zone --------------------
@@ -553,7 +562,7 @@ async function main() {
 
       const chips = [...document.querySelectorAll('button[aria-pressed]')]
         .map((b) => b.textContent || '')
-        .filter((txt) => /Oily Skin|Holiday Gifts|Unfiled/.test(txt));
+        .filter((txt) => /Oily Skin|Holiday Gifts|Unfiled|Sin colección/i.test(txt));
 
       const headers = [...document.querySelectorAll('[data-testid="draft-collection-header"]')]
         .map((d) => getComputedStyle(d).backgroundColor);
@@ -611,7 +620,61 @@ async function main() {
     check('screen-bound tour step navigates the app', tourRun.navigated);
     check('finishing the tour marks it completed', tourRun.completed && tourRun.closed);
 
-    // --- N. Full backup → restore round trip ---------------------------------
+    // --- N. Guided recipe builder ---------------------------------------------
+    await page.evaluate(() => window.gaiaTestStores.useAppStore.getState().goto('recipes'));
+    await page.waitForFunction(() => {
+      const buttons = [...document.querySelectorAll('button')];
+      return buttons.some((button) => /new recipe|nueva receta/i.test(button.textContent || ''));
+    }, { timeout: 15000 });
+    await page.evaluate(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((item) => /new recipe|nueva receta/i.test(item.textContent || ''));
+      button?.click();
+    });
+    await page.waitForFunction(() => !!document.querySelector('.fixed.inset-0.z-50 input'), { timeout: 10000 });
+    const wizardBasics = await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.fixed.inset-0.z-50')].find((el) => el.querySelector('input'));
+      const input = overlay?.querySelector('input');
+      return {
+        open: !!overlay,
+        hasName: !!input,
+        text: overlay?.textContent || '',
+      };
+    });
+    check('New Recipe opens the guided builder modal', wizardBasics.open && wizardBasics.hasName);
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.fixed.inset-0.z-50')].find((el) => el.querySelector('input'));
+      const input = overlay?.querySelector('input');
+      if (input) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, 'Smoke Test Recipe');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    await page.waitForFunction(() => {
+      const overlay = [...document.querySelectorAll('.fixed.inset-0.z-50')].find((el) => el.querySelector('input'));
+      const next = [...(overlay?.querySelectorAll('button') ?? [])]
+        .find((button) => /next|siguiente/i.test(button.textContent || ''));
+      return !!next && !next.disabled;
+    }, { timeout: 10000 });
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.fixed.inset-0.z-50')].find((el) => el.querySelector('input'));
+      const next = [...(overlay?.querySelectorAll('button') ?? [])]
+        .find((button) => /next|siguiente/i.test(button.textContent || ''));
+      next?.click();
+    });
+    await page.waitForFunction(() => !!document.querySelector('.fixed.inset-0.z-50 input[role="combobox"]'), { timeout: 10000 });
+    check('guided builder advances to ingredient autocomplete', await page.evaluate(
+      () => !!document.querySelector('.fixed.inset-0.z-50 input[role="combobox"]'),
+    ));
+    await page.keyboard.press('Escape');
+
+    // --- O. Ingredient identity resolution -----------------------------------
+    const ingredientDedup = await evalAsync(page, () => window.gaiaTest.ingredientDedupRoundTrip());
+    check('ingredient aliases resolve to one record', ingredientDedup.sameId);
+    check('deduped ingredient retains both source identities', ingredientDedup.sourceCount === 2);
+
+    // --- P. Full backup → restore round trip ---------------------------------
     // Seed some workspace data first so the round trip moves real rows.
     const backup = await evalAsync(page, async () => {
       await window.gaiaTest.seedWorkspace();

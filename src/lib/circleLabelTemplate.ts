@@ -5,11 +5,12 @@
  *   2. Inner white Legibility disc (~66% diameter) at 70% opacity
  *   3. Formatted foreground text (Ingredients, Directions, Warning, Benefits,
  *      Handmade + contact, net weight) inscribed inside the disc
- *   4. Optional curved product name in the ring above the disc
+ *   4. Curved Product name slot in the ring above the disc (user-typed; never recipe.name)
  */
 import * as fabric from 'fabric';
 import type { AveryTemplate } from '@/types';
 import { editor } from '@/lib/fabric/editorController';
+import { uid } from '@/lib/id';
 import { EDITOR_PPI } from '@/lib/units';
 
 /** Default base colour when no background image is loaded. */
@@ -37,12 +38,28 @@ export function circleInnerDiscRadiusPx(labelWpx: number): number {
 }
 
 type GaiaObj = fabric.FabricObject & {
+  id?: string;
   gaiaKind?: string;
   gaiaPlaceholder?: boolean;
   isLegibilityOverlay?: boolean;
   name?: string;
   locked?: boolean;
 };
+
+/** Fabric props for a user-editable disc (move, resize, fill, opacity). */
+export function applyCircleDiscInteractivity(obj: GaiaObj, locked = false): void {
+  obj.locked = locked;
+  obj.set({
+    selectable: !locked,
+    evented: !locked,
+    lockMovementX: locked,
+    lockMovementY: locked,
+    lockRotation: locked,
+    lockScalingX: locked,
+    lockScalingY: locked,
+    hasControls: !locked,
+  });
+}
 
 /** True when a real (non-placeholder) background image is on the canvas. */
 export function circleHasBackgroundImage(): boolean {
@@ -54,16 +71,15 @@ export function circleHasBackgroundImage(): boolean {
   );
 }
 
-/** Tint the structural base layer sage when the background slot is still empty. */
+/** Tint the Background plate sage when no photo has been slotted yet. */
 export function applyCircleBaseTint(): void {
   const canvas = editor.canvas;
-  if (!canvas) return;
-  canvas.backgroundColor = CIRCLE_SAGE_BASE;
-  const structuralBase = canvas
+  if (!canvas || circleHasBackgroundImage()) return;
+  const bg = canvas
     .getObjects()
-    .find((o) => (o as GaiaObj).gaiaKind === 'base');
-  if (structuralBase && !circleHasBackgroundImage()) {
-    structuralBase.set('fill', CIRCLE_SAGE_BASE);
+    .find((o) => (o as GaiaObj).gaiaKind === 'background') as GaiaObj | undefined;
+  if (bg?.gaiaPlaceholder) {
+    bg.set('fill', CIRCLE_SAGE_BASE);
   }
 }
 
@@ -84,18 +100,18 @@ export function syncCircleLegibilityDisc(cx: number, cy: number, discRadius: num
     top: cy,
     originX: 'center' as const,
     originY: 'center' as const,
-    fill: '#ffffff',
-    opacity: CIRCLE_LEGIBILITY_OPACITY,
-    stroke: '',
-    strokeWidth: 0,
-    selectable: false,
-    evented: false,
-    lockMovementX: true,
-    lockMovementY: true,
-    lockRotation: true,
-    lockScalingX: true,
-    lockScalingY: true,
-    hasControls: false,
+    fill: typeof existing?.fill === 'string' ? existing.fill : '#ffffff',
+    opacity: typeof existing?.opacity === 'number' ? existing.opacity : CIRCLE_LEGIBILITY_OPACITY,
+    stroke: existing?.stroke ?? '',
+    strokeWidth: existing?.strokeWidth ?? 0,
+    selectable: true,
+    evented: true,
+    lockMovementX: false,
+    lockMovementY: false,
+    lockRotation: false,
+    lockScalingX: false,
+    lockScalingY: false,
+    hasControls: true,
   };
 
   if (existing) {
@@ -106,8 +122,13 @@ export function syncCircleLegibilityDisc(cx: number, cy: number, discRadius: num
     } else {
       canvas.remove(existing);
       addDisc(canvas, cx, cy, discRadius, props);
+      return;
     }
+    if (!existing.id) existing.id = uid();
+    existing.name = existing.name || 'Legibility Overlay';
+    existing.gaiaKind = 'overlay';
     existing.isLegibilityOverlay = true;
+    applyCircleDiscInteractivity(existing, !!existing.locked);
     existing.setCoords();
     return;
   }
@@ -128,10 +149,11 @@ function addDisc(
     top: cy,
     radius: discRadius,
   }) as fabric.Circle & GaiaObj;
+  disc.id = uid();
   disc.gaiaKind = 'overlay';
   disc.name = 'Legibility Overlay';
   disc.isLegibilityOverlay = true;
-  disc.locked = true;
+  applyCircleDiscInteractivity(disc, false);
   canvas.add(disc);
   const bg = canvas.getObjects().find((o) => (o as GaiaObj).gaiaKind === 'background');
   if (bg) {

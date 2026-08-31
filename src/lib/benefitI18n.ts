@@ -1,6 +1,11 @@
 import type { TFunction } from 'i18next';
 import { MODULAR_BENEFITS, type BenefitEntry } from '@/data/benefits';
 import i18n from '@/i18n';
+import {
+  BENEFIT_MIX_JOINER,
+  mixBenefitsForIngredients,
+  type BenefitMixIngredient,
+} from '@/lib/benefitMix';
 
 /** Stable i18n key slug for a benefit category label. */
 export function benefitCategoryKey(category: string): string {
@@ -41,4 +46,40 @@ export function findBenefitByStoredLabel(stored: string): BenefitEntry | undefin
 export function displayStoredBenefitLabel(stored: string, t: TFunction): string {
   const found = findBenefitByStoredLabel(stored);
   return found ? getBenefitLabel(found, t) : stored;
+}
+
+/** Map English mix-max phrases onto the current locale (falls back to the English label). */
+export function localizeMixPhrases(phrases: string[], t: TFunction): string[] {
+  return phrases.map((phrase) => {
+    const found = MODULAR_BENEFITS.find((b) => b.label === phrase) ?? findBenefitByStoredLabel(phrase);
+    return found ? getBenefitLabel(found, t) : phrase;
+  });
+}
+
+/** Empty or the offline mix-and-match — safe to replace with a fresh AI draft. */
+export function benefitTextReplaceable(
+  value: string,
+  ingredients: BenefitMixIngredient[],
+  t: TFunction,
+): boolean {
+  if (!value.trim()) return true;
+  return isOfflineMixBenefitValue(value, ingredients, t);
+}
+
+/** True when the stored line is the offline mix-and-match (not a custom / AI sentence). */
+export function isOfflineMixBenefitValue(
+  value: string,
+  ingredients: BenefitMixIngredient[],
+  t: TFunction,
+): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  for (let variant = 0; variant < 8; variant++) {
+    const mix = mixBenefitsForIngredients(ingredients, variant);
+    if (trimmed === mix.phrases.join(BENEFIT_MIX_JOINER)) return true;
+    if (trimmed === localizeMixPhrases(mix.phrases, t).join(BENEFIT_MIX_JOINER)) return true;
+  }
+  const parts = trimmed.split(BENEFIT_MIX_JOINER).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 3) return false;
+  return parts.every((part) => !!findBenefitByStoredLabel(part));
 }

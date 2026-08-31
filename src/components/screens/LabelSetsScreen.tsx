@@ -78,9 +78,8 @@ export default function LabelSetsScreen() {
       alert(t('sets.slotEmpty', 'No design saved here yet. Open the editor and use "Save to Set" to add one.'));
       return;
     }
-    // startNewDesign navigates to 'editor' and resets designJson to null.
+    // startNewDesign navigates to editor-v2 and resets designJson to null.
     // setDesignJson must be called AFTER so the canvas restores the saved design.
-    // The redundant goto('editor') was also setting previousScreen:'editor' (wrong).
     startNewDesign(tpl, ctx);
     setDesignJson(json);
   };
@@ -108,7 +107,7 @@ export default function LabelSetsScreen() {
         {formOpen && (
           <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
             <div className="flex items-center justify-between gap-3">
-              <p className="font-medium text-slate-800">{t('sets.createTitle', 'New label set')}</p>
+              <p className="font-medium text-slate-800">{t('sets.createTitle', 'New Label Set')}</p>
               <button className="icon-btn" onClick={() => setFormOpen(false)}><X className="h-4 w-4" /></button>
             </div>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -305,7 +304,7 @@ function SetCard({
               <span className="text-xs font-semibold text-slate-600">{label}</span>
               {json ? (
                 <span className="flex items-center gap-1 text-[10px] text-gaia-600">
-                  <ArrowRight className="h-3 w-3" /> {t('sets.open', 'Open in editor')}
+                  <ArrowRight className="h-3 w-3" /> {t('sets.open', 'Open In Editor')}
                 </span>
               ) : (
                 <span className="text-[10px] text-slate-400">{t('sets.empty', 'Empty — design not saved yet')}</span>

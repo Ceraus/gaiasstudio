@@ -17,66 +17,66 @@ const alt = isMac ? '⌥' : 'Alt';
 
 const GROUPS = [
   {
-    label: 'History',
+    labelKey: 'shortcuts.groupHistory',
     rows: [
-      [`${mod}+Z`, 'Undo'],
-      [`${mod}+Y  /  ${mod}+Shift+Z`, 'Redo'],
+      [`${mod}+Z`, 'shortcuts.undo'],
+      [`${mod}+Y  /  ${mod}+Shift+Z`, 'shortcuts.redo'],
     ],
   },
   {
-    label: 'Selection',
+    labelKey: 'shortcuts.groupSelection',
     rows: [
-      [`${mod}+A`, 'Select all'],
-      [`${mod}+D`, 'Duplicate'],
-      [`${mod}+G`, 'Group'],
-      [`${mod}+Shift+G`, 'Ungroup'],
-      [`Del / Backspace`, 'Delete'],
-      [`Esc`, 'Deselect / close'],
+      [`${mod}+A`, 'shortcuts.selectAll'],
+      [`${mod}+D`, 'shortcuts.duplicate'],
+      [`${mod}+G`, 'shortcuts.group'],
+      [`${mod}+Shift+G`, 'shortcuts.ungroup'],
+      [`Del / Backspace`, 'shortcuts.delete'],
+      [`Esc`, 'shortcuts.deselect'],
     ],
   },
   {
-    label: 'Move & Nudge',
+    labelKey: 'shortcuts.groupMove',
     rows: [
-      ['Arrow keys', 'Nudge 1 px'],
-      ['Shift + Arrow', 'Nudge 10 px'],
+      ['Arrow keys', 'shortcuts.nudge1'],
+      ['Shift + Arrow', 'shortcuts.nudge10'],
     ],
   },
   {
-    label: 'Layer Order',
+    labelKey: 'shortcuts.groupLayers',
     rows: [
-      ['[ (bracket)', 'Move down one layer'],
-      ['] (bracket)', 'Move up one layer'],
+      ['[ (bracket)', 'shortcuts.moveDown'],
+      ['] (bracket)', 'shortcuts.moveUp'],
     ],
   },
   {
-    label: 'Style',
+    labelKey: 'shortcuts.groupStyle',
     rows: [
-      [`${mod}+Shift+C`, 'Copy style'],
-      [`${mod}+Shift+V`, 'Paste style'],
+      [`${mod}+Shift+C`, 'shortcuts.copyStyle'],
+      [`${mod}+Shift+V`, 'shortcuts.pasteStyle'],
     ],
   },
   {
-    label: 'View',
+    labelKey: 'shortcuts.groupView',
     rows: [
-      [`${mod}+= / Scroll up`, 'Zoom in'],
-      [`${mod}+- / Scroll down`, 'Zoom out'],
-      [`${mod}+0`, 'Fit to screen'],
+      [`${mod}+= / Scroll up`, 'shortcuts.zoomIn'],
+      [`${mod}+- / Scroll down`, 'shortcuts.zoomOut'],
+      [`${mod}+0`, 'shortcuts.fit'],
     ],
   },
   {
-    label: 'Text (while editing)',
+    labelKey: 'shortcuts.groupText',
     rows: [
-      [`${mod}+B`, 'Bold'],
-      [`${mod}+I`, 'Italic'],
-      [`${mod}+U`, 'Underline'],
-      ['Esc', 'Stop editing text'],
+      [`${mod}+B`, 'text.bold'],
+      [`${mod}+I`, 'text.italic'],
+      [`${mod}+U`, 'text.underline'],
+      ['Esc', 'shortcuts.stopEdit'],
     ],
   },
   {
-    label: 'Other',
+    labelKey: 'shortcuts.groupOther',
     rows: [
-      ['?', 'Show this help'],
-      [`${mod}+P  /  ${alt}+P`, 'Toggle print overlay'],
+      ['?', 'shortcuts.showHelp'],
+      [`${mod}+P  /  ${alt}+P`, 'shortcuts.toggleOverlay'],
     ],
   },
 ] as const;
@@ -113,7 +113,7 @@ export default function ShortcutsModal({ open, onClose }: Props) {
           <button
             onClick={onClose}
             className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gaia-500"
-            aria-label="Close"
+            aria-label={t('shortcuts.close')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -122,11 +122,11 @@ export default function ShortcutsModal({ open, onClose }: Props) {
         {/* Body — two-column grid of groups */}
         <div className="grid flex-1 grid-cols-1 gap-x-8 gap-y-6 overflow-y-auto px-6 py-5 sm:grid-cols-2">
           {GROUPS.map((g) => (
-            <div key={g.label}>
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{g.label}</p>
+            <div key={g.labelKey}>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t(g.labelKey)}</p>
               <table className="w-full text-sm">
                 <tbody>
-                  {g.rows.map(([key, desc]) => (
+                  {g.rows.map(([key, descKey]) => (
                     <tr key={key} className="border-b border-slate-50">
                       <td className="py-1 pr-3 font-mono text-[12px] text-slate-600">
                         {key.split('/').map((k, i) => (
@@ -136,7 +136,7 @@ export default function ShortcutsModal({ open, onClose }: Props) {
                           </span>
                         ))}
                       </td>
-                      <td className="py-1 text-slate-600">{desc}</td>
+                      <td className="py-1 text-slate-600">{t(descKey)}</td>
                     </tr>
                   ))}
                 </tbody>

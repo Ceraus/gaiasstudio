@@ -1,27 +1,41 @@
-import { db, DEFAULT_SETTINGS } from './db';
+import { db, DEFAULT_OLLAMA_URL, DEFAULT_PIXABAY_KEY, DEFAULT_SETTINGS, DEFAULT_UNSPLASH_APP_ID, DEFAULT_UNSPLASH_KEY, DEFAULT_UNSPLASH_SECRET } from './db';
 import type {
   AppSettings,
   AssetRecord,
   Client,
   Collection,
+  CustomAffirmation,
   CustomMaterial,
+  FavoriteAffirmation,
   DesignVersion,
   Draft,
   ExpenseCategory,
   Ingredient,
-  IngredientCategory,
   LabelSet,
   ProductListing,
   Receipt,
   ReceiptLineItem,
   Recipe,
   SetPurchase,
+  VaultPdf,
   WorkOrder,
   WorkOrderItem,
   WorkOrderUsageLine,
 } from '@/types';
 
-import { calculateFractionalCost, calculateProfitMargin, calculateRecipeMaterialCogs, calculateRecipeUnitCogs, DEFAULT_BASE_LABOR_RATE } from '@/lib/inventoryMath';
+import {
+  calculateFractionalCost,
+  calculateProfitMargin,
+  calculateRecipeMaterialCogs,
+  calculateRecipeUnitCogs,
+  DEFAULT_BASE_LABOR_RATE,
+  VOLUME_CATEGORIES,
+  isVolumeIngredient,
+  baseUnitOf,
+  recipeLineAmountInBaseUnits,
+} from '@/lib/inventoryMath';
+
+export { VOLUME_CATEGORIES, isVolumeIngredient, baseUnitOf };
 import { uid } from '@/lib/id';
 import { createLotCodeForRecipe, lotCodesRepo } from '@/lib/lotCodes';
 import {
@@ -33,6 +47,21 @@ import {
   encryptSettingsForStorage,
 } from '@/lib/crypto';
 import { migrateTrainingSettings } from '@/lib/trainingMode';
+import {
+  canonicalIngredientKey,
+  mergeSourceRefs,
+  resolveIngredientCandidate,
+  type IngredientCandidate,
+  type IngredientResolution,
+} from '@/lib/ingredientResolution';
+import { registerIngredientIconAlias, resolveIngredientIconKey } from '@/data/ingredientIconPaths';
+import { nextLibraryAccentIndex } from '@/lib/libraryIngredientAccent';
+import {
+  ensureDefaultSoapBase,
+  isDefaultSoapBaseName,
+  withDefaultSoapBaseIds,
+} from '@/data/ingredientSeed';
+import { applyGlossarySpanishName, isRealSpanishIngredientName } from '@/lib/ingredientNameTranslate';
 
 function recipeFinancials(recipe: Recipe, ingredients: Ingredient[], baseLaborRate = DEFAULT_BASE_LABOR_RATE) {
   const cogsTotal = calculateRecipeMaterialCogs(recipe, ingredients);
@@ -44,52 +73,73 @@ function recipeFinancials(recipe: Recipe, ingredients: Ingredient[], baseLaborRa
   return { cogsTotal, profitMargin };
 }
 
-// ---------------------------------------------------------------------------
-// Measurement helpers (shared by Inventory, Recipes, and Work Orders)
-// ---------------------------------------------------------------------------
-
-/** Categories measured in drops by default (everything else uses grams). */
-export const VOLUME_CATEGORIES: ReadonlySet<IngredientCategory> = new Set([
-  'essential-oil',
-  'fragrance',
-]);
-
-/** True when the ingredient is measured in drops (volume) rather than grams. */
-export function isVolumeIngredient(ing: Pick<Ingredient, 'measurementType' | 'category'>): boolean {
-  if (ing.measurementType) return ing.measurementType === 'volume';
-  return ing.category ? VOLUME_CATEGORIES.has(ing.category) : false;
-}
-
-/** Base unit label for an ingredient ('g' or 'drops'). */
-export function baseUnitOf(ing: Pick<Ingredient, 'measurementType' | 'category'>): 'g' | 'drops' {
-  return isVolumeIngredient(ing) ? 'drops' : 'g';
-}
-
 // --- Ingredients -----------------------------------------------------------
 
 export const ingredientsRepo = {
-  all: () => db.ingredients.orderBy('name').toArray(),
+  all: async () => {
+    const items = await db.ingredients.orderBy('name').toArray();
+    for (const item of items) {
+      if (item.iconKey?.startsWith('asset_')) {
+        const bundled = resolveIngredientIconKey(item.name);
+        if (bundled && !bundled.startsWith('asset_')) {
+          item.iconKey = bundled;
+          void db.ingredients.update(item.id, { iconKey: bundled });
+        }
+      }
+      if (item.iconKey) registerIngredientIconAlias(item.name, item.iconKey);
+    }
+    return items;
+  },
   active: () =>
     db.ingredients
       .filter((i) => i.active === true)
-      .sortBy('name'),
-  inactive: () =>
-    db.ingredients
-      .filter((i) => i.active !== true)
       .sortBy('name'),
   async create(
     input: Omit<Ingredient, 'id' | 'createdAt' | 'updatedAt'>,
   ): Promise<Ingredient> {
     const now = Date.now();
+    const canonicalKey = input.canonicalKey || canonicalIngredientKey(input);
+    const existing = await db.ingredients.where('canonicalKey').equals(canonicalKey).first()
+      ?? (await db.ingredients.toArray()).find(
+        (ingredient) => canonicalIngredientKey(ingredient) === canonicalKey,
+      );
+    if (existing) {
+      const nameEs = !isRealSpanishIngredientName(existing.nameEs, existing.name, existing.inci)
+        ? applyGlossarySpanishName({
+          name: existing.name,
+          nameEs: input.nameEs ?? existing.nameEs,
+          inci: existing.inci ?? input.inci,
+        })
+        : undefined;
+      const patch: Partial<Ingredient> = {
+        canonicalKey,
+        aliases: [...new Set([...(existing.aliases ?? []), ...(input.aliases ?? [])])],
+        sourceRefs: mergeSourceRefs(existing.sourceRefs, input.sourceRefs),
+        active: existing.active || input.active,
+        ...(nameEs ? { nameEs } : {}),
+        updatedAt: now,
+      };
+      await db.ingredients.update(existing.id, patch);
+      return { ...existing, ...patch };
+    }
     const fractionalCost = calculateFractionalCost(input);
+    const iconKey = input.iconKey || resolveIngredientIconKey(input.name);
+    const libraryAccent = input.libraryAccent ?? nextLibraryAccentIndex(await db.ingredients.toArray());
+    const nameEs = applyGlossarySpanishName(input);
     const rec: Ingredient = {
       ...input,
+      ...(nameEs ? { nameEs } : {}),
+      measurementType: input.measurementType ?? (isVolumeIngredient(input) ? 'volume' : 'weight'),
       active: input.active ?? false,
+      canonicalKey,
+      iconKey,
       fractionalCost,
+      libraryAccent,
       id: uid(),
       createdAt: now,
       updatedAt: now,
     };
+    if (iconKey) registerIngredientIconAlias(rec.name, iconKey);
     await db.ingredients.add(rec);
     return rec;
   },
@@ -97,7 +147,145 @@ export const ingredientsRepo = {
     const existing = await db.ingredients.get(id);
     const merged = existing ? { ...existing, ...patch } : patch;
     const fractionalCost = calculateFractionalCost(merged);
-    await db.ingredients.update(id, { ...patch, fractionalCost, updatedAt: Date.now() });
+    const canonicalKey = existing && (patch.name !== undefined || patch.inci !== undefined)
+      ? canonicalIngredientKey(merged as Ingredient)
+      : patch.canonicalKey;
+    await db.ingredients.update(id, {
+      ...patch,
+      ...(canonicalKey ? { canonicalKey } : {}),
+      fractionalCost,
+      updatedAt: Date.now(),
+    });
+  },
+  async resolveCandidate(candidate: IngredientCandidate): Promise<IngredientResolution> {
+    return resolveIngredientCandidate(candidate, await db.ingredients.toArray());
+  },
+  async resolveOrCreate(
+    input: Omit<Ingredient, 'id' | 'createdAt' | 'updatedAt'>,
+  ): Promise<{ ingredient: Ingredient; created: boolean; resolution: IngredientResolution }> {
+    const all = await db.ingredients.toArray();
+    const resolution = resolveIngredientCandidate(input, all);
+    if (resolution.decision === 'reuse' && resolution.match) {
+      const sourceRefs = mergeSourceRefs(resolution.match.sourceRefs, input.sourceRefs);
+      const aliases = [...new Set([
+        ...(resolution.match.aliases ?? []),
+        ...(input.aliases ?? []),
+        input.name,
+      ])].filter((name) => name !== resolution.match?.name);
+      const nameEs = !isRealSpanishIngredientName(resolution.match.nameEs, resolution.match.name, resolution.match.inci)
+        ? applyGlossarySpanishName({
+          name: resolution.match.name,
+          nameEs: input.nameEs ?? resolution.match.nameEs,
+          inci: resolution.match.inci ?? input.inci,
+        })
+        : undefined;
+      await this.update(resolution.match.id, {
+        active: resolution.match.active || input.active,
+        sourceRefs,
+        aliases,
+        ...(nameEs ? { nameEs } : {}),
+      });
+      return {
+        ingredient: {
+          ...resolution.match,
+          active: resolution.match.active || input.active,
+          sourceRefs,
+          aliases,
+          ...(nameEs ? { nameEs } : {}),
+        },
+        created: false,
+        resolution,
+      };
+    }
+    const ingredient = await this.create({
+      ...input,
+      canonicalKey: input.canonicalKey || canonicalIngredientKey(input),
+    });
+    return { ingredient, created: true, resolution };
+  },
+  async mergeIngredients(keepId: string, dropId: string): Promise<Ingredient> {
+    if (keepId === dropId) {
+      const same = await db.ingredients.get(keepId);
+      if (!same) throw new Error('Ingredient not found.');
+      return same;
+    }
+    const [keep, drop] = await Promise.all([
+      db.ingredients.get(keepId),
+      db.ingredients.get(dropId),
+    ]);
+    if (!keep || !drop) throw new Error('Ingredient not found.');
+
+    const now = Date.now();
+    const mergedStock = keep.stockOnHand !== undefined || drop.stockOnHand !== undefined
+      ? (keep.stockOnHand ?? 0) + (drop.stockOnHand ?? 0)
+      : undefined;
+    const mergedNameEs = applyGlossarySpanishName(keep) ?? applyGlossarySpanishName(drop);
+    const merged: Ingredient = {
+      ...keep,
+      ...(mergedNameEs ? { nameEs: mergedNameEs } : {}),
+      benefit: keep.benefit || drop.benefit,
+      inci: keep.inci || drop.inci,
+      category: keep.category ?? drop.category,
+      measurementType: keep.measurementType ?? drop.measurementType,
+      active: keep.active || drop.active,
+      isSoapBase: keep.isSoapBase || drop.isSoapBase,
+      aliases: [...new Set([...(keep.aliases ?? []), ...(drop.aliases ?? []), drop.name])],
+      sourceRefs: mergeSourceRefs(keep.sourceRefs, drop.sourceRefs),
+      stockOnHand: mergedStock,
+      updatedAt: now,
+    };
+
+    await db.transaction(
+      'rw',
+      db.ingredients,
+      db.recipes,
+      db.receipts,
+      db.setPurchases,
+      async () => {
+        await db.ingredients.put(merged);
+
+        const recipes = await db.recipes.filter((recipe) => recipe.ingredientIds.includes(dropId)).toArray();
+        for (const recipe of recipes) {
+          const ingredientIds = [...new Set(recipe.ingredientIds.map((id) => id === dropId ? keepId : id))];
+          const ingredientAmounts = { ...(recipe.ingredientAmounts ?? {}) };
+          if (ingredientAmounts[dropId] !== undefined) {
+            ingredientAmounts[keepId] = (ingredientAmounts[keepId] ?? 0) + ingredientAmounts[dropId];
+            delete ingredientAmounts[dropId];
+          }
+          const ingredientUnits = { ...(recipe.ingredientUnits ?? {}) };
+          if (ingredientUnits[dropId] !== undefined) {
+            if (ingredientUnits[keepId] === undefined) ingredientUnits[keepId] = ingredientUnits[dropId];
+            delete ingredientUnits[dropId];
+          }
+          await db.recipes.update(recipe.id, { ingredientIds, ingredientAmounts, ingredientUnits, updatedAt: now });
+        }
+
+        const receipts = await db.receipts
+          .filter((receipt) => receipt.lineItems.some((line) => line.ingredientId === dropId))
+          .toArray();
+        for (const receipt of receipts) {
+          await db.receipts.update(receipt.id, {
+            lineItems: receipt.lineItems.map((line) => (
+              line.ingredientId === dropId ? { ...line, ingredientId: keepId } : line
+            )),
+            updatedAt: now,
+          });
+        }
+
+        const purchases = await db.setPurchases
+          .filter((purchase) => purchase.assignedIngredientIds.includes(dropId))
+          .toArray();
+        for (const purchase of purchases) {
+          await db.setPurchases.update(purchase.id, {
+            assignedIngredientIds: [
+              ...new Set(purchase.assignedIngredientIds.map((id) => id === dropId ? keepId : id)),
+            ],
+          });
+        }
+        await db.ingredients.delete(dropId);
+      },
+    );
+    return merged;
   },
   async toggleActive(id: string) {
     const ing = await db.ingredients.get(id);
@@ -121,7 +309,11 @@ export const ingredientsRepo = {
   async deactivateAll(): Promise<number> {
     return this.deactivateExcept(new Set());
   },
-  remove: (id: string) => db.ingredients.delete(id),
+  async remove(id: string) {
+    const ing = await db.ingredients.get(id);
+    if (ing && isDefaultSoapBaseName(ing.name)) return;
+    await db.ingredients.delete(id);
+  },
 };
 
 // --- Custom Materials & Packaging --------------------------------------------
@@ -164,15 +356,46 @@ export const customMaterialsRepo = {
 // --- Recipes ---------------------------------------------------------------
 
 export const recipesRepo = {
-  all: () => db.recipes.orderBy('name').toArray(),
+  async all() {
+    const base = await ensureDefaultSoapBase();
+    const rows = await db.recipes.orderBy('name').toArray();
+    for (const row of rows) {
+      const footer = (row.footer ?? '').replace(/^Rosa Suarez\s*·\s*/i, '');
+      if (row.footer && footer !== row.footer) {
+        row.footer = footer;
+        void db.recipes.update(row.id, { footer });
+      }
+      if (base) {
+        const ingredientIds = withDefaultSoapBaseIds(row.ingredientIds ?? [], base.id);
+        if (ingredientIds.join('\0') !== (row.ingredientIds ?? []).join('\0')) {
+          row.ingredientIds = ingredientIds;
+          void db.recipes.update(row.id, { ingredientIds });
+        }
+      }
+    }
+    return rows.filter((row) => !row.deletedAt);
+  },
+  async trashed() {
+    const rows = await db.recipes.toArray();
+    return rows
+      .filter((row) => !!row.deletedAt)
+      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
+  },
   get: (id: string) => db.recipes.get(id),
   async create(
     input: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
   ): Promise<Recipe> {
     const now = Date.now();
+    const base = await ensureDefaultSoapBase();
     const ingredients = await db.ingredients.toArray();
     const settings = await settingsRepo.get();
-    const draft: Recipe = { ...input, id: uid(), createdAt: now, updatedAt: now };
+    const draft: Recipe = {
+      ...input,
+      ingredientIds: withDefaultSoapBaseIds(input.ingredientIds ?? [], base?.id),
+      id: uid(),
+      createdAt: now,
+      updatedAt: now,
+    };
     const { cogsTotal, profitMargin } = recipeFinancials(draft, ingredients, settings.baseLaborRate ?? DEFAULT_BASE_LABOR_RATE);
     const rec: Recipe = { ...draft, cogsTotal, profitMargin };
     await db.recipes.add(rec);
@@ -181,12 +404,21 @@ export const recipesRepo = {
   async update(id: string, patch: Partial<Recipe>) {
     const existing = await db.recipes.get(id);
     if (existing) {
-      const merged = { ...existing, ...patch };
+      const base = await ensureDefaultSoapBase();
+      const merged = {
+        ...existing,
+        ...patch,
+        ingredientIds: withDefaultSoapBaseIds(
+          patch.ingredientIds ?? existing.ingredientIds ?? [],
+          base?.id,
+        ),
+      };
       const ingredients = await db.ingredients.toArray();
       const settings = await settingsRepo.get();
       const { cogsTotal, profitMargin } = recipeFinancials(merged, ingredients, settings.baseLaborRate ?? DEFAULT_BASE_LABOR_RATE);
       await db.recipes.update(id, {
         ...patch,
+        ingredientIds: merged.ingredientIds,
         cogsTotal,
         profitMargin,
         updatedAt: Date.now(),
@@ -195,32 +427,25 @@ export const recipesRepo = {
     }
     await db.recipes.update(id, { ...patch, updatedAt: Date.now() });
   },
-  remove: (id: string) => db.recipes.delete(id),
+  remove: (id: string) => db.recipes.update(id, { deletedAt: Date.now(), updatedAt: Date.now() }),
+  async restore(id: string) {
+    await db.recipes.where('id').equals(id).modify((row) => {
+      delete row.deletedAt;
+      row.updatedAt = Date.now();
+    });
+  },
+  purge: (id: string) => db.recipes.delete(id),
 };
 
 // --- Assets ----------------------------------------------------------------
 
 export const assetsRepo = {
+  get: (id: string) => db.assets.get(id),
   all: () => db.assets.orderBy('createdAt').reverse().toArray(),
-  active: () =>
-    db.assets
-      .filter((a) => !a.archived)
-      .sortBy('createdAt')
-      .then((arr) => arr.reverse()),
-  archived: () =>
-    db.assets
-      .filter((a) => !!a.archived)
-      .sortBy('createdAt')
-      .then((arr) => arr.reverse()),
-  byKind: (kind: AssetRecord['kind']) =>
-    db.assets.where('kind').equals(kind).reverse().sortBy('createdAt'),
   async create(input: Omit<AssetRecord, 'id' | 'createdAt'>): Promise<AssetRecord> {
     const rec: AssetRecord = { ...input, archived: false, id: uid(), createdAt: Date.now() };
     await db.assets.add(rec);
     return rec;
-  },
-  async update(id: string, patch: Partial<AssetRecord>) {
-    await db.assets.update(id, patch);
   },
   archive: (id: string) => db.assets.update(id, { archived: true }),
   unarchive: (id: string) => db.assets.update(id, { archived: false }),
@@ -251,7 +476,6 @@ export const versionsRepo = {
     }
     return rec;
   },
-  remove: (id: string) => db.versions.delete(id),
 };
 
 // --- Label Sets ------------------------------------------------------------
@@ -328,6 +552,12 @@ export const draftsRepo = {
     return copy;
   },
   remove: (id: string) => db.drafts.delete(id),
+  /** Empties Saved Designs only. Leaves recipes, ingredients, collections, settings. */
+  async clear(): Promise<number> {
+    const count = await db.drafts.count();
+    await db.drafts.clear();
+    return count;
+  },
 };
 
 /** "Rose Bar" → "Rose Bar copy" → "Rose Bar copy 2" … */
@@ -547,10 +777,13 @@ export function computeOrderUsage(
     const recipe = recipeById.get(item.recipeId);
     if (!recipe || item.quantity <= 0) continue;
     const amounts = recipe.ingredientAmounts ?? {};
+    const units = recipe.ingredientUnits ?? {};
     const perBatch = recipe.barsPerBatch && recipe.barsPerBatch > 0 ? recipe.barsPerBatch : 1;
     for (const [ingredientId, batchAmount] of Object.entries(amounts)) {
       if (!batchAmount || batchAmount <= 0) continue;
-      const used = (batchAmount / perBatch) * item.quantity;
+      const ing = ingredientById.get(ingredientId);
+      const baseAmount = ing ? recipeLineAmountInBaseUnits(batchAmount, ing, units[ingredientId]) : batchAmount;
+      const used = (baseAmount / perBatch) * item.quantity;
       totals.set(ingredientId, (totals.get(ingredientId) ?? 0) + used);
     }
   }
@@ -835,12 +1068,84 @@ export const productListingsRepo = {
   remove: (id: string) => db.productListings.delete(id),
 };
 
+export const pdfVaultRepo = {
+  all: () => db.pdfVault.orderBy('createdAt').reverse().toArray(),
+  get: (id: string) => db.pdfVault.get(id),
+  async add(record: VaultPdf): Promise<VaultPdf> {
+    await db.pdfVault.put(record);
+    return record;
+  },
+  remove: (id: string) => db.pdfVault.delete(id),
+};
+
+export const customAffirmationsRepo = {
+  all: () => db.customAffirmations.orderBy('createdAt').reverse().toArray(),
+  get: (id: string) => db.customAffirmations.get(id),
+  async create(textEn: string, textEs: string): Promise<CustomAffirmation> {
+    const rec: CustomAffirmation = {
+      id: uid(),
+      textEn: textEn.trim(),
+      textEs: textEs.trim() || textEn.trim(),
+      createdAt: Date.now(),
+    };
+    await db.customAffirmations.add(rec);
+    return rec;
+  },
+  async update(id: string, patch: Partial<Pick<CustomAffirmation, 'textEn' | 'textEs'>>) {
+    await db.customAffirmations.update(id, patch);
+  },
+  async remove(id: string) {
+    await db.transaction('rw', db.customAffirmations, db.favoriteAffirmations, async () => {
+      await db.favoriteAffirmations.where('refId').equals(id).delete();
+      await db.customAffirmations.delete(id);
+    });
+  },
+};
+
+export function favoriteAffirmationId(source: FavoriteAffirmation['source'], refId: string): string {
+  return `${source}:${refId}`;
+}
+
+export const favoriteAffirmationsRepo = {
+  all: () => db.favoriteAffirmations.orderBy('createdAt').reverse().toArray(),
+  async isFavorite(source: FavoriteAffirmation['source'], refId: string): Promise<boolean> {
+    const row = await db.favoriteAffirmations.get(favoriteAffirmationId(source, refId));
+    return !!row;
+  },
+  async toggle(source: FavoriteAffirmation['source'], refId: string): Promise<boolean> {
+    const id = favoriteAffirmationId(source, refId);
+    const existing = await db.favoriteAffirmations.get(id);
+    if (existing) {
+      await db.favoriteAffirmations.delete(id);
+      return false;
+    }
+    const rec: FavoriteAffirmation = { id, source, refId, createdAt: Date.now() };
+    await db.favoriteAffirmations.add(rec);
+    return true;
+  },
+};
+
 export const settingsRepo = {
   async get(): Promise<AppSettings> {
     const existing = await db.settings.get('app');
-    const merged = migrateTrainingSettings(
+    let merged = migrateTrainingSettings(
       existing ? { ...DEFAULT_SETTINGS, ...existing } : DEFAULT_SETTINGS,
     );
+    if (!merged.ollamaUrl?.trim()) {
+      merged = { ...merged, ollamaUrl: DEFAULT_OLLAMA_URL };
+    }
+    if (!merged.unsplashKey?.trim() || merged.unsplashKey === '012nArdZHVt27ggE6LZF1Dwr0czF7VC6lAJ6V-vH2gQ') {
+      merged = { ...merged, unsplashKey: DEFAULT_UNSPLASH_KEY };
+    }
+    if (!merged.unsplashSecretKey?.trim()) {
+      merged = { ...merged, unsplashSecretKey: DEFAULT_UNSPLASH_SECRET };
+    }
+    if (!merged.unsplashAppId?.trim()) {
+      merged = { ...merged, unsplashAppId: DEFAULT_UNSPLASH_APP_ID };
+    }
+    if (!merged.pixabayKey?.trim()) {
+      merged = { ...merged, pixabayKey: DEFAULT_PIXABAY_KEY };
+    }
     if (!existing) await db.settings.put(DEFAULT_SETTINGS);
     const decrypted = await decryptSettingsFromStorage(merged);
     return hydrateSettingsFromStorage(decrypted);

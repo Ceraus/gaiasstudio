@@ -169,3 +169,8 @@ export async function verifyPin(pin: string, record: LockPinRecord): Promise<boo
 export function hasPinConfigured(record: LockPinRecord | undefined | null): boolean {
   return !!(record?.lockPinHash && record?.lockPinSalt);
 }
+
+/** PIN is optional. Only a configured PIN gates the studio. */
+export function shouldShowLockGate(record: LockPinRecord | undefined | null): boolean {
+  return hasPinConfigured(record) && !isSessionUnlocked();
+}

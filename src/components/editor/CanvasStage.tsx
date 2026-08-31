@@ -1,16 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Maximize, Minus, MousePointerSquareDashed, Plus, Ruler } from 'lucide-react';
+import { Grid3x3, Magnet, Maximize, Minus, MousePointerSquareDashed, Plus, Ruler, SquareDashed } from 'lucide-react';
 import * as fabric from 'fabric';
 import { editor } from '@/lib/fabric/editorController';
+import { toolFromKey } from '@/lib/editorTools';
 import { EDITOR_PPI } from '@/lib/units';
+import { resolvePrintGuides } from '@/lib/printGuides';
 import { useAppStore } from '@/store/useAppStore';
-import { useEditorStore } from '@/store/useEditorStore';
+import { consumePendingAffirmationText } from '@/lib/sendAffirmationToLabel';
+import { clampEditorZoom, EDITOR_MAX_ZOOM, EDITOR_MIN_ZOOM, useEditorStore } from '@/store/useEditorStore';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { fileToDataUrl, isImageFile, normalizeImage } from '@/lib/files';
+import {
+  computeEditorFitZoom,
+  FIT_HUD_GAP,
+  FIT_HUD_INSET,
+  FIT_MIN_PAD,
+  RULER_WELL_PAD,
+} from '@/lib/editorFitZoom';
 import CanvasRulers, { RULER_SIZE } from './CanvasRulers';
+import PrintGuideCallouts from './PrintGuideCallouts';
 
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+/** Nested square — same glyph as the left-sidebar Center on label control. */
+function CenterOnLabelIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <rect x="8.5" y="8.5" width="7" height="7" rx="1.5" />
+    </svg>
+  );
+}
 
 export default function CanvasStage() {
   const { t } = useTranslation();
@@ -18,27 +46,66 @@ export default function CanvasStage() {
   const context = useAppStore((s) => s.context);
   const designId = useAppStore((s) => s.designId);
   const settings = useAppStore((s) => s.settings);
+  const pendingAffirmationText = useAppStore((s) => s.pendingAffirmationText);
+  const editorReady = useEditorStore((s) => s.ready);
 
   const zoom = useEditorStore((s) => s.zoom);
   const layers = useEditorStore((s) => s.layers);
+  const activeTool = useEditorStore((s) => s.activeTool);
+  const spacePanActive = useEditorStore((s) => s.spacePanActive);
   const cropMode = useEditorStore((s) => s.cropMode);
   const rulersVisible = useEditorStore((s) => s.rulersVisible);
+  const overlayVisible = useEditorStore((s) => s.overlayVisible);
+  const guidesEnabled = useEditorStore((s) => s.guidesEnabled);
+  const gridEnabled = useEditorStore((s) => s.gridEnabled);
+  const printGuideBleedHit = useEditorStore((s) => s.printGuideBleedHit);
+  const printGuideSafeHit = useEditorStore((s) => s.printGuideSafeHit);
   const fitRequest = useEditorStore((s) => s.fitRequest);
+  const hasSelection = useEditorStore((s) => !!s.selection);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const zoomHudRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef({ active: false, x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
   const [dragOver, setDragOver] = useState(false);
 
-  const bleed = settings.bleedIn;
+  const panMode = activeTool === 'hand' || spacePanActive;
+
+  const printGuides = template
+    ? resolvePrintGuides(template)
+    : { bleedIn: 0.125, safeIn: 0.125, printToTheEdge: true };
+  const bleed = printGuides.bleedIn;
+  const safe = printGuides.safeIn;
+  const isRound = template?.shape === 'circle' || template?.shape === 'oval';
   const baseW = template ? (template.labelWidthIn + 2 * bleed) * EDITOR_PPI : 1;
   const baseH = template ? (template.labelHeightIn + 2 * bleed) * EDITOR_PPI : 1;
+  const wellPad = rulersVisible ? RULER_WELL_PAD : 0;
+  const displayW = Math.round(baseW * zoom);
+  const displayH = Math.round(baseH * zoom);
+
+  const measureHudInset = () => {
+    const c = containerRef.current;
+    const hud = zoomHudRef.current;
+    if (!c || !hud) return FIT_HUD_INSET;
+    const gap = Math.ceil(c.getBoundingClientRect().bottom - hud.getBoundingClientRect().top) + FIT_HUD_GAP;
+    return Math.max(FIT_HUD_INSET, gap);
+  };
 
   const fit = useCallback(() => {
     const c = containerRef.current;
-    if (!c || !template) return;
-    const pad = rulersVisible ? 72 + RULER_SIZE * 2 : 72;
-    const s = Math.min((c.clientWidth - pad) / baseW, (c.clientHeight - pad) / baseH);
-    useEditorStore.getState().set({ zoom: clamp(s, 0.05, 3) });
+    if (!c || !template || !c.clientWidth || !c.clientHeight) return;
+    const zoom = computeEditorFitZoom({
+      containerW: c.clientWidth,
+      containerH: c.clientHeight,
+      artboardW: baseW,
+      artboardH: baseH,
+      rulersVisible,
+      rulerSize: RULER_SIZE,
+      hudInset: measureHudInset(),
+      minZoom: EDITOR_MIN_ZOOM,
+      maxZoom: EDITOR_MAX_ZOOM,
+    });
+    useEditorStore.getState().set({ zoom });
   }, [baseW, baseH, template, rulersVisible]);
 
   // Any control anywhere in the editor can ask for a re-fit by bumping the
@@ -48,6 +115,12 @@ export default function CanvasStage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitRequest]);
 
+  // Keep Fabric's backing store ≥ displayed CSS pixels × retina so CSS zoom
+  // never bilinear-stretches the bleed rings, type, or selection handles.
+  useEffect(() => {
+    editor.applyDisplayScale(zoom);
+  }, [zoom]);
+
   // Initialize the Fabric editor for this template/context.
   useEffect(() => {
     if (!canvasRef.current || !template) return;
@@ -56,7 +129,10 @@ export default function CanvasStage() {
     void editor
       .init({ el: canvasRef.current, template, context, settings, designId, initialJson })
       .then(() => {
-        if (!disposed) fit();
+        if (disposed) return;
+        const pending = consumePendingAffirmationText();
+        if (pending) editor.addText('body', pending);
+        fit();
       });
     return () => {
       disposed = true;
@@ -66,6 +142,12 @@ export default function CanvasStage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template?.id, context, designId]);
+
+  useEffect(() => {
+    if (!pendingAffirmationText || !editorReady || !editor.canvas) return;
+    const text = consumePendingAffirmationText();
+    if (text) editor.addText('body', text);
+  }, [pendingAffirmationText, editorReady]);
 
   useEffect(() => {
     const onResize = () => fit();
@@ -98,7 +180,7 @@ export default function CanvasStage() {
       const factor = d / lastDistance;
       lastDistance = d;
       const current = useEditorStore.getState().zoom;
-      useEditorStore.getState().set({ zoom: clamp(current * factor, 0.05, 3) });
+      useEditorStore.getState().set({ zoom: clampEditorZoom(current * factor) });
     };
 
     const onTouchEnd = () => {
@@ -119,14 +201,23 @@ export default function CanvasStage() {
 
   // Keyboard shortcuts (ignored while typing or editing text on the canvas).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       const active = editor.canvas?.getActiveObject() as { isEditing?: boolean } | undefined;
       if (active?.isEditing) return;
+
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault();
+        useEditorStore.getState().set({ spacePanActive: true });
+        editor.refreshToolCursor();
+        return;
+      }
+
       const meta = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       const hasSelection = !!editor.canvas?.getActiveObject();
+
       if (meta && key === 'z') {
         e.preventDefault();
         if (e.shiftKey) void editor.redo();
@@ -134,6 +225,17 @@ export default function CanvasStage() {
       } else if (meta && key === 'y') {
         e.preventDefault();
         void editor.redo();
+      } else if (!meta && !e.altKey && toolFromKey(key)) {
+        e.preventDefault();
+        const tool = toolFromKey(key)!;
+        if (tool === 'eraser' && editor.canvas?.getActiveObject()?.type === 'image') {
+          editor.removeBackgroundFromSelection();
+        } else if (tool === 'image') {
+          editor.setActiveTool('image');
+          editor.triggerImageUpload();
+        } else {
+          editor.setActiveTool(tool);
+        }
       } else if (meta && key === 'd') {
         e.preventDefault();
         void editor.duplicateSelected();
@@ -207,18 +309,72 @@ export default function CanvasStage() {
         }
       } else if (meta && (key === '=' || key === '+')) {
         e.preventDefault();
-        useEditorStore.getState().set({ zoom: clamp(zoom * 1.2, 0.05, 3) });
+        useEditorStore.getState().set({ zoom: clampEditorZoom(zoom * 1.2) });
       } else if (meta && key === '-') {
         e.preventDefault();
-        useEditorStore.getState().set({ zoom: clamp(zoom / 1.2, 0.05, 3) });
+        useEditorStore.getState().set({ zoom: clampEditorZoom(zoom / 1.2) });
       } else if (meta && key === '0') {
         e.preventDefault();
         fit();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        useEditorStore.getState().set({ spacePanActive: false });
+        editor.refreshToolCursor();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
   }, [fit, zoom]);
+
+  // Hand-tool / spacebar pan by scrolling the canvas container.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (!panMode || e.button !== 0) return;
+      panRef.current = {
+        active: true,
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop,
+      };
+      container.style.cursor = 'grabbing';
+      e.preventDefault();
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!panRef.current.active) return;
+      const dx = e.clientX - panRef.current.x;
+      const dy = e.clientY - panRef.current.y;
+      container.scrollLeft = panRef.current.scrollLeft - dx;
+      container.scrollTop = panRef.current.scrollTop - dy;
+    };
+
+    const onMouseUp = () => {
+      if (!panRef.current.active) return;
+      panRef.current.active = false;
+      container.style.cursor = panMode ? 'grab' : '';
+    };
+
+    container.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [panMode]);
 
   const addFromLibrary = useLibraryStore((s) => s.addFromDataUrl);
 
@@ -243,16 +399,31 @@ export default function CanvasStage() {
   };
 
   const handleWheel = (e: React.WheelEvent) => {
-    if (!e.ctrlKey && !e.metaKey) return;
+    const zoomWheel = e.ctrlKey || e.metaKey || e.altKey;
+    if (!zoomWheel) return;
     e.preventDefault();
+
+    const container = containerRef.current;
+    const current = useEditorStore.getState().zoom;
     const delta = e.deltaY > 0 ? 1 / 1.1 : 1.1;
-    useEditorStore.getState().set({ zoom: clamp(zoom * delta, 0.05, 3) });
+    const next = clampEditorZoom(current * delta);
+
+    if (e.altKey && container) {
+      const rect = container.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left + container.scrollLeft;
+      const cursorY = e.clientY - rect.top + container.scrollTop;
+      const ratio = next / current;
+      container.scrollLeft = cursorX * ratio - (e.clientX - rect.left);
+      container.scrollTop = cursorY * ratio - (e.clientY - rect.top);
+    }
+
+    useEditorStore.getState().set({ zoom: next });
   };
 
   return (
     <div
       ref={containerRef}
-      className="canvas-checkerboard relative flex-1 overflow-auto"
+      className={`relative h-full min-h-0 w-full flex-1 overflow-auto bg-[#e9ecef] ${panMode ? 'cursor-grab' : ''}`}
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -262,39 +433,72 @@ export default function CanvasStage() {
       onWheel={handleWheel}
     >
       <div
-        className="flex min-h-full min-w-full items-center justify-center p-10"
-        style={rulersVisible ? { paddingLeft: 40 + RULER_SIZE, paddingTop: 40 + RULER_SIZE } : undefined}
+        className="flex min-h-full min-w-full items-center justify-center p-6"
+        style={{
+          // Lift the artboard so a max-size Fit sits above the zoom HUD, not under it.
+          paddingBottom: FIT_MIN_PAD / 2 + FIT_HUD_INSET,
+          ...(rulersVisible ? { paddingLeft: 40 + RULER_SIZE, paddingTop: 40 + RULER_SIZE } : {}),
+        }}
       >
-        <div style={{ width: baseW * zoom, height: baseH * zoom }} className="relative">
+        <div
+          className="relative"
+          style={{
+            width: displayW + wellPad * 2,
+            height: displayH + wellPad * 2,
+          }}
+        >
           {rulersVisible && (
             <CanvasRulers
-              widthPx={baseW * zoom}
-              heightPx={baseH * zoom}
+              widthPx={displayW + wellPad * 2}
+              heightPx={displayH + wellPad * 2}
               zoom={zoom}
               bleedPx={bleed * EDITOR_PPI}
+              padPx={wellPad}
             />
           )}
           <div
-            className="shadow-2xl overflow-hidden"
+            className="relative"
             style={{
-              width: baseW,
-              height: baseH,
-              transform: `scale(${zoom})`,
-              transformOrigin: 'top left',
-              willChange: 'transform',
+              position: 'absolute',
+              left: wellPad,
+              top: wellPad,
+              width: displayW,
+              height: displayH,
             }}
           >
-            <canvas ref={canvasRef} style={{ display: 'block' }} />
-          </div>
-
-          {layers.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-              <div className="max-w-[80%] rounded-2xl bg-white/85 px-5 py-4 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-200">
-                <MousePointerSquareDashed className="mx-auto mb-2 h-6 w-6 text-gaia-400" />
-                {t('editor.emptyCanvas')}
-              </div>
+            <div
+              className={`overflow-hidden ${isRound ? 'rounded-full' : ''}`}
+              style={{
+                width: baseW,
+                height: baseH,
+                transform: `scale(${baseW ? displayW / baseW : zoom}, ${baseH ? displayH / baseH : zoom})`,
+                transformOrigin: 'top left',
+                willChange: 'transform',
+              }}
+            >
+              <canvas ref={canvasRef} style={{ display: 'block' }} />
             </div>
-          )}
+            {overlayVisible && (
+              <PrintGuideCallouts
+                canvasW={baseW}
+                canvasH={baseH}
+                zoom={zoom}
+                bleedPx={bleed * EDITOR_PPI}
+                safePx={safe * EDITOR_PPI}
+                showPrintToTheEdge={printGuideBleedHit && bleed > 0.002 && printGuides.printToTheEdge}
+                showSafetyArea={printGuideSafeHit && safe > 0.002}
+              />
+            )}
+
+            {layers.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+                <div className="max-w-[80%] rounded-2xl bg-white/85 px-5 py-4 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-200">
+                  <MousePointerSquareDashed className="mx-auto mb-2 h-6 w-6 text-gaia-400" />
+                  {t('editor.emptyCanvas')}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -305,21 +509,24 @@ export default function CanvasStage() {
       )}
 
       {/* Zoom controls */}
-      <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-xl bg-white/95 px-2 py-1.5 shadow-lg ring-1 ring-slate-200">
+      <div
+        ref={zoomHudRef}
+        className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-xl bg-white/95 px-2 py-1.5 shadow-lg ring-1 ring-slate-200"
+      >
         <button
           className="icon-btn"
           title={t('editor.zoomOut')}
-          onClick={() => useEditorStore.getState().set({ zoom: clamp(zoom / 1.2, 0.05, 3) })}
+          onClick={() => useEditorStore.getState().set({ zoom: clampEditorZoom(zoom / 1.2) })}
         >
           <Minus className="h-4 w-4" />
         </button>
-        <span className="w-12 text-center text-xs font-medium tabular-nums text-slate-600">
+        <span className="min-w-[3.5rem] px-0.5 text-center text-xs font-medium tabular-nums text-slate-600">
           {Math.round(zoom * 100)}%
         </span>
         <button
           className="icon-btn"
           title={t('editor.zoomIn')}
-          onClick={() => useEditorStore.getState().set({ zoom: clamp(zoom * 1.2, 0.05, 3) })}
+          onClick={() => useEditorStore.getState().set({ zoom: clampEditorZoom(zoom * 1.2) })}
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -335,6 +542,42 @@ export default function CanvasStage() {
           onClick={() => useEditorStore.getState().set({ rulersVisible: !rulersVisible })}
         >
           <Ruler className="h-4 w-4" />
+        </button>
+        <button
+          className={`icon-btn ${gridEnabled ? 'icon-btn-active' : ''}`}
+          title={t('editor.toggleGrid', 'Show alignment grid')}
+          aria-label={t('editor.toggleGrid', 'Show alignment grid')}
+          aria-pressed={gridEnabled}
+          onClick={() => editor.setGridEnabled(!gridEnabled)}
+        >
+          <Grid3x3 className="h-4 w-4" />
+        </button>
+        <button
+          className={`icon-btn ${guidesEnabled ? 'icon-btn-active' : ''}`}
+          title={t('editor.toggleGuides', 'Toggle Guides')}
+          aria-label={t('editor.toggleGuides', 'Toggle Guides')}
+          aria-pressed={guidesEnabled}
+          onClick={() => editor.setGuidesEnabled(!guidesEnabled)}
+        >
+          <Magnet className="h-4 w-4" />
+        </button>
+        <button
+          className={`icon-btn ${overlayVisible ? 'icon-btn-active' : ''}`}
+          title={t('editor.toggleBleed', 'Show / Hide Safe Zones')}
+          aria-label={t('editor.toggleBleed', 'Show / Hide Safe Zones')}
+          aria-pressed={overlayVisible}
+          onClick={() => editor.setOverlayVisible(!overlayVisible)}
+        >
+          <SquareDashed className="h-4 w-4" />
+        </button>
+        <button
+          className="icon-btn"
+          title={t('editor.centerOnLabel')}
+          aria-label={t('editor.centerOnLabel')}
+          disabled={!hasSelection}
+          onClick={() => editor.centerSelected()}
+        >
+          <CenterOnLabelIcon className="h-4 w-4" />
         </button>
       </div>
 

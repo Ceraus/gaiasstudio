@@ -1,7 +1,7 @@
 {
   "name": "gaia-studio",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.9",
   "description": "Gaia's Studio — an offline-first business hub for Gaia's Essences: labels, recipes, inventory, orders, finances, and Etsy integration.",
   "author": "Rosa Suarez (Gaia's Essences)",
   "main": "electron/main.cjs",
@@ -12,16 +12,19 @@
     "build:e2e": "tsc -b && vite build --mode e2e",
     "preview": "vite preview",
     "smoke": "npm run build:e2e && node scripts/smoke.mjs",
-    "restore:rosa": "node scripts/restore-rosa-data.mjs",
     "sync:i18n": "node scripts/sync-ingredient-i18n.mjs",
+    "catalog:offline": "node scripts/build-offline-ingredient-catalog.mjs",
+    "icons:comfy": "node scripts/generateComfyIcons.mjs",
     "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
     "avery:generate": "node scripts/generate-avery-dataset.mjs",
     "avery:scrape": "node scripts/scrape-avery.mjs",
     "avery:scrape:browser": "node scripts/scrape-avery.mjs --browser",
     "avery:scrape:docx": "node scripts/scrape-avery-docx.mjs",
+    "avery:import:glabels": "node --use-system-ca scripts/import-glabels-avery.mjs",
+    "avery:verify:pages": "node --use-system-ca scripts/verify-avery-pages.mjs",
     "electron:start": "electron .",
-    "ai:fetch-model": "node scripts/fetch-bundled-model.mjs",
-    "predist:win": "npm run ai:fetch-model && npm version patch --no-git-tag-version",
+    "predist:win": "npm version patch --no-git-tag-version",
     "dist:win": "npm run build && electron-builder --win --x64",
     "dist:mac": "npm run build && electron-builder --mac --x64",
     "dist": "npm run build && electron-builder"
@@ -44,7 +47,6 @@
     "i18next": "^23.16.8",
     "jsbarcode": "^3.12.3",
     "lucide-react": "^0.468.0",
-    "node-llama-cpp": "^3.19.1",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
@@ -61,12 +63,14 @@
     "autoprefixer": "^10.4.20",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
-    "jszip": "^3.10.1",
     "postcss": "^8.4.49",
+    "puppeteer": "^25.8.0",
     "puppeteer-core": "^25.3.0",
+    "rcedit": "^5.0.2",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^4.1.11"
   },
   "build": {
     "appId": "com.gaiasessences.studio",
@@ -83,20 +87,12 @@
       "package.json"
     ],
     "asar": true,
-    "asarUnpack": [
-      "node_modules/node-llama-cpp/**/*",
-      "node_modules/@node-llama-cpp/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/models",
-        "to": "models"
-      }
-    ],
+    "afterPack": "scripts/after-pack-win-icon.cjs",
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
-          "target": "zip",
+          "target": "portable",
           "arch": [
             "x64"
           ]

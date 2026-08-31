@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Lightbulb, Search, Sparkles, X } from 'lucide-react';
+import { Blend, Lightbulb, Search, Shuffle, Sparkles, X } from 'lucide-react';
 import { BENEFIT_CATEGORIES, MODULAR_BENEFITS, type BenefitEntry } from '@/data/benefits';
 import {
   allBenefitLabelVariants,
@@ -8,34 +8,19 @@ import {
   getBenefitCategoryLabel,
   getBenefitLabel,
   isBenefitSelected,
+  localizeMixPhrases,
 } from '@/lib/benefitI18n';
+import {
+  BENEFIT_MIX_JOINER,
+  INGREDIENT_CATEGORY_TO_BENEFITS,
+  mixBenefitsForIngredients,
+  type BenefitMixIngredient,
+} from '@/lib/benefitMix';
+import { ingredientsForBenefitCopy } from '@/lib/ingredientSkinFeel';
 import type { IngredientCategory } from '@/types';
 
-// ---------------------------------------------------------------------------
-// Ingredient-category → benefit-category mapping for quick-pick suggestions
-// ---------------------------------------------------------------------------
-const CATEGORY_MAP: Partial<Record<IngredientCategory, string[]>> = {
-  oil:            ['Moisturizing', 'Nourishing', 'Conditioning'],
-  butter:         ['Moisturizing', 'Nourishing', 'Conditioning'],
-  milk:           ['Conditioning', 'Nourishing', 'Moisturizing', 'Sensitive Skin'],
-  clay:           ['Detoxifying', 'Mineral-Rich', 'Balancing', 'Acne & Blemish'],
-  botanical:      ['Healing', 'Soothing', 'Anti-aging', 'Natural & Clean'],
-  floral:         ['Aromatherapy — Calming', 'Aromatherapy — Romantic', 'Soothing'],
-  citrus:         ['Brightening', 'Aromatherapy — Uplifting'],
-  exfoliant:      ['Exfoliating'],
-  'essential-oil':['Aromatherapy — Calming', 'Aromatherapy — Uplifting', 'Aromatherapy — Grounding'],
-  fragrance:      ['Aromatherapy — Calming', 'Aromatherapy — Uplifting'],
-  base:           ['Cleansing', 'Conditioning'],
-  seed:           ['Nourishing', 'Moisturizing', 'Anti-aging'],
-  spice:          ['Warming & Stimulating', 'Detoxifying'],
-  wax:            ['Protective', 'Moisturizing'],
-  additive:       ['Multi-Benefit'],
-  colorant:       [],
-  other:          [],
-};
-
 const MAX_SELECTED = 3;
-const JOINER = ' · ';
+const JOINER = BENEFIT_MIX_JOINER;
 
 // ---------------------------------------------------------------------------
 // Props
@@ -43,20 +28,41 @@ const JOINER = ' · ';
 export interface BenefitPickerProps {
   value: string;
   onChange: (val: string) => void;
+  /** When Local AI is reachable, hide the offline mix-and-match UI. */
+  aiOnline?: boolean;
   /** Categories of active ingredients in the current recipe for quick-pick. */
   ingredientCategories?: IngredientCategory[];
+  /** Recipe ingredients — used by the offline mix-max to pick a best combo. */
+  ingredients?: BenefitMixIngredient[];
+}
+
+function phraseToEntry(phrase: string): BenefitEntry | undefined {
+  return MODULAR_BENEFITS.find((b) => b.label === phrase)
+    ?? MODULAR_BENEFITS.find((b) => allBenefitLabelVariants(b).includes(phrase));
 }
 
 // ---------------------------------------------------------------------------
 // BenefitPicker
 // ---------------------------------------------------------------------------
-export default function BenefitPicker({ value, onChange, ingredientCategories = [] }: BenefitPickerProps) {
+export default function BenefitPicker({
+  value,
+  onChange,
+  aiOnline = false,
+  ingredientCategories = [],
+  ingredients = [],
+}: BenefitPickerProps) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [mixVariant, setMixVariant] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const onChangeRef = useRef(onChange);
+  const appliedMixRef = useRef('');
+  const skipAutoRef = useRef(false);
+  const lastMixSigRef = useRef('');
+  onChangeRef.current = onChange;
 
   // Parse the stored string back into an array of benefit labels
   const selected: string[] = useMemo(
@@ -88,7 +94,11 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
   };
 
   const removeStoredLabel = (stored: string) => commit(selected.filter((l) => l !== stored));
-  const clearAll = () => onChange('');
+  const clearAll = () => {
+    skipAutoRef.current = true;
+    appliedMixRef.current = '';
+    onChange('');
+  };
 
   // Close on outside click
   useEffect(() => {
@@ -107,23 +117,85 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
     if (open) setTimeout(() => searchRef.current?.focus(), 50);
   }, [open]);
 
-  // Quick-pick suggestions derived from active ingredient categories
+  const mixIngredients = useMemo<BenefitMixIngredient[]>(() => {
+    if (ingredients.length) return ingredientsForBenefitCopy(ingredients);
+    return ingredientCategories.map((category) => ({ name: category, category }));
+  }, [ingredients, ingredientCategories]);
+
+  const mix = useMemo(
+    () => mixBenefitsForIngredients(mixIngredients, mixVariant),
+    [mixIngredients, mixVariant],
+  );
+
+  const mixLabels = useMemo(
+    () => localizeMixPhrases(mix.phrases, t),
+    [mix.phrases, t, i18n.language],
+  );
+
+  const mixLine = mixLabels.join(JOINER);
+  const mixSignature = mixIngredients
+    .map((item) => `${item.name}\0${item.category ?? ''}`)
+    .join('|');
+  const mixIsApplied = Boolean(mixLine) && value === mixLine;
+
+  const forceApplyRef = useRef(false);
+
+  const applyMix = (line: string) => {
+    if (!line) return;
+    skipAutoRef.current = false;
+    appliedMixRef.current = line;
+    onChangeRef.current(line);
+  };
+
+  const shuffleMix = () => {
+    skipAutoRef.current = false;
+    forceApplyRef.current = true;
+    setMixVariant((current) => current + 1);
+  };
+
+  // Auto-fill (or refresh) the best generic combo when ingredients change,
+  // unless Ollama is online or the user cleared / picked a custom mix.
+  useEffect(() => {
+    if (aiOnline) return;
+    if (!mixLine) return;
+    if (mixSignature !== lastMixSigRef.current) {
+      lastMixSigRef.current = mixSignature;
+      skipAutoRef.current = false;
+      if (mixVariant !== 0) {
+        setMixVariant(0);
+        return;
+      }
+    }
+    if (skipAutoRef.current) return;
+    const force = forceApplyRef.current;
+    forceApplyRef.current = false;
+    const empty = !value.trim();
+    const stillAuto = value === appliedMixRef.current;
+    if ((force || empty || stillAuto) && value !== mixLine) applyMix(mixLine);
+    else if (empty || stillAuto) appliedMixRef.current = mixLine;
+  }, [aiOnline, mixLine, mixSignature, mixVariant, value]);
+
+  // Quick-pick suggestions: mix-max phrases first, then category fallbacks.
   const suggestions = useMemo(() => {
+    const fromMix = mix.phrases
+      .map(phraseToEntry)
+      .filter((entry): entry is BenefitEntry => !!entry);
+    if (fromMix.length) return fromMix;
+
     if (!ingredientCategories.length) return [];
     const benefitCats = new Set<string>();
     for (const ic of ingredientCategories) {
-      (CATEGORY_MAP[ic] ?? []).forEach((bc) => benefitCats.add(bc));
+      (INGREDIENT_CATEGORY_TO_BENEFITS[ic] ?? []).forEach((bc) => benefitCats.add(bc));
     }
     if (!benefitCats.size) return [];
     const candidates = MODULAR_BENEFITS.filter((b) => benefitCats.has(b.category));
-    // Shuffle-ish: sort by how many ingredient categories match, take top 5
     const scored = candidates.map((b) => ({
       b,
-      score: ingredientCategories.filter((ic) => (CATEGORY_MAP[ic] ?? []).includes(b.category)).length,
+      score: ingredientCategories.filter((ic) => (INGREDIENT_CATEGORY_TO_BENEFITS[ic] ?? []).includes(b.category)).length,
     }));
     scored.sort((a, b_) => b_.score - a.score);
     return scored.slice(0, 5).map((s) => s.b);
-  }, [ingredientCategories]);
+  }, [mix.phrases, ingredientCategories]);
 
   // Filtered benefits list
   const filtered = useMemo(() => {
@@ -145,24 +217,63 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
     return list;
   }, [activeCategory, search, t, i18n.language]);
 
-  const hasSuggestions = suggestions.length > 0 && !search && !activeCategory;
+  const hasSuggestions = !aiOnline && suggestions.length > 0 && !search && !activeCategory;
 
   return (
     <div ref={containerRef} className="relative">
-      {/* ── Trigger / selected chips display ──────────────────────────────── */}
-      <div
-        className={`flex min-h-[2.375rem] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-xl border bg-white px-3 py-2 text-sm transition focus-within:ring-2 focus-within:ring-gaia-400 ${
-          open ? 'border-gaia-400 ring-2 ring-gaia-400' : 'border-slate-200 hover:border-gaia-300'
-        }`}
-        onClick={() => setOpen((o) => !o)}
-        role="combobox"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-      >
-        {selected.length === 0 ? (
-          <span className="flex-1 text-slate-400">{t('benefitPicker.placeholder')}</span>
-        ) : (
-          selected.map((stored) => (
+      {!aiOnline && mixLabels.length > 0 && (
+        <div className="mb-2 rounded-xl border border-gaia-100 bg-gaia-50/70 px-3 py-2">
+          <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-gaia-700">
+            <Blend className="h-3 w-3 shrink-0" />
+            {t('benefitPicker.bestMix', 'Best mix for these ingredients')}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {mixLabels.map((label, index) => (
+              <span
+                key={`${label}-${index}`}
+                className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-lg bg-gaia-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-gaia-700 disabled:bg-gaia-300"
+              onClick={() => applyMix(mixLine)}
+              disabled={mixIsApplied}
+            >
+              <Blend className="h-3 w-3" />
+              {mixIsApplied
+                ? t('benefitPicker.bestMixApplied', 'Best mix applied')
+                : t('benefitPicker.useBestMix', 'Use This Mix')}
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-lg border border-gaia-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gaia-800 transition hover:bg-gaia-50"
+              onClick={shuffleMix}
+            >
+              <Shuffle className="h-3 w-3" />
+              {t('benefitPicker.shuffleMix', 'Try Another Mix')}
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11px] text-slate-500">
+            {t('benefitPicker.bestMixHint', 'Offline mix of up to 3 generic benefits from your ingredients — no AI required.')}
+          </p>
+        </div>
+      )}
+
+      {/* ── Selected chips ────────────────────────────────────────────────── */}
+      {selected.length > 0 && (
+        <div
+          className="flex w-full cursor-pointer flex-wrap items-center gap-1.5"
+          onClick={() => setOpen((o) => !o)}
+          role="combobox"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+        >
+          {selected.map((stored) => (
             <span
               key={stored}
               className="flex items-center gap-1 rounded-full bg-gaia-100 px-2.5 py-0.5 text-xs font-medium text-gaia-800"
@@ -177,22 +288,17 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
                 <X className="h-3 w-3" />
               </button>
             </span>
-          ))
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-1 text-slate-400">
-          {selected.length > 0 && (
-            <button
-              type="button"
-              className="rounded-full p-0.5 hover:text-slate-600"
-              onClick={(e) => { e.stopPropagation(); clearAll(); }}
-              aria-label={t('benefitPicker.clearAll')}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-          <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-        </span>
-      </div>
+          ))}
+          <button
+            type="button"
+            className="rounded-full p-0.5 text-slate-400 hover:text-slate-600"
+            onClick={(e) => { e.stopPropagation(); clearAll(); }}
+            aria-label={t('benefitPicker.clearAll')}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* ── Hint under trigger ─────────────────────────────────────────────── */}
       {selected.length > 0 && selected.length < MAX_SELECTED && (
@@ -257,7 +363,9 @@ export default function BenefitPicker({ value, onChange, ingredientCategories = 
               <div className="border-b border-slate-100 px-3 py-2">
                 <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-gaia-600">
                   <Lightbulb className="h-3 w-3" />
-                  {t('benefitPicker.suggestions')}
+                  {mix.phrases.length
+                    ? t('benefitPicker.bestMix', 'Best mix for these ingredients')
+                    : t('benefitPicker.suggestions')}
                 </p>
                 <ul className="space-y-0.5">
                   {suggestions.map((b) => (

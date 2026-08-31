@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { TFunction } from 'i18next';
 import {
   AlertTriangle,
   ArrowLeft,
-  BookOpen,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   FlaskConical,
@@ -17,24 +16,29 @@ import {
   Trash2,
   X,
   Zap,
-  ClipboardPaste,
 } from 'lucide-react';
 import type { Ingredient, IngredientCategory } from '@/types';
 import { ingredientsRepo, recipesRepo } from '@/db/repositories';
 import { MODULAR_BENEFITS } from '@/data/benefits';
 import { getBenefitCategoryLabel, getBenefitLabel } from '@/lib/benefitI18n';
-import { INGREDIENT_CATALOG_SIZE, INGREDIENT_SEED, syncIngredientCatalog } from '@/data/ingredientSeed';
+import { isDefaultSoapBaseName } from '@/data/ingredientSeed';
+import { findOfflineIngredientCatalogEntry, resolveBundledIngredientPngSlug } from '@/lib/ingredientCatalog';
+import { rankByQuery } from '@/lib/catalogSearchRank';
 import { getCategoryLabel, getIngredientDisplayName, ingredientMatchesQuery } from '@/lib/ingredientI18n';
+import { backfillMissingIngredientSpanishNames, resolveIngredientSpanishName } from '@/lib/ingredientNameTranslate';
 import IngredientIcon, { CATEGORY_LABELS } from '@/components/common/IngredientIcon';
-import WorkflowNav from '@/components/WorkflowNav';
+import BilingualIngredientName from '@/components/common/BilingualIngredientName';
 import Modal from '@/components/common/Modal';
-import SmartPasteModal from '@/components/common/SmartPasteModal';
+import SmartPastePanel from '@/components/common/SmartPastePanel';
 import { useAppStore } from '@/store/useAppStore';
 
 const emptyForm = {
   name: '', benefit: '', inci: '', isSoapBase: false, active: false,
   category: 'other' as IngredientCategory,
 };
+
+/** The catalog runs to 670+ rows, so the library pane pages instead of scrolling forever. */
+const INACTIVE_PAGE_SIZE = 25;
 
 /** Categories shown as filter tabs — 'all' is synthetic */
 const FILTER_CATS: Array<'all' | IngredientCategory> = [
@@ -84,6 +88,7 @@ export default function IngredientsScreen() {
   const { t } = useTranslation();
   const previousScreen = useAppStore((s) => s.previousScreen);
   const goto = useAppStore((s) => s.goto);
+  const settings = useAppStore((s) => s.settings);
   const cameFromRecipes = previousScreen === 'recipes';
   const [all, setAll] = useState<Ingredient[]>([]);
   const [form, setForm] = useState<typeof emptyForm>(emptyForm);
@@ -91,74 +96,112 @@ export default function IngredientsScreen() {
   const [formOpen, setFormOpen] = useState(false);
   const [inactiveQuery, setInactiveQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
-  const [seeding, setSeeding] = useState(false);
-  const [syncDone, setSyncDone] = useState(false);
-  const [lastSyncAdded, setLastSyncAdded] = useState(0);
   const [catFilter, setCatFilter] = useState<'all' | IngredientCategory>('all');
+  // Arriving from Recipes means the user came here specifically to activate items.
+  const [libraryOpen, setLibraryOpen] = useState(cameFromRecipes);
+  const [inactivePage, setInactivePage] = useState(1);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [trimConfirmOpen, setTrimConfirmOpen] = useState(false);
   const [trimPreview, setTrimPreview] = useState<{ deactivate: number; keep: number; recipeCount: number } | null>(null);
   const [trimming, setTrimming] = useState(false);
   const [trimDone, setTrimDone] = useState<number | null>(null);
-  const [smartPasteOpen, setSmartPasteOpen] = useState(false);
+  const [activateToast, setActivateToast] = useState<{ ids: string[]; label: string } | null>(null);
+  const activateToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (activateToastTimer.current) clearTimeout(activateToastTimer.current);
+  }, []);
+
+  const dismissActivateToast = () => {
+    if (activateToastTimer.current) clearTimeout(activateToastTimer.current);
+    setActivateToast(null);
+  };
+
+  const showActivateToast = (ids: string[], label: string) => {
+    if (activateToastTimer.current) clearTimeout(activateToastTimer.current);
+    setActivateToast({ ids, label });
+    activateToastTimer.current = setTimeout(() => setActivateToast(null), 6000);
+  };
+
+  const undoActivate = async () => {
+    if (!activateToast) return;
+    const { ids } = activateToast;
+    dismissActivateToast();
+    await Promise.all(ids.map((id) => ingredientsRepo.update(id, { active: false })));
+    void reload();
+  };
 
   const reload = async () => {
     const items = await ingredientsRepo.all();
     setAll(items);
+    return items;
+  };
+
+  const persistSpanishName = async (ingredient: Ingredient) => {
+    const result = await resolveIngredientSpanishName(ingredient.name, settings, {
+      nameEs: ingredient.nameEs,
+      inci: ingredient.inci,
+    });
+    if (!result.text || result.text === ingredient.nameEs) return ingredient;
+    await ingredientsRepo.update(ingredient.id, { nameEs: result.text });
+    setAll((prev) => prev.map((row) => (row.id === ingredient.id ? { ...row, nameEs: result.text } : row)));
+    return { ...ingredient, nameEs: result.text };
   };
 
   useEffect(() => {
-    const init = async () => {
-      setSeeding(true);
-      try {
-        const existing = await ingredientsRepo.all();
-        if (existing.length < INGREDIENT_CATALOG_SIZE) {
-          await syncIngredientCatalog();
-        }
-        await reload();
-      } catch (err) {
-        console.error('[Ingredients] Failed to sync catalog on mount:', err);
-      } finally {
-        setSeeding(false);
-      }
+    let cancelled = false;
+    void (async () => {
+      const items = await ingredientsRepo.all();
+      if (cancelled) return;
+      setAll(items);
+      const currentSettings = useAppStore.getState().settings;
+      void backfillMissingIngredientSpanishNames(
+        items,
+        currentSettings,
+        async (id, nameEs) => {
+          await ingredientsRepo.update(id, { nameEs });
+        },
+        (id, nameEs) => {
+          if (!cancelled) {
+            setAll((prev) => prev.map((row) => (row.id === id ? { ...row, nameEs } : row)));
+          }
+        },
+      );
+    })();
+    return () => {
+      cancelled = true;
     };
-    void init();
   }, []);
-
-  const syncCatalog = async () => {
-    setSeeding(true);
-    setSyncDone(false);
-    try {
-      const { added } = await syncIngredientCatalog();
-      await reload();
-      setLastSyncAdded(added);
-      setSyncDone(true);
-      setTimeout(() => setSyncDone(false), 3000);
-    } catch (err) {
-      console.error('[Ingredients] Failed to sync catalog:', err);
-    } finally {
-      setSeeding(false);
-    }
-  };
 
   const active   = useMemo(() => all.filter((i) => i.active === true), [all]);
   const inactive = useMemo(() => all.filter((i) => i.active !== true), [all]);
 
-  const catalogMissing = useMemo(() => {
-    const existingNames = new Set(all.map((i) => i.name.toLowerCase().trim()));
-    return INGREDIENT_SEED.filter((s) => !existingNames.has(s.name.toLowerCase().trim())).length;
-  }, [all]);
-
   const filteredInactive = useMemo(() => {
     const q   = inactiveQuery.trim();
     const cat = catFilter === 'all' ? inactive : inactive.filter((i) => (i.category ?? 'other') === catFilter);
-    return q ? cat.filter((i) => ingredientMatchesQuery(i, q)) : cat;
+    if (!q) return cat;
+    return rankByQuery(cat.filter((i) => ingredientMatchesQuery(i, q)), q);
   }, [inactive, inactiveQuery, catFilter]);
 
   const filteredActive = useMemo(() => {
     const q = activeQuery.trim();
-    return q ? active.filter((i) => ingredientMatchesQuery(i, q)) : active;
+    if (!q) return active;
+    return rankByQuery(active.filter((i) => ingredientMatchesQuery(i, q)), q);
   }, [active, activeQuery]);
+
+  const inactivePageCount = Math.max(1, Math.ceil(filteredInactive.length / INACTIVE_PAGE_SIZE));
+
+  useEffect(() => { setInactivePage(1); }, [inactiveQuery, catFilter]);
+
+  // Activating or deleting items can shrink the list past the current page.
+  useEffect(() => {
+    setInactivePage((page) => Math.min(page, inactivePageCount));
+  }, [inactivePageCount]);
+
+  const pagedInactive = useMemo(() => {
+    const start = (inactivePage - 1) * INACTIVE_PAGE_SIZE;
+    return filteredInactive.slice(start, start + INACTIVE_PAGE_SIZE);
+  }, [filteredInactive, inactivePage]);
 
   /** Count per category for the tab badges */
   const catCounts = useMemo<Record<string, number>>(() => {
@@ -171,13 +214,37 @@ export default function IngredientsScreen() {
   }, [inactive]);
 
   const toggle = async (id: string) => {
-    await ingredientsRepo.toggleActive(id);
+    const ing = all.find((i) => i.id === id);
+    if (!ing) return;
+    if (ing.active) {
+      await ingredientsRepo.toggleActive(id);
+    } else {
+      await ingredientsRepo.toggleActive(id);
+      showActivateToast(
+        [id],
+        t('ingredients.activatedToast', '{{name}} added to active ingredients', {
+          name: getIngredientDisplayName(ing.name, t),
+        }),
+      );
+    }
     void reload();
   };
 
   /** Activate all currently visible inactive items */
   const activateAllVisible = async () => {
-    await Promise.all(filteredInactive.filter((i) => !i.active).map((i) => ingredientsRepo.toggleActive(i.id)));
+    const toActivate = filteredInactive.filter((i) => !i.active);
+    if (toActivate.length === 0) return;
+    await Promise.all(toActivate.map((i) => ingredientsRepo.toggleActive(i.id)));
+    showActivateToast(
+      toActivate.map((i) => i.id),
+      toActivate.length === 1
+        ? t('ingredients.activatedToast', '{{name}} added to active ingredients', {
+            name: getIngredientDisplayName(toActivate[0].name, t),
+          })
+        : t('ingredients.activatedBatchToast', '{{count}} ingredients added to active', {
+            count: toActivate.length,
+          }),
+    );
     void reload();
   };
 
@@ -185,12 +252,39 @@ export default function IngredientsScreen() {
   const quickActivate = async (name: string) => {
     const existing = all.find((i) => i.name.toLowerCase() === name.toLowerCase());
     if (existing) {
-      if (!existing.active) await ingredientsRepo.toggleActive(existing.id);
+      if (!existing.active) {
+        await ingredientsRepo.toggleActive(existing.id);
+        showActivateToast(
+          [existing.id],
+          t('ingredients.activatedToast', '{{name}} added to active ingredients', {
+            name: getIngredientDisplayName(existing.name, t),
+          }),
+        );
+      }
+      void persistSpanishName(existing);
     } else {
-      // Create as active custom ingredient
-      await ingredientsRepo.create({ name, benefit: '', inci: '', isSoapBase: false, active: true, category: 'other' });
+      const entry = findOfflineIngredientCatalogEntry(name);
+      const created = await ingredientsRepo.create({
+        name,
+        benefit: '',
+        inci: entry?.inci ?? '',
+        nameEs: entry?.nameEs,
+        isSoapBase: entry?.category === 'base',
+        active: true,
+        category: entry?.category ?? 'other',
+        iconKey: resolveBundledIngredientPngSlug(name, entry?.iconKey),
+      });
+      showActivateToast(
+        [created.id],
+        t('ingredients.activatedToast', '{{name}} added to active ingredients', {
+          name: getIngredientDisplayName(name, t),
+        }),
+      );
+      await reload();
+      void persistSpanishName(created);
+      return;
     }
-    void reload();
+    await reload();
   };
 
   const openTrimConfirm = async () => {
@@ -228,18 +322,22 @@ export default function IngredientsScreen() {
 
   const save = async () => {
     if (!form.name.trim()) return;
+    let saved: Ingredient;
     if (editingId) {
+      const current = all.find((row) => row.id === editingId);
       await ingredientsRepo.update(editingId, form);
+      saved = { ...(current as Ingredient), ...form };
     } else {
-      await ingredientsRepo.create(form);
+      saved = await ingredientsRepo.create(form);
     }
     setForm(emptyForm);
     setEditingId(null);
     setFormOpen(false);
-    void reload();
+    await reload();
+    void persistSpanishName(saved);
   };
 
-  const startEdit = (i: Ingredient) => {
+  const startEdit = useCallback((i: Ingredient) => {
     setEditingId(i.id);
     setForm({
       name: i.name, benefit: i.benefit, inci: i.inci ?? '',
@@ -247,9 +345,9 @@ export default function IngredientsScreen() {
       category: (i.category ?? 'other') as IngredientCategory,
     });
     setFormOpen(true);
-  };
+  }, []);
 
-  const remove = (id: string) => setConfirmDeleteId(id);
+  const remove = useCallback((id: string) => setConfirmDeleteId(id), []);
 
   const doRemove = async (id: string) => {
     setConfirmDeleteId(null);
@@ -267,16 +365,6 @@ export default function IngredientsScreen() {
     <div className="flex h-full flex-col overflow-hidden">
     <div className="flex-1 overflow-y-auto bg-gaia-50">
       <div className="mx-auto max-w-6xl px-4 py-6">
-
-        {/* ── Workflow hint (Step 1.5) ──────────────────────────────────────── */}
-        {!cameFromRecipes && (
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gaia-50 px-5 py-4 ring-1 ring-gaia-200">
-            <div className="flex items-start gap-3">
-              <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-gaia-600" />
-              <p className="text-sm text-slate-700">{t('ingredients.workflowHint', 'Step 1.5 — activate the ingredients you use. They power your recipes and label text.')}</p>
-            </div>
-          </div>
-        )}
 
         {/* ── Context banner when arriving from Recipes ───────────────────── */}
         {cameFromRecipes && (
@@ -303,38 +391,6 @@ export default function IngredientsScreen() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="btn-secondary"
-              disabled={seeding}
-              title={
-                all.length === 0
-                  ? t('ingredients.seedHint', 'Adds 670+ popular soap & beauty ingredients as inactive so you can toggle on what you use.')
-                  : t('ingredients.syncHint', 'Adds any missing catalog ingredients without duplicating existing entries.')
-              }
-              onClick={() => void syncCatalog()}
-            >
-              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
-              {syncDone
-                ? (lastSyncAdded > 0
-                  ? t('ingredients.syncDoneAdded', '{{count}} added from catalog', { count: lastSyncAdded })
-                  : t('ingredients.syncDone', 'Catalog up to date'))
-                : (all.length === 0
-                  ? t('ingredients.seed', 'Populate Library')
-                  : t('ingredients.syncCatalog', 'Sync library from catalog'))}
-              {!seeding && !syncDone && catalogMissing > 0 && (
-                <span className="ml-1 rounded-full bg-gaia-100 px-1.5 py-0.5 text-[10px] font-semibold text-gaia-700">
-                  {catalogMissing}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setSmartPasteOpen(true)}
-            >
-              <ClipboardPaste className="h-4 w-4" />
-              {t('inventory.smartPaste', 'Smart Paste (Temu/Amazon)')}
-            </button>
-            <button
               className="btn-primary"
               onClick={() => { setEditingId(null); setForm(emptyForm); setFormOpen(true); }}
             >
@@ -343,18 +399,26 @@ export default function IngredientsScreen() {
           </div>
         </div>
 
+        <div className="card mt-4">
+          <SmartPastePanel variant="suggest" onSaved={() => void reload()} />
+        </div>
+
         {/* ── Stats ──────────────────────────────────────────────────────── */}
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-xl bg-gaia-600 px-4 py-2 text-sm text-white">
             <Star className="h-4 w-4" />
             <span className="font-semibold">{active.length}</span>
-            <span className="opacity-80">{t('ingredients.activeCount', 'active')}</span>
+            <span className="opacity-80">{t('ingredients.activeCount', 'Active')}</span>
           </div>
-          <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200 transition hover:ring-gaia-300"
+          >
             <FlaskConical className="h-4 w-4 text-slate-400" />
             <span className="font-semibold">{inactive.length}</span>
             <span className="text-slate-400">{t('ingredients.inactiveCount', 'in library')}</span>
-          </div>
+          </button>
           {active.length > 0 && (
             <button
               type="button"
@@ -363,7 +427,7 @@ export default function IngredientsScreen() {
               title={t('ingredients.trimToRecipesHint', 'Move active ingredients not used in any saved recipe back to the library')}
             >
               <MinusCircle className="h-4 w-4" />
-              {t('ingredients.trimToRecipes', 'Trim to recipes')}
+              {t('ingredients.trimToRecipes', 'Trim To Recipes')}
             </button>
           )}
           {trimDone !== null && trimDone > 0 && (
@@ -376,7 +440,7 @@ export default function IngredientsScreen() {
         {/* ── Quick-activate chips ────────────────────────────────────────── */}
         {quickChips.length > 0 && inactive.length > 0 && (
           <div className="mt-4 rounded-2xl bg-white p-4 ring-1 ring-slate-100">
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gaia-700">
+            <p className="mb-2 flex items-center gap-1.5 ui-label font-semibold uppercase tracking-wide text-gaia-700">
               <Zap className="h-3.5 w-3.5" />
               {t('ingredients.quickActivate', 'Quick-activate popular ingredients')}
             </p>
@@ -397,21 +461,45 @@ export default function IngredientsScreen() {
         {/* ── Dual pane ──────────────────────────────────────────────────── */}
         <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:grid-rows-[auto_auto_auto_minmax(12rem,30rem)]">
 
-          {/* INACTIVE pane */}
+          {/* INACTIVE pane — collapsed by default so the 670-item catalog stays out of the way */}
+          {!libraryOpen ? (
+            <button
+              type="button"
+              onClick={() => setLibraryOpen(true)}
+              className="flex items-center justify-between gap-3 self-start rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-left text-slate-400 transition hover:border-gaia-300 hover:bg-white hover:text-slate-600 lg:row-span-4"
+            >
+              <span className="flex items-center gap-2">
+                <FlaskConical className="h-4 w-4 shrink-0" />
+                <span className="text-sm font-semibold uppercase tracking-wide">
+                  {t('ingredients.inactiveTitle', 'Library (inactive)')}
+                </span>
+                <span className="chip bg-slate-200 text-slate-500">{inactive.length}</span>
+              </span>
+              <span className="flex items-center gap-1 text-xs font-medium">
+                {t('ingredients.browseLibrary', 'Browse')}
+                <ChevronRight className="h-4 w-4" />
+              </span>
+            </button>
+          ) : (
           <div className="grid gap-3 lg:row-span-4 lg:grid-rows-subgrid">
             <div className="flex min-h-8 items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              <button
+                type="button"
+                onClick={() => setLibraryOpen(false)}
+                className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-slate-500 transition hover:text-gaia-700"
+              >
+                <ChevronDown className="h-4 w-4" />
                 {t('ingredients.inactiveTitle', 'Library (inactive)')}
-              </h2>
+              </button>
               <div className="flex items-center gap-2">
                 <span className="chip">{filteredInactive.length}</span>
                 {filteredInactive.length > 0 && catFilter !== 'all' && (
                   <button
                     className="rounded-lg bg-gaia-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-gaia-700"
                     onClick={() => void activateAllVisible()}
-                    title={t('ingredients.activateAllVisible', 'Activate all shown')}
+                    title={t('ingredients.activateAllVisible', 'Activate All Shown')}
                   >
-                    {t('ingredients.activateAll', 'Activate all')}
+                    {t('ingredients.activateAll', 'Activate All')}
                   </button>
                 )}
               </div>
@@ -451,24 +539,56 @@ export default function IngredientsScreen() {
               />
             </div>
 
-            <div className="min-h-0 space-y-1.5 overflow-y-auto pr-1">
-              {filteredInactive.length === 0 ? (
-                <div className="rounded-xl bg-white py-8 text-center text-sm text-slate-400 ring-1 ring-slate-100">
-                  {inactiveQuery ? t('ingredients.noResults', 'No results') : t('ingredients.allActive', 'All seeded — great!')}
+            <div className="flex min-h-0 flex-col gap-2">
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                {filteredInactive.length === 0 ? (
+                  <div className="rounded-xl bg-white py-8 text-center text-sm text-slate-400 ring-1 ring-slate-100">
+                    {inactiveQuery ? t('ingredients.noResults', 'No results') : t('ingredients.allActive', 'All seeded — great!')}
+                  </div>
+                ) : (
+                  pagedInactive.map((i) => (
+                    <IngredientRow
+                      key={i.id} ing={i}
+                      onToggle={toggle}
+                      onEdit={startEdit}
+                      onDelete={remove}
+                      isActive={false}
+                    />
+                  ))
+                )}
+              </div>
+
+              {filteredInactive.length > INACTIVE_PAGE_SIZE && (
+                <div className="flex shrink-0 items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-xs text-slate-500 ring-1 ring-slate-100">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 font-medium transition hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                    disabled={inactivePage <= 1}
+                    onClick={() => setInactivePage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    {t('common.previous', 'Previous')}
+                  </button>
+                  <span className="text-[11px]">
+                    {t('ingredients.pageOf', 'Page {{page}} of {{total}}', {
+                      page: inactivePage,
+                      total: inactivePageCount,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 font-medium transition hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                    disabled={inactivePage >= inactivePageCount}
+                    onClick={() => setInactivePage((p) => Math.min(inactivePageCount, p + 1))}
+                  >
+                    {t('common.next', 'Next')}
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-              ) : (
-                filteredInactive.map((i) => (
-                  <IngredientRow
-                    key={i.id} ing={i}
-                    onToggle={() => void toggle(i.id)}
-                    onEdit={() => startEdit(i)}
-                    onDelete={() => void remove(i.id)}
-                    t={t as TFunction} isActive={false}
-                  />
-                ))
               )}
             </div>
           </div>
+          )}
 
           {/* ACTIVE pane */}
           <div className="grid gap-3 lg:row-span-4 lg:grid-rows-subgrid">
@@ -506,10 +626,10 @@ export default function IngredientsScreen() {
                 filteredActive.map((i) => (
                   <IngredientRow
                     key={i.id} ing={i}
-                    onToggle={() => void toggle(i.id)}
-                    onEdit={() => startEdit(i)}
-                    onDelete={() => void remove(i.id)}
-                    t={t as TFunction} isActive
+                    onToggle={toggle}
+                    onEdit={startEdit}
+                    onDelete={remove}
+                    isActive
                   />
                 ))
               )}
@@ -550,14 +670,14 @@ export default function IngredientsScreen() {
               <div>
                 <label className="label">
                   {t('ingredients.benefit', 'Benefit')}
-                  <span className="ml-1 font-normal normal-case text-slate-400">— {t('common.optional', 'optional')}</span>
+                  <span className="ml-1 font-normal normal-case text-slate-400">— {t('common.optional', 'Optional')}</span>
                 </label>
                 <BenefitCombo value={form.benefit} onChange={(v) => setForm({ ...form, benefit: v })} />
               </div>
               <div>
                 <label className="label">
                   {t('ingredients.inci', 'INCI Name')}
-                  <span className="ml-1 font-normal normal-case text-slate-400">— {t('common.optional', 'optional')}</span>
+                  <span className="ml-1 font-normal normal-case text-slate-400">— {t('common.optional', 'Optional')}</span>
                 </label>
                 <input
                   className="input"
@@ -606,14 +726,6 @@ export default function IngredientsScreen() {
         </div>
       )}
     </div>
-      <WorkflowNav
-        prevScreen="template"
-        prevLabel={t('workflow.backToShape', 'Back: Choose Shape')}
-        nextScreen="recipes"
-        nextLabel={t('workflow.nextRecipe', 'Next: Choose Recipe')}
-        trainingHint={t('trainingMode.hintNextRecipe', 'Click here to choose your recipe')}
-      />
-
       <Modal
         open={trimConfirmOpen}
         onClose={() => !trimming && setTrimConfirmOpen(false)}
@@ -635,7 +747,7 @@ export default function IngredientsScreen() {
               onClick={() => void trimToRecipes()}
             >
               {trimming ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {t('ingredients.trimConfirm', 'Deactivate unused')}
+              {t('ingredients.trimConfirm', 'Deactivate Unused')}
             </button>
           </div>
         }
@@ -687,61 +799,78 @@ export default function IngredientsScreen() {
         <p className="text-sm text-slate-600">{t('common.confirmDeleteBody')}</p>
       </Modal>
 
-      <SmartPasteModal
-        open={smartPasteOpen}
-        onClose={() => setSmartPasteOpen(false)}
-        onSaved={() => void reload()}
-      />
+      {activateToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] left-1/2 z-50 flex max-w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-2xl bg-slate-800 px-4 py-3 text-sm text-white shadow-xl ring-1 ring-slate-700"
+        >
+          <span className="min-w-0 flex-1 truncate">{activateToast.label}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded-lg bg-white/10 px-3 py-1 text-xs font-semibold text-gaia-200 transition hover:bg-white/20 hover:text-white"
+            onClick={() => void undoActivate()}
+          >
+            {t('editor.undo', 'Undo')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Ingredient row ────────────────────────────────────────────────────────────
 
-function IngredientRow({
-  ing, onToggle, onEdit, onDelete, t, isActive,
+const IngredientRow = memo(function IngredientRow({
+  ing, onToggle, onEdit, onDelete, isActive,
 }: {
   ing: Ingredient;
-  onToggle: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  t: TFunction;
+  onToggle: (id: string) => void;
+  onEdit: (ing: Ingredient) => void;
+  onDelete: (id: string) => void;
   isActive: boolean;
 }) {
-  const displayName = getIngredientDisplayName(ing.name, t);
+  const { t } = useTranslation();
+  const lockedBase = isDefaultSoapBaseName(ing.name);
   const actionBtn =
     'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition';
   return (
-    <div className={`grid min-h-[3.25rem] grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-2 rounded-xl px-3 py-2 ring-1 transition ${
+    <div className={`grid min-h-[3.25rem] w-full min-w-0 grid-cols-[2rem_minmax(0,1fr)_5.5rem] items-center gap-x-2 rounded-xl px-3 py-2 ring-1 transition ${
       isActive ? 'bg-gaia-50 ring-gaia-200' : 'bg-white ring-slate-100 hover:ring-slate-200'
     }`}>
-      <IngredientIcon category={ing.category} name={ing.name} className="shrink-0" />
+      <IngredientIcon category={ing.category} name={ing.name} iconKey={ing.iconKey} className="shrink-0" />
 
       <button
         type="button"
-        className="min-w-0 text-left"
-        onClick={onToggle}
+        className="grid min-w-0 w-full grid-cols-[1.25rem_minmax(0,1fr)_1.25rem_minmax(0,1fr)] items-center gap-x-2 text-left"
+        onClick={() => onToggle(ing.id)}
         title={isActive ? t('ingredients.deactivate', 'Deactivate') : t('ingredients.activate', 'Activate')}
       >
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-slate-800">{displayName}</span>
-            {ing.isSoapBase && (
-              <span className="inline-flex shrink-0 items-center rounded-full bg-gaia-100 px-1.5 py-0.5 text-[10px] font-medium text-gaia-700">
-                {t('ingredients.soapBaseTag', 'Base')}
-              </span>
-            )}
-          </span>
-          {ing.benefit && (
-            <span className="truncate text-xs text-slate-400">{ing.benefit}</span>
+        <BilingualIngredientName
+          layout="contents"
+          name={ing.name}
+          inci={ing.inci}
+          nameEs={ing.nameEs}
+          aliases={ing.aliases}
+          subtitle={(
+            <span className="mt-0.5 flex min-w-0 flex-col gap-0.5">
+              {ing.isSoapBase && (
+                <span className="inline-flex w-fit shrink-0 items-center rounded-full bg-gaia-100 px-1.5 py-0.5 text-[10px] font-medium text-gaia-700">
+                  {t('ingredients.soapBaseTag', 'Base')}
+                </span>
+              )}
+              {ing.benefit && (
+                <span className="truncate text-xs text-slate-400">{ing.benefit}</span>
+              )}
+            </span>
           )}
-        </span>
+        />
       </button>
 
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div className="flex items-center justify-end gap-0.5">
         <button
           type="button"
-          onClick={onToggle}
+          onClick={() => onToggle(ing.id)}
           title={isActive ? t('ingredients.deactivate', 'Deactivate') : t('ingredients.activate', 'Activate')}
           className={`${actionBtn} ${
             isActive ? 'bg-gaia-600 text-white hover:bg-gaia-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
@@ -754,22 +883,24 @@ function IngredientRow({
           type="button"
           className={`${actionBtn} text-slate-600 hover:bg-slate-100`}
           title={t('common.edit', 'Edit')}
-          onClick={onEdit}
+          onClick={() => onEdit(ing)}
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
-        <button
-          type="button"
-          className={`${actionBtn} text-rose-400 hover:bg-rose-50`}
-          title={t('common.delete', 'Delete')}
-          onClick={onDelete}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        {!lockedBase && (
+          <button
+            type="button"
+            className={`${actionBtn} text-rose-400 hover:bg-rose-50`}
+            title={t('common.delete', 'Delete')}
+            onClick={() => onDelete(ing.id)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );
-}
+});
 
 // ── BenefitCombo ──────────────────────────────────────────────────────────────
 

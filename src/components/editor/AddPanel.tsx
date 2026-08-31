@@ -1,3 +1,4 @@
+// DEAD-CANDIDATE: unused AddPanel (2026-08-24). Hosts AutoLayoutPicker; do not delete until V2 gets a layout picker or product confirms auto-apply-on-mount is enough.
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Circle, Heading, Minus, QrCode, Square, Triangle, Type, Wand2 } from 'lucide-react';

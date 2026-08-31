@@ -479,10 +479,10 @@ function AddProductModal({
               onChange={(e) => setSelectedRecipeId(e.target.value)}
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-gaia-400 focus:outline-none focus:ring-1 focus:ring-gaia-400"
             >
-              <option value="">{t('products.pickRecipe', '— Select a recipe —')}</option>
+              <option value="">{t('products.pickRecipe', '— Select A Recipe —')}</option>
               {recipes.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name} {r.retailPrice ? `(${fmtMoney(r.retailPrice)})` : `(${t('products.noPrice', 'no price')})`}
+                  {r.name} {r.retailPrice ? `(${fmtMoney(r.retailPrice)})` : `(${t('products.noPrice', 'No price')})`}
                 </option>
               ))}
             </select>

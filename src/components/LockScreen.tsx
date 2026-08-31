@@ -3,12 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { Lock } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { db } from '@/db/db';
-import { settingsRepo } from '@/db/repositories';
 import {
   clearFailedAttempts,
   getLockoutRemainingMs,
   hasPinConfigured,
-  hashPin,
   isE2EBypass,
   isLockoutActive,
   isSessionUnlocked,
@@ -30,23 +28,26 @@ interface LockScreenProps {
 export default function LockScreen({ onUnlock }: LockScreenProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
-  const [confirm, setConfirm] = useState('');
   const [wrong, setWrong] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pinRecord, setPinRecord] = useState<LockPinRecord | null>(null);
   const [lockoutMs, setLockoutMs] = useState(0);
 
-  const isSetup = pinRecord !== null && !hasPinConfigured(pinRecord);
-
   useEffect(() => {
     void db.settings.get('app').then((s) => {
-      setPinRecord({
+      const record: LockPinRecord = {
         lockPinHash: s?.lockPinHash,
         lockPinSalt: s?.lockPinSalt,
         lockPinIterations: s?.lockPinIterations,
-      });
+      };
+      if (!hasPinConfigured(record)) {
+        setSessionUnlocked();
+        onUnlock();
+        return;
+      }
+      setPinRecord(record);
     });
-  }, []);
+  }, [onUnlock]);
 
   useEffect(() => {
     const tick = () => setLockoutMs(getLockoutRemainingMs());
@@ -64,43 +65,6 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
     clearFailedAttempts();
     setSessionUnlocked();
     onUnlock();
-  };
-
-  const submitSetup = async () => {
-    if (value.length < 4) {
-      setWrong(true);
-      return;
-    }
-    if (value !== confirm) {
-      setWrong(true);
-      return;
-    }
-    setBusy(true);
-    try {
-      const { hash, salt, iterations } = await hashPin(value);
-      await settingsRepo.update({
-        lockPinHash: hash,
-        lockPinSalt: salt,
-        lockPinIterations: iterations,
-      });
-      await activateVaultFromPin(value, { lockPinSalt: salt, lockPinIterations: iterations });
-      const refreshed = await settingsRepo.get();
-      await settingsRepo.update({
-        googleAiApiKey: refreshed.googleAiApiKey,
-        unsplashKey: refreshed.unsplashKey,
-        pixabayKey: refreshed.pixabayKey,
-        etsyShop: refreshed.etsyShop,
-      });
-      clearFailedAttempts();
-      setSessionUnlocked();
-      onUnlock();
-    } catch {
-      setWrong(true);
-    } finally {
-      setBusy(false);
-      setValue('');
-      setConfirm('');
-    }
   };
 
   const submitUnlock = async () => {
@@ -124,11 +88,6 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
     }
   };
 
-  const submit = () => {
-    if (isSetup) void submitSetup();
-    else void submitUnlock();
-  };
-
   if (pinRecord === null) {
     return (
       <div className="flex h-full items-center justify-center bg-gaia-50">
@@ -145,9 +104,7 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
       <img src={logo} alt="Gaia's Essences" className="h-32 w-auto select-none object-contain" draggable={false} />
       <div>
         <h1 className="text-xl font-semibold text-gaia-900">{t('lock.title')}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isSetup ? t('lock.setupSubtitle') : t('lock.subtitle')}
-        </p>
+        <p className="mt-1 text-sm text-slate-500">{t('lock.subtitle')}</p>
         {isE2EBypass() && (
           <p className="mt-1 text-[10px] text-amber-600">{t('lock.devBypass')}</p>
         )}
@@ -158,60 +115,35 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
           <input
             type="password"
             autoFocus
-            autoComplete={isSetup ? 'new-password' : 'current-password'}
+            autoComplete="current-password"
             className="input w-full pl-9 text-center"
-            placeholder={isSetup ? t('lock.setupPlaceholder') : t('lock.placeholder')}
+            placeholder={t('lock.placeholder')}
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
               setWrong(false);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !isSetup) submit();
+              if (e.key === 'Enter') void submitUnlock();
             }}
             disabled={busy || lockedOut}
           />
         </div>
-        {isSetup && (
-          <div className="relative mt-3">
-            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="password"
-              autoComplete="new-password"
-              className="input w-full pl-9 text-center"
-              placeholder={t('lock.confirmPlaceholder')}
-              value={confirm}
-              onChange={(e) => {
-                setConfirm(e.target.value);
-                setWrong(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submit();
-              }}
-              disabled={busy}
-            />
-          </div>
-        )}
         {lockedOut && (
           <p className="mt-2 text-xs font-medium text-amber-700">
             {t('lock.lockout', { minutes: lockoutMinutes })}
           </p>
         )}
         {wrong && !lockedOut && (
-          <p className="mt-2 text-xs font-medium text-rose-600">
-            {isSetup ? t('lock.setupWrong') : t('lock.wrong')}
-          </p>
+          <p className="mt-2 text-xs font-medium text-rose-600">{t('lock.wrong')}</p>
         )}
         <button
           className="btn btn-primary mt-4 w-full justify-center"
-          onClick={submit}
-          disabled={busy || lockedOut || !value || (isSetup && !confirm)}
+          onClick={() => void submitUnlock()}
+          disabled={busy || lockedOut || !value}
         >
-          {isSetup ? t('lock.createPin') : t('lock.unlock')}
+          {t('lock.unlock')}
         </button>
-        {isSetup && (
-          <p className="mt-3 text-[11px] text-slate-400">{t('lock.setupHint')}</p>
-        )}
       </div>
     </div>
   );

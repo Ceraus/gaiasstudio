@@ -16,8 +16,11 @@ import {
   localizeRecipeBenefit,
   localizeRecipeDirections,
   localizeRecipeWarnings,
+  resolveRecipeBenefitForLang,
 } from '@/lib/recipeI18n';
 import { buildSortedInciList } from '@/lib/inventoryMath';
+import { formatNetWeightLine } from '@/lib/netWeight';
+import { useAppStore } from '@/store/useAppStore';
 
 const HEADING_FONT = 'Playfair Display';
 const BODY_FONT = 'Montserrat';
@@ -52,7 +55,17 @@ function inciList(recipe: Recipe, ingredients: Ingredient[]): string {
  * the structural 4-layer stack (white base + legibility overlay), so layout
  * runs only regenerate the foreground content.
  */
-const LAYOUT_KEEP_KINDS = ['background', 'logo', 'base', 'overlay'];
+const LAYOUT_KEEP_KINDS = ['background', 'logo', 'overlay'];
+
+const PRODUCT_NAME_LAYER = 'Product name';
+
+/** Stock auto-layout labels — not treated as user-typed product names. */
+const STOCK_PRODUCT_NAME_LABELS = new Set([
+  'Product Name',
+  'Nombre del producto',
+  'Product',
+  'Producto',
+]);
 
 function clearForLayout() {
   const canvas = editor.canvas;
@@ -67,6 +80,46 @@ function clearForLayout() {
         canvas.remove(o);
       }
     });
+}
+
+function objectLayerName(o: fabric.FabricObject): string {
+  return String((o as { name?: string }).name ?? '');
+}
+
+function objectPlainText(o: fabric.FabricObject): string {
+  const g = o as {
+    text?: string;
+    gaiaCurveSourceText?: string;
+    getObjects?: () => fabric.FabricObject[];
+  };
+  const fromCurve = g.gaiaCurveSourceText?.trim();
+  if (fromCurve) return fromCurve;
+  if (typeof g.text === 'string' && g.text.trim()) return g.text.trim();
+  if (typeof g.getObjects === 'function') {
+    for (const child of g.getObjects()) {
+      const t = (child as { text?: string }).text?.trim();
+      if (t) return t;
+    }
+  }
+  return '';
+}
+
+/**
+ * Keep a Product name the user typed. Drop recipe auto-fills and stock
+ * placeholders so language / recipe re-apply does not write recipe.name back.
+ */
+function captureUserProductName(recipeName: string): string {
+  const canvas = editor.canvas;
+  if (!canvas) return '';
+  const obj = canvas.getObjects().find((o) => objectLayerName(o) === PRODUCT_NAME_LAYER);
+  if (!obj) return '';
+  const text = objectPlainText(obj);
+  if (!text || STOCK_PRODUCT_NAME_LABELS.has(text)) return '';
+  const recipe = recipeName.trim();
+  if (recipe && text.localeCompare(recipe, undefined, { sensitivity: 'accent' }) === 0) {
+    return '';
+  }
+  return text;
 }
 
 /** Bilingual string tables for auto-layout label sections. */
@@ -153,7 +206,11 @@ export async function applyAutoLayout(
   const t = i18next.t.bind(i18next);
   const localizedRecipe: Recipe = {
     ...recipe,
-    benefit: localizeRecipeBenefit(recipe.name, recipe.benefit, t),
+    benefit: (() => {
+      const bilingual = resolveRecipeBenefitForLang(recipe, resolvedLang);
+      if (bilingual) return bilingual;
+      return localizeRecipeBenefit(recipe.name, recipe.benefit, t);
+    })(),
     directions: localizeRecipeDirections(recipe.directions, t),
     warnings: localizeRecipeWarnings(recipe.warnings, t),
   };
@@ -166,21 +223,25 @@ export async function applyAutoLayout(
     ...(isRound ? [loadFont(ROUND_BACK_FONT)] : []),
   ]);
 
+  // Read before clearForLayout — that pass removes the Product name object.
+  const userProductName = captureUserProductName(recipe.name);
+
   clearForLayout();
 
   // Every circle/oval uses the same Avery-style stack: background ring,
   // inner legibility disc, and full formatted regulatory text.
   if (isRound) {
-    layoutCircleLabel(localizedRecipe, ingredients, str, settings, resolvedLang);
+    layoutCircleLabel(localizedRecipe, ingredients, str, settings, resolvedLang, userProductName);
   } else if (context === 'front') {
-    layoutFront(localizedRecipe, str, settings, false);
+    layoutFront(localizedRecipe, str, settings, false, userProductName);
   } else if (context === 'back') {
     layoutBack(localizedRecipe, ingredients, str);
   } else {
-    layoutSide(localizedRecipe, str);
+    layoutSide(localizedRecipe, str, userProductName);
   }
 
   canvas.requestRenderAll();
+  useAppStore.getState().setLabelLanguage(resolvedLang);
 }
 
 function layoutFront(
@@ -188,6 +249,7 @@ function layoutFront(
   str: Str,
   settings: Partial<AppSettings> = {},
   isRound = false,
+  userProductName = '',
 ) {
   const canvas = editor.canvas;
   if (!canvas) return;
@@ -196,54 +258,27 @@ function layoutFront(
   const cx = s.cx;
   const cy = s.cy;
 
-  // Sage-green base — shows through when no background image is loaded.
-  // The strict 4-layer stack keeps a structural white Base rect above the
-  // canvas background, so tint that layer too (when there's no real
-  // background image covering it); legacy designs without one still get the
-  // canvas backgroundColor.
-  canvas.backgroundColor = '#c8d4c0';
-  const structuralBase = canvas
+  const bgPlate = canvas
     .getObjects()
-    .find((o) => (o as { gaiaKind?: string }).gaiaKind === 'base');
-  const hasBgImage = canvas
-    .getObjects()
-    .some((o) => {
-      const g = o as { gaiaKind?: string; gaiaPlaceholder?: boolean };
-      return g.gaiaKind === 'background' && !g.gaiaPlaceholder;
-    });
-  if (structuralBase && !hasBgImage) {
-    structuralBase.set('fill', '#c8d4c0');
+    .find((o) => (o as { gaiaKind?: string }).gaiaKind === 'background') as
+    | { gaiaKind?: string; gaiaPlaceholder?: boolean; set: (k: string, v: string) => void }
+    | undefined;
+  const hasBgImage = bgPlate && !bgPlate.gaiaPlaceholder;
+  if (bgPlate?.gaiaPlaceholder && !hasBgImage) {
+    bgPlate.set('fill', '#c8d4c0');
   }
 
-  // ── Legibility circle ────────────────────────────────────────────────────
-  // 33% of the label width leaves a ring roughly 0.28" wide on a 2" label,
-  // which is enough for the curved product name to sit outside the circle
-  // instead of across it.
+  // Front (non-round) keeps using a centered column. Circle/oval labels go
+  // through layoutCircleLabel, which owns the interactive white disc.
   const circleRadius = editor.labelWpx * 0.33;
-  const circleOverlay = new fabric.Circle({
-    radius: circleRadius,
-    fill: 'rgba(255,255,255,0.30)',
-    stroke: '',
-    strokeWidth: 0,
-    originX: 'center',
-    originY: 'center',
-    left: cx,
-    top: cy,
-    selectable: true,
-    lockMovementX: false,
-    lockMovementY: false,
-  }) as fabric.Circle & { isLegibilityOverlay?: boolean };
-  circleOverlay.isLegibilityOverlay = true;
-  editor.addCustom(circleOverlay as fabric.FabricObject, 'shape', 'Legibility Overlay');
 
   // ── Content ──────────────────────────────────────────────────────────────
   // A front label is the shop-window face of the bar: what it is, what it does
   // for you, and how much of it there is. The full ingredient / directions /
   // warning block belongs on the back, where layoutBack and layoutRoundBack
   // have the room to typeset it.
-  const productName = (recipe.name || str.productName).trim();
   const tagline = recipe.benefit?.trim() ?? '';
-  const netWtLine = formatNetWeight(recipe.netWeight);
+  const netWtLine = formatNetWeightLine(recipe.netWeight, str.netWt, '100g');
   const maker = settings.businessName?.trim() ?? '';
 
   const circleDiameter = circleRadius * 2;
@@ -255,9 +290,9 @@ function layoutFront(
   // so tiny labels (0.75" rounds and the like) keep everything in the middle.
   const ringUsable = isRound && ringThickness >= ptToPx(6);
 
-  // ── Product name ─────────────────────────────────────────────────────────
+  // ── Product name (user-typed only — never recipe.name) ───────────────────
   if (ringUsable) {
-    addRingText(productName, {
+    addRingText(userProductName, {
       cx,
       ringMid,
       ringThickness,
@@ -265,11 +300,11 @@ function layoutFront(
       safeBottom: s.top + s.height,
       atTop: true,
       fontFamily: HEADING_FONT,
-      name: 'Product name',
+      name: PRODUCT_NAME_LAYER,
     });
   } else if (!isRound) {
     const namePt = clamp(editor.template!.labelWidthIn * 7, 8, 18);
-    const title = new fabric.Textbox(productName, {
+    const title = new fabric.Textbox(userProductName, {
       width: s.width,
       fontFamily: HEADING_FONT,
       fontSize: ptToPx(namePt),
@@ -280,14 +315,13 @@ function layoutFront(
       left: cx,
       top: s.top,
     });
-    editor.addCustom(title, 'text', 'Product name');
+    editor.addCustom(title, 'text', PRODUCT_NAME_LAYER);
   }
 
   // ── Everything that lives inside the legibility circle ───────────────────
   // Ordered by importance: whatever cannot fit is dropped from the bottom
   // rather than printed over the label's edge.
   const innerLines: string[] = [];
-  if (!ringUsable && isRound) innerLines.push(productName);
   if (tagline) innerLines.push(tagline);
   if (netWtLine) innerLines.push(netWtLine);
   if (!ringUsable && maker) innerLines.push(`${str.handmadeby}: ${maker}`);
@@ -350,14 +384,6 @@ function fitBlock(
   return null;
 }
 
-/** `"128 g"` → `"Net Wt. 128g / 4.52 oz"`. Falls back to 100g when unset. */
-function formatNetWeight(raw: string | undefined): string {
-  const value = raw?.trim() || '100g';
-  const grams = value.match(/(\d+(?:\.\d+)?)\s*g\b/i);
-  if (!grams) return `Net Wt. ${value}`;
-  const g = parseFloat(grams[1]);
-  return `Net Wt. ${g}g / ${(g * 0.035274).toFixed(2)} oz`;
-}
 
 interface RingTextOptions {
   cx: number;
@@ -393,7 +419,6 @@ const RING_SWEEP = 2.27;
  */
 function addRingText(text: string, opts: RingTextOptions) {
   const value = text.trim();
-  if (!value) return;
 
   const { cx, ringMid, ringThickness, safeTop, safeBottom, atTop, fontFamily, name } = opts;
 
@@ -401,7 +426,9 @@ function addRingText(text: string, opts: RingTextOptions) {
   // Type has to clear the ring's thickness; ringThickness is in canvas px.
   const ringPt = (ringThickness / EDITOR_PPI) * 72 * 0.85;
   const maxPt = Math.min(opts.maxPt ?? 14, Math.max(6, ringPt));
-  const pt = fitFont(value, arcWidth, ptToPx(maxPt) * 1.05, maxPt, 5, fontFamily, 1);
+  const pt = value
+    ? fitFont(value, arcWidth, ptToPx(maxPt) * 1.05, maxPt, 5, fontFamily, 1)
+    : maxPt;
   const fontPx = ptToPx(pt);
 
   const box = new fabric.Textbox(value, {
@@ -416,7 +443,7 @@ function addRingText(text: string, opts: RingTextOptions) {
     top: 0,
   });
   const amount = clamp(Math.round((arcWidth / (ringMid * Math.PI * 0.9)) * 100), 25, 100);
-  applyCurveToText(box, atTop ? amount : -amount);
+  const curved = applyCurveToText(box, atTop ? amount : -amount);
 
   // Sagitta of the arc, i.e. how far the apex rises above its end points.
   const theta = (amount / 100) * Math.PI * 0.9;
@@ -424,9 +451,9 @@ function addRingText(text: string, opts: RingTextOptions) {
   const sagitta = radius * (1 - Math.cos(theta / 2));
   const apexToCentre = sagitta / 2 + fontPx * 0.6;
 
-  box.set({ top: atTop ? safeTop + apexToCentre : safeBottom - apexToCentre });
-  box.setCoords();
-  editor.addCustom(box, 'text', name);
+  curved.set({ top: atTop ? safeTop + apexToCentre : safeBottom - apexToCentre });
+  curved.setCoords();
+  editor.addCustom(curved, 'text', name);
 }
 
 function layoutBack(recipe: Recipe, ingredients: Ingredient[], str: Str) {
@@ -477,7 +504,7 @@ function layoutBack(recipe: Recipe, ingredients: Ingredient[], str: Str) {
   const extra: string[] = [];
   extra.push(`${str.directions}: ${recipe.directions?.trim() || 'Lather, rinse, and enjoy.'}`);
   extra.push(`${str.warning}: ${recipe.warnings?.trim() || 'For external use only. Avoid contact with eyes.'}`);
-  if (recipe.netWeight?.trim()) extra.push(`${str.netWt} ${recipe.netWeight}`);
+  if (recipe.netWeight?.trim()) extra.push(formatNetWeightLine(recipe.netWeight, str.netWt));
   const extraText = extra.join('\n\n');
 
   if (!inci && !extraText) {
@@ -591,7 +618,7 @@ type LogicalLine = { parts: LinePart[] };
  * Canonical round-label layout (Avery 22562-style):
  *   • Full-bleed background visible in the outer ring
  *   • Inner white legibility disc (70% opacity)
- *   • Curved product name in the ring (when space allows)
+ *   • Curved Product name slot in the ring (empty unless the user typed one)
  *   • Full formatted text block inside the disc
  */
 function layoutCircleLabel(
@@ -600,6 +627,7 @@ function layoutCircleLabel(
   str: Str,
   settings: Partial<AppSettings>,
   lang: LayoutLang,
+  userProductName: string,
 ) {
   const s = safeRect();
   const fontFamily = ROUND_BACK_FONT;
@@ -613,11 +641,10 @@ function layoutCircleLabel(
   const textW = discRadius * 2 * CIRCLE_TEXT_WIDTH_RATIO;
   const availH = discRadius * 2 * CIRCLE_TEXT_HEIGHT_RATIO;
 
-  const productName = (recipe.name || str.productName).trim();
   const { ringMid, ringThickness, ringUsable } = circleRingMetrics(s.width, s.height, discRadius);
 
-  if (ringUsable && productName) {
-    addRingText(productName, {
+  if (ringUsable) {
+    addRingText(userProductName, {
       cx: s.cx,
       ringMid,
       ringThickness,
@@ -625,8 +652,22 @@ function layoutCircleLabel(
       safeBottom: s.top + s.height,
       atTop: true,
       fontFamily: HEADING_FONT,
-      name: 'Product name',
+      name: PRODUCT_NAME_LAYER,
     });
+  } else {
+    const namePt = clamp(editor.template!.labelWidthIn * 7, 8, 14);
+    const title = new fabric.Textbox(userProductName, {
+      width: textW,
+      fontFamily: HEADING_FONT,
+      fontSize: ptToPx(namePt),
+      fill: INK,
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'top',
+      left: s.cx,
+      top: s.cy - discRadius * CIRCLE_TEXT_HEIGHT_RATIO,
+    });
+    editor.addCustom(title, 'text', PRODUCT_NAME_LAYER);
   }
 
   const logicalLines = buildCircleLabelLines(recipe, ingredients, str, settings, lang);
@@ -655,17 +696,7 @@ function buildCircleLabelLines(
     .filter((i): i is Ingredient => !!i)
     .map((i) => (i.inci?.trim() ? i.inci : i.name));
 
-  // Net-weight line: parse grams and derive oz (default 100g)
-  let netWtLine = '';
-  const weightRaw = recipe.netWeight?.trim() || '100g';
-  const gMatch = weightRaw.match(/(\d+(?:\.\d+)?)\s*g\b/i);
-  if (gMatch) {
-    const grams = parseFloat(gMatch[1]);
-    const oz = (grams * 0.035274).toFixed(2);
-    netWtLine = `Net Wt. ${grams}g / ${oz} oz`;
-  } else {
-    netWtLine = `Net Wt. ${weightRaw}`;
-  }
+  const netWtLine = formatNetWeightLine(recipe.netWeight, str.netWt, '100g');
 
   const year = new Date().getFullYear();
 
@@ -677,9 +708,10 @@ function buildCircleLabelLines(
   const addNormal = (text: string) => logicalLines.push({ parts: [{ text }] });
   const addBlank = () => logicalLines.push({ parts: [{ text: '' }] });
 
-  // Section 1 — Ingredients header + list
+  // Section 1 — Ingredients header + list (LABEL_STRINGS.addHint when the recipe is empty)
   addBoldLine(`${str.ingredients}:`);
-  for (const name of ingNames) addNormal(name);
+  if (ingNames.length === 0) addNormal(str.addHint);
+  else for (const name of ingNames) addNormal(name);
   addBlank();
 
   // Section 2 — Directions + Warning (always present; defaults used when recipe leaves them blank)
@@ -778,7 +810,7 @@ function placeCircleFormattedText(
   editor.addCustom(textbox, 'text', 'Label text');
 }
 
-function layoutSide(recipe: Recipe, str: Str) {
+function layoutSide(recipe: Recipe, str: Str, userProductName = '') {
   const s = safeRect();
   const hIn = editor.template!.labelHeightIn;
   const centralWidth = s.width * 0.44; // the empty central bar of a ribbon
@@ -790,7 +822,7 @@ function layoutSide(recipe: Recipe, str: Str) {
   }
 
   const namePt = clamp(hIn * 11, 9, 20);
-  const name = new fabric.Textbox(recipe.name || str.productName, {
+  const name = new fabric.Textbox(userProductName, {
     width: centralWidth,
     fontFamily: HEADING_FONT,
     fontSize: ptToPx(namePt),
@@ -801,10 +833,10 @@ function layoutSide(recipe: Recipe, str: Str) {
     left: s.cx,
     top: existingLogo ? s.cy + s.height * 0.22 : s.cy - s.height * 0.06,
   });
-  editor.addCustom(name, 'text', 'Product name');
+  editor.addCustom(name, 'text', PRODUCT_NAME_LAYER);
 
   if (recipe.netWeight?.trim()) {
-    const net = new fabric.Textbox(`${str.netWt} ${recipe.netWeight}`, {
+    const net = new fabric.Textbox(formatNetWeightLine(recipe.netWeight, str.netWt), {
       width: centralWidth,
       fontFamily: BODY_FONT,
       fontSize: ptToPx(clamp(namePt * 0.5, 6, 11)),
@@ -846,8 +878,16 @@ function fitFont(
   fontFamily = BODY_FONT,
   lineHeight = 1.2,
 ): number {
+  const tb = new fabric.Textbox(text, {
+    width: widthPx,
+    fontFamily,
+    fontSize: ptToPx(maxPt),
+    lineHeight,
+  });
   for (let pt = maxPt; pt >= minPt; pt -= 0.25) {
-    if (measuredHeight(text, widthPx, pt, lineHeight, fontFamily) <= availHpx) return pt;
+    tb.set({ fontSize: ptToPx(pt) });
+    tb.initDimensions();
+    if ((tb.height ?? 0) <= availHpx) return pt;
   }
   return minPt;
 }

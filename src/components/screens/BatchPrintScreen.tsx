@@ -175,7 +175,7 @@ export default function BatchPrintScreen() {
       <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
         <Printer className="h-12 w-12 text-slate-300" />
         <p className="max-w-sm text-sm text-slate-500">
-          {t('batch.emptyHint', 'Tick two or more saved designs in the Workspace, then choose "Print together" to fill one sheet.')}
+          {t('batch.emptyHint', 'Tick two or more saved designs in the Workspace, then choose "Print Together" to fill one sheet.')}
         </p>
         <button className="btn-primary" onClick={() => goto('drafts')}>
           <ArrowLeft className="h-4 w-4" /> {t('drafts.title')}
@@ -223,7 +223,7 @@ export default function BatchPrintScreen() {
                     onClick={fillSheet}
                   >
                     <Wand2 className="mr-1 inline h-3 w-3" />
-                    {t('batch.fillEvenly', 'Fill evenly')}
+                    {t('batch.fillEvenly', 'Fill Evenly')}
                   </button>
                 </div>
               )}
@@ -290,8 +290,8 @@ export default function BatchPrintScreen() {
                     )}
                     <button
                       className="icon-btn h-8 w-8 shrink-0 text-rose-500 hover:bg-rose-50"
-                      title={t('batch.remove', 'Remove from sheet')}
-                      aria-label={t('batch.remove', 'Remove from sheet')}
+                      title={t('batch.remove', 'Remove From Sheet')}
+                      aria-label={t('batch.remove', 'Remove From Sheet')}
                       onClick={() => removeEntry(draft.id)}
                     >
                       <Trash2 className="h-4 w-4" />

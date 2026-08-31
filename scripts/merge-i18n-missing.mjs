@@ -41,8 +41,6 @@ const ES = {
   'common.saving': 'Guardando…',
   'export.applyLabelLanguage': 'Aplicar idioma a la etiqueta',
   'export.labelLanguage': 'Idioma de la etiqueta',
-  'export.labelLanguageHint':
-    'Vuelve a aplicar ingredientes, instrucciones y advertencias en el idioma elegido.',
   'export.langEn': 'Inglés (texto de etiqueta)',
   'export.langEs': 'Español (texto de etiqueta)',
   'inventory.appliedFound': '¡Precios actualizados desde la página del proveedor!',
@@ -235,7 +233,7 @@ const EXTRA_EN = {
   'settings.businessNamePlaceholder': "e.g. Gaia's Essences",
   'settings.businessAddressPlaceholder': 'e.g. 1836 Westchester Ave, Unit #282, Bronx, NY 10472',
   'settings.contactPlaceholder':
-    "e.g. Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/",
+    "e.g. customercare@gaiasessences.com · https://www.gaiasessences.com/",
   'settings.cloudSyncUrlPlaceholder': 'https://gaiasessences.com/studio/sync/sync.php',
   'settings.ollamaUrlPlaceholder': 'http://192.168.1.50:11434',
   'settings.ollamaModelPlaceholder': 'llama3.2',
@@ -281,7 +279,7 @@ Object.assign(ES, {
   'settings.businessNamePlaceholder': 'ej. Gaia\'s Essences',
   'settings.businessAddressPlaceholder': 'ej. 1836 Westchester Ave, Unit #282, Bronx, NY 10472',
   'settings.contactPlaceholder':
-    'ej. Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/',
+    'ej. customercare@gaiasessences.com · https://www.gaiasessences.com/',
   'settings.cloudSyncUrlPlaceholder': 'https://gaiasessences.com/studio/sync/sync.php',
   'settings.ollamaUrlPlaceholder': 'http://192.168.1.50:11434',
   'settings.ollamaModelPlaceholder': 'llama3.2',

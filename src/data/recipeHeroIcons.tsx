@@ -292,22 +292,18 @@ const AppleIcon = (): JSX.Element => (
 
 const WatermelonIcon = (): JSX.Element => (
   <svg viewBox="0 0 40 40" width="40" height="40" fill="none" aria-hidden="true">
-    {/* rind outer */}
-    <path d="M4 20 A16 16 0 0 1 36 20 Z" fill="#22C55E" />
-    {/* rind inner light */}
-    <path d="M6 20 A14 14 0 0 1 34 20 Z" fill="#BBF7D0" />
-    {/* flesh */}
-    <path d="M8 20 A12 12 0 0 1 32 20 Z" fill="#F87171" />
-    {/* lighter center */}
-    <path d="M12 20 A8 8 0 0 1 28 20 Z" fill="#FCA5A5" opacity="0.5" />
-    {/* seeds */}
-    <ellipse cx="16" cy="17" rx="1.2" ry="2" fill="#1C1917" transform="rotate(10 16 17)" />
-    <ellipse cx="20" cy="16" rx="1.2" ry="2" fill="#1C1917" />
-    <ellipse cx="24" cy="17" rx="1.2" ry="2" fill="#1C1917" transform="rotate(-10 24 17)" />
-    <ellipse cx="22" cy="13" rx="1" ry="1.8" fill="#1C1917" transform="rotate(20 22 13)" />
-    <ellipse cx="18" cy="13" rx="1" ry="1.8" fill="#1C1917" transform="rotate(-20 18 13)" />
-    {/* flat bottom */}
-    <line x1="4" y1="20" x2="36" y2="20" stroke="#15803D" strokeWidth="1.5" />
+    <g transform="translate(0 8)">
+      <path d="M4 20 A16 16 0 0 1 36 20 Z" fill="#15803D" stroke="#14532D" strokeWidth="1.75" strokeLinejoin="round" />
+      <path d="M6 20 A14 14 0 0 1 34 20 Z" fill="#86EFAC" />
+      <path d="M8 20 A12 12 0 0 1 32 20 Z" fill="#F87171" />
+      <path d="M12 20 A8 8 0 0 1 28 20 Z" fill="#FCA5A5" opacity="0.5" />
+      <ellipse cx="16" cy="17" rx="1.2" ry="2" fill="#1C1917" transform="rotate(10 16 17)" />
+      <ellipse cx="20" cy="16" rx="1.2" ry="2" fill="#1C1917" />
+      <ellipse cx="24" cy="17" rx="1.2" ry="2" fill="#1C1917" transform="rotate(-10 24 17)" />
+      <ellipse cx="22" cy="13" rx="1" ry="1.8" fill="#1C1917" transform="rotate(20 22 13)" />
+      <ellipse cx="18" cy="13" rx="1" ry="1.8" fill="#1C1917" transform="rotate(-20 18 13)" />
+      <line x1="4" y1="20" x2="36" y2="20" stroke="#14532D" strokeWidth="2" />
+    </g>
   </svg>
 );
 

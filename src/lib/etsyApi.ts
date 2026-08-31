@@ -9,6 +9,7 @@ import { db } from '@/db/db';
 import { recipesRepo, workOrdersRepo } from '@/db/repositories';
 import { getOAuthRedirectUri } from '@/lib/pwa';
 import { uid } from '@/lib/id';
+import { formatNetWeightAmount } from '@/lib/netWeight';
 
 const ETSY_API = 'https://openapi.etsy.com/v3/application';
 const ETSY_TOKEN = 'https://api.etsy.com/v3/public/oauth/token';
@@ -245,7 +246,7 @@ export function buildListingFromRecipe(
   if (recipe.benefit) descParts.push(`\n${recipe.benefit}`);
   descParts.push('\n🧼 Ingredients:');
   descParts.push(ingredientNames.join(', '));
-  if (recipe.netWeight) descParts.push(`\n📦 Net Weight: ${recipe.netWeight}`);
+  if (recipe.netWeight) descParts.push(`\n📦 Net Weight: ${formatNetWeightAmount(recipe.netWeight)}`);
   if (recipe.directions) descParts.push(`\n📝 Directions: ${recipe.directions}`);
   if (recipe.warnings) descParts.push(`\n⚠️ ${recipe.warnings}`);
   if (businessName) descParts.push(`\n\n🌿 Handcrafted with love by ${businessName}`);

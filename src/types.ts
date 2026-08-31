@@ -34,6 +34,16 @@ export interface AveryTemplate {
   rotateForPrint: boolean;
   contexts: LabelContext[];
   geometrySource?: string;
+  /**
+   * Optional per-SKU bleed past the die-cut, in inches.
+   * When omitted, `resolvePrintGuides` derives it from shape / PTE / size.
+   */
+  bleedIn?: number;
+  /**
+   * Optional per-SKU safety inset inside the die-cut, in inches.
+   * When omitted, `resolvePrintGuides` derives it from shape / PTE / size.
+   */
+  safeIn?: number;
 }
 
 export interface AveryDataset {
@@ -64,9 +74,17 @@ export type IngredientCategory =
   | 'spice'
   | 'other';
 
+export interface IngredientSourceRef {
+  provider: 'cosing' | 'openfoodfacts' | 'manual' | 'seed' | 'offline';
+  id: string;
+  url?: string;
+}
+
 export interface Ingredient {
   id: string;
   name: string;
+  /** Spanish common name. Empty or identical to `name` still needs translation. */
+  nameEs?: string;
   /** Plain-English benefit statement shown to shoppers. */
   benefit: string;
   /** INCI / scientific name printed on the back label. */
@@ -84,6 +102,19 @@ export interface Ingredient {
   active: boolean;
   /** Visual grouping for the icon shown in the ingredient list. */
   category?: IngredientCategory;
+  /** Bundled icon key remembered so later similar names reuse the same artwork. */
+  iconKey?: string;
+  /** Stable normalized identity used to prevent spelling/case duplicates. */
+  canonicalKey?: string;
+  /** Alternate common, translated, or supplier names used during lookup. */
+  aliases?: string[];
+  /** External catalog identities retained for exact future matching and attribution. */
+  sourceRefs?: IngredientSourceRef[];
+  /**
+   * Rotating library-row accent (0–5) assigned when the user adds this
+   * ingredient. Seed / default-base rows omit it so they stay pale green.
+   */
+  libraryAccent?: number;
 
   // ── Inventory / COGS fields ──────────────────────────────────────────────
   /** 'weight' = grams, 'volume' = drops. Determines the cost calculation unit. */
@@ -112,14 +143,16 @@ export interface Ingredient {
   updatedAt: number;
 }
 
-/**
- * Per-ingredient entry within a recipe, carrying both the reference and
- * an optional usage amount (grams for weight ingredients, drops for volume).
- */
-export interface RecipeIngredient {
+/** Offline ComfyUI icon job — survives refresh until the host is reachable. */
+export interface PendingComfyIcon {
+  id: string;
   ingredientId: string;
-  amount?: number;
+  name: string;
+  createdAt: number;
 }
+
+/** Display unit on a recipe line. Established inventory/recipe units only. */
+export type RecipeAmountUnit = 'g' | 'oz' | 'ml' | 'drops';
 
 export interface Recipe {
   id: string;
@@ -127,16 +160,26 @@ export interface Recipe {
   ingredientIds: string[];
   /** Headline benefit for the whole product. */
   benefit: string;
+  /** English benefit copy (AI-generated or manual when Local AI is online). */
+  benefitEn?: string;
+  /** Spanish benefit copy (AI-generated or manual when Local AI is online). */
+  benefitEs?: string;
   netWeight?: string;
   directions?: string;
+  directionsEn?: string;
+  directionsEs?: string;
   warnings?: string;
+  warningsEn?: string;
+  warningsEs?: string;
   /** Business footer / contact line printed on every label. */
   footer?: string;
   /**
    * Per-ingredient usage amounts keyed by ingredient ID.
-   * Weight ingredients: grams. Volume ingredients: drops.
+   * Interpreted in `ingredientUnits` (or the ingredient default: drops for oils, grams otherwise).
    */
   ingredientAmounts?: Record<string, number>;
+  /** Display unit per ingredient ID. Missing keys use the ingredient default. */
+  ingredientUnits?: Record<string, RecipeAmountUnit>;
   /** Optional manual color override — a Tailwind color key like 'pink', 'green', etc. */
   color?: string;
   /** Per-bar packaging / materials costs added by the user (e.g. bags, boxes, labels). */
@@ -157,13 +200,15 @@ export interface Recipe {
   laborMinutes?: number;
   createdAt: number;
   updatedAt: number;
+  /** Set when the recipe is moved to trash. Hidden from the main list until restored. */
+  deletedAt?: number;
 }
 
 export interface AssetRecord {
   id: string;
   name: string;
-  /** 'photo' = user upload, 'logo' = brand mark, 'ai' = generated, 'stock' = free stock. */
-  kind: 'photo' | 'logo' | 'ai' | 'stock' | 'background';
+  /** 'photo' = user upload, 'logo' = brand mark, 'ai' = generated, 'stock' = free stock, 'icon' = ComfyUI recipe icon. */
+  kind: 'photo' | 'logo' | 'ai' | 'stock' | 'background' | 'icon';
   /** Data URL so the asset stays fully offline. */
   dataUrl: string;
   width: number;
@@ -193,7 +238,10 @@ export interface AppSettings {
   language: 'en' | 'es';
   filenamePrefix: string;
   googleAiApiKey?: string;
+  googleTranslateApiKey?: string;
   unsplashKey?: string;
+  unsplashSecretKey?: string;
+  unsplashAppId?: string;
   pixabayKey?: string;
   bleedIn: number;
   safeIn: number;
@@ -230,7 +278,7 @@ export interface AppSettings {
   templateFavoritesConfigured?: boolean;
   templateUsageCounts?: Record<string, number>;
 
-  /** Cloud backup sync (Hostinger JSON endpoint). */
+  /** Cloud backup sync (Hostinger JSON endpoint). Gated off until re-implemented. */
   cloudSyncEnabled?: boolean;
   cloudSyncUrl?: string;
   cloudSyncToken?: string;
@@ -245,18 +293,29 @@ export interface AppSettings {
   /** First-run Training Mode welcome popup dismissed. */
   hasSeenTrainingWelcome?: boolean;
 
-  // ── Local AI (optional, 100% offline) ────────────────────────────────────
+  // ── Local AI (optional; external Ollama only) ─────────────────────────────
   /**
-   * Local AI copywriting assist. Enabled by default for new installs (bundled
-   * backend). The user can turn it off here; it never calls out to the cloud.
+   * Local AI copywriting assist. Uses an Ollama server the user already runs
+   * (localhost / LAN / Tailscale). No GGUF is shipped with the app.
    */
   localAiEnabled?: boolean;
-  /** `bundled` = in-app model; `ollama` = network/local Ollama server. */
+  /** @deprecated Ignored — local AI is Ollama-only. Kept for saved settings. */
   localAiBackend?: 'bundled' | 'ollama';
   /** Ollama API base URL (e.g. http://192.168.1.10:11434 on your LAN). */
   ollamaUrl?: string;
-  /** Model tag served by Ollama (e.g. llama3.2, qwen2.5). */
+  /** Model tag served by Ollama (e.g. llama3.2, qwen2.5). Legacy fallback when per-task models are unset. */
   ollamaModel?: string;
+  /** Ollama model for free-text copywriting (benefits, taglines). */
+  ollamaModelText?: string;
+  /** Ollama model for JSON / structured extraction tasks. */
+  ollamaModelJson?: string;
+  /** Ollama model for vision tasks (receipt OCR). */
+  ollamaModelVision?: string;
+
+  /** When true, the app will connect to a local/remote ComfyUI instance for image generation. */
+  comfyUiEnabled?: boolean;
+  /** ComfyUI API base URL (e.g. http://127.0.0.1:8188). */
+  comfyUiUrl?: string;
 
   // ── Guided tours & tips ───────────────────────────────────────────────────
   /** Tour ids the user finished (or skipped) — they stop auto-suggesting. */
@@ -567,6 +626,18 @@ export interface LotCode {
   createdAt: number;
 }
 
+/** A print-ready PDF registered in the in-app PDF Vault (IndexedDB). */
+export interface VaultPdf {
+  id: string;
+  name: string;
+  size: number;
+  createdAt: number;
+  /** Absolute path in the portable save system's `exports/` folder (Electron). */
+  path?: string;
+  /** PDF bytes as a data URL so the vault can reopen the file offline / in-browser. */
+  dataUrl?: string;
+}
+
 export interface LabelSet {
   id: string;
   name: string;
@@ -586,4 +657,23 @@ export interface LabelSet {
   sideThumb?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Affirmation Center — user-written lines and hearted favorites.
+// ---------------------------------------------------------------------------
+
+export interface CustomAffirmation {
+  id: string;
+  textEn: string;
+  textEs: string;
+  createdAt: number;
+}
+
+export interface FavoriteAffirmation {
+  /** `${source}:${refId}` */
+  id: string;
+  source: 'builtin' | 'custom';
+  refId: string;
+  createdAt: number;
 }

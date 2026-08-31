@@ -2,6 +2,19 @@ import { buildBackup, restoreBackup, type BackupFile } from '@/lib/backup';
 import { db } from '@/db/db';
 import type { AppSettings } from '@/types';
 
+/**
+ * Hostinger / website cloud sync is gated off until it can be re-implemented.
+ * Keep the functions below; flip this to true to restore Settings + boot sync.
+ */
+export const CLOUD_SYNC_AVAILABLE = false;
+
+function cloudSyncUnavailable(): CloudSyncResult {
+  return {
+    status: 'disabled',
+    message: 'Cloud sync is turned off until it can be re-implemented.',
+  };
+}
+
 export interface CloudSyncMeta {
   exportedAt: string | null;
   size: number;
@@ -53,6 +66,7 @@ export async function getLocalDataTimestamp(): Promise<number> {
 }
 
 export async function fetchCloudSyncMeta(settings: AppSettings): Promise<CloudSyncMeta | null> {
+  if (!CLOUD_SYNC_AVAILABLE) return null;
   const url = normalizeSyncUrl(settings.cloudSyncUrl ?? '');
   const token = settings.cloudSyncToken?.trim() ?? '';
   if (!settings.cloudSyncEnabled || !url || !token) return null;
@@ -75,6 +89,7 @@ export async function fetchCloudSyncMeta(settings: AppSettings): Promise<CloudSy
  * last successful pull — pushing would overwrite changes Rosa never received.
  */
 export async function detectSyncConflict(settings: AppSettings): Promise<CloudSyncResult | null> {
+  if (!CLOUD_SYNC_AVAILABLE) return null;
   const meta = await fetchCloudSyncMeta(settings);
   if (!meta?.exportedAt) return null;
 
@@ -97,6 +112,7 @@ export async function detectSyncConflict(settings: AppSettings): Promise<CloudSy
 }
 
 export async function pushCloudBackup(settings: AppSettings): Promise<CloudSyncResult> {
+  if (!CLOUD_SYNC_AVAILABLE) return cloudSyncUnavailable();
   const url = normalizeSyncUrl(settings.cloudSyncUrl ?? '');
   const token = settings.cloudSyncToken?.trim() ?? '';
   if (!settings.cloudSyncEnabled || !url || !token) {
@@ -125,6 +141,7 @@ export async function pushCloudBackup(settings: AppSettings): Promise<CloudSyncR
 }
 
 export async function pullCloudBackup(settings: AppSettings): Promise<CloudSyncResult> {
+  if (!CLOUD_SYNC_AVAILABLE) return cloudSyncUnavailable();
   const url = normalizeSyncUrl(settings.cloudSyncUrl ?? '');
   const token = settings.cloudSyncToken?.trim() ?? '';
   if (!settings.cloudSyncEnabled || !url || !token) {
@@ -160,6 +177,7 @@ export async function runCloudSync(
   settings: AppSettings,
   options: { autoPull?: boolean; autoPush?: boolean } = {},
 ): Promise<CloudSyncResult> {
+  if (!CLOUD_SYNC_AVAILABLE) return cloudSyncUnavailable();
   const { autoPull = false, autoPush = true } = options;
   const url = normalizeSyncUrl(settings.cloudSyncUrl ?? '');
   const token = settings.cloudSyncToken?.trim() ?? '';

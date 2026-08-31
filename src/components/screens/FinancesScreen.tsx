@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown, ChevronUp, Download, Loader2, Package, Plus,
-  Receipt as ReceiptIcon, Trash2, X,
+  Receipt as ReceiptIcon, Sparkles, Trash2, X,
 } from 'lucide-react';
 import type { CustomMaterial, ExpenseCategory, Ingredient, Receipt, ReceiptLineItem } from '@/types';
 import { customMaterialsRepo, ingredientsRepo, receiptsRepo } from '@/db/repositories';
 import { getIngredientDisplayName } from '@/lib/ingredientI18n';
+import { extractReceiptFromImage, isOllamaVisionAvailable } from '@/lib/localAi';
+import { useAppStore } from '@/store/useAppStore';
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = ['ingredients', 'packaging', 'shipping', 'equipment', 'other'];
 
@@ -28,12 +30,51 @@ function formatMoney(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+async function fileToBase64(file: File, maxDim = 1280): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d')?.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not read image'));
+    };
+    img.src = url;
+  });
+}
+
+export interface ReceiptFormSeed {
+  vendor?: string;
+  date?: string;
+  category?: ExpenseCategory;
+  lineItems?: Array<{ description: string; quantity: number; unitCost: number }>;
+  tax?: string;
+  notes?: string;
+  totalMismatch?: boolean;
+}
+
 export default function FinancesScreen() {
   const { t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [materials, setMaterials] = useState<CustomMaterial[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [formSeed, setFormSeed] = useState<ReceiptFormSeed | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [visionAvailable, setVisionAvailable] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const reload = async () => {
@@ -48,6 +89,42 @@ export default function FinancesScreen() {
   };
 
   useEffect(() => { void reload(); }, []);
+
+  useEffect(() => {
+    if (!settings.localAiEnabled) {
+      setVisionAvailable(false);
+      return;
+    }
+    void isOllamaVisionAvailable(settings).then(setVisionAvailable);
+  }, [settings]);
+
+  const handleScanReceipt = async (file: File) => {
+    setScanning(true);
+    setScanError(null);
+    try {
+      const base64 = await fileToBase64(file);
+      const result = await extractReceiptFromImage(base64, settings);
+      if (!result.ok || !result.data) {
+        setScanError(result.error ?? t('finances.scanFailed', 'Could not read the receipt.'));
+        return;
+      }
+      const d = result.data;
+      setFormSeed({
+        vendor: d.vendor,
+        date: d.date,
+        category: (d.category as ExpenseCategory) || 'ingredients',
+        lineItems: d.lineItems,
+        tax: d.tax !== undefined ? String(d.tax) : '',
+        notes: d.notes,
+        totalMismatch: result.totalMismatch,
+      });
+      setShowForm(true);
+    } catch {
+      setScanError(t('finances.scanFailed', 'Could not read the receipt.'));
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const summary = useMemo(() => receiptsRepo.summarize(receipts), [receipts]);
 
@@ -114,16 +191,47 @@ export default function FinancesScreen() {
                 <Download className="h-3.5 w-3.5" />
                 {t('finances.exportCsv', 'Export CSV')}
               </button>
+              {settings.localAiEnabled && visionAvailable && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleScanReceipt(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    disabled={scanning}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    {t('finances.scanReceipt', 'Scan Receipt')}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="btn-primary text-sm"
-                onClick={() => setShowForm((v) => !v)}
+                onClick={() => { setFormSeed(null); setShowForm((v) => !v); }}
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t('finances.newReceipt', 'New Receipt')}
               </button>
             </div>
           </div>
+          {scanError && <p className="mt-2 text-sm text-amber-600">{scanError}</p>}
+          {settings.localAiEnabled && !visionAvailable && (
+            <p className="mt-2 text-xs text-slate-400">
+              {t('finances.scanUnavailable', 'Receipt scanning needs a vision model on your Ollama server (Settings → Local AI).')}
+            </p>
+          )}
 
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <StatCard label={t('finances.thisMonth', 'This Month')} value={summary.thisMonth} />
@@ -165,8 +273,9 @@ export default function FinancesScreen() {
               <NewReceiptForm
                 ingredients={ingredients}
                 materials={materials}
-                onSaved={() => { setShowForm(false); void reload(); }}
-                onCancel={() => setShowForm(false)}
+                seed={formSeed}
+                onSaved={() => { setShowForm(false); setFormSeed(null); void reload(); }}
+                onCancel={() => { setShowForm(false); setFormSeed(null); }}
               />
             </div>
           )}
@@ -256,7 +365,7 @@ function ReceiptRow({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          aria-label={t('finances.deleteReceipt', 'Delete receipt')}
+          aria-label={t('finances.deleteReceipt', 'Delete Receipt')}
           className="shrink-0"
         >
           <Trash2 className="h-4 w-4 text-slate-300 transition-colors hover:text-rose-500" />
@@ -309,11 +418,13 @@ function emptyLineItem(): LineItemDraft {
 function NewReceiptForm({
   ingredients,
   materials,
+  seed,
   onSaved,
   onCancel,
 }: {
   ingredients: Ingredient[];
   materials: CustomMaterial[];
+  seed?: ReceiptFormSeed | null;
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -325,6 +436,29 @@ function NewReceiptForm({
   const [tax, setTax] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!seed) return;
+    if (seed.vendor) setVendor(seed.vendor);
+    if (seed.date) {
+      const parsed = Date.parse(seed.date);
+      setDate(dateInputValue(Number.isFinite(parsed) ? parsed : todayTimestamp()));
+    }
+    if (seed.category) setCategory(seed.category);
+    if (seed.tax) setTax(seed.tax);
+    if (seed.notes) setNotes(seed.notes);
+    if (seed.lineItems?.length) {
+      setLineItems(
+        seed.lineItems.map((li) => ({
+          id: genId(),
+          description: li.description,
+          quantity: String(li.quantity),
+          unitCost: String(li.unitCost),
+          syncPrice: false,
+        })),
+      );
+    }
+  }, [seed]);
 
   const computedLines = useMemo(
     () =>
@@ -415,10 +549,16 @@ function NewReceiptForm({
     <div className="space-y-4 rounded-2xl bg-white p-5 ring-1 ring-slate-200">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-800">{t('finances.newReceipt', 'New Receipt')}</p>
-        <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-600" aria-label="Cancel">
+        <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-600" aria-label={t('common.cancel')}>
           <X className="h-4 w-4" />
         </button>
       </div>
+      {seed?.totalMismatch && (
+        <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+          <Package className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {t('finances.scanTotalMismatch', 'Line items do not add up to the receipt total — please review before saving.')}
+        </p>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
@@ -445,7 +585,7 @@ function NewReceiptForm({
       </div>
 
       <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <p className="mb-2 ui-label font-semibold uppercase tracking-wide text-slate-400">
           {t('finances.lineItems', 'Line Items')}
         </p>
         <div className="space-y-2">
@@ -536,7 +676,7 @@ function NewReceiptForm({
                     {t('finances.lineTotal', 'Line total')}: {formatMoney(li.lineTotal)}
                   </span>
                   {lineItems.length > 1 && (
-                    <button type="button" onClick={() => removeLine(li.id)} aria-label="Remove line item">
+                    <button type="button" onClick={() => removeLine(li.id)} aria-label={t('finances.removeLineItem')}>
                       <Trash2 className="h-3.5 w-3.5 text-slate-300 transition-colors hover:text-rose-500" />
                     </button>
                   )}

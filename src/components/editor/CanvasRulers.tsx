@@ -4,13 +4,15 @@ import { EDITOR_PPI } from '@/lib/units';
 export const RULER_SIZE = 24;
 
 interface Props {
-  /** On-screen size of the label artboard, bleed included. */
+  /** On-screen size of the ruler well (artboard + optional pad). */
   widthPx: number;
   heightPx: number;
   /** Current view zoom, so tick density can adapt. */
   zoom: number;
   /** Bleed margin in canvas pixels — the 0" mark sits at the trim edge. */
   bleedPx: number;
+  /** Screen pixels of workspace between this ruler and the artboard edge. */
+  padPx?: number;
 }
 
 const BG = '#f8fafc';
@@ -24,14 +26,14 @@ const TRIM = '#ec4899';
  * Zero is the label's trim edge (not the bleed edge), so what the ruler reads
  * is what will physically measure on the printed sticker.
  */
-export default function CanvasRulers({ widthPx, heightPx, zoom, bleedPx }: Props) {
+export default function CanvasRulers({ widthPx, heightPx, zoom, bleedPx, padPx = 0 }: Props) {
   const topRef = useRef<HTMLCanvasElement>(null);
   const leftRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    drawRuler(topRef.current, widthPx, zoom, bleedPx, true);
-    drawRuler(leftRef.current, heightPx, zoom, bleedPx, false);
-  }, [widthPx, heightPx, zoom, bleedPx]);
+    drawRuler(topRef.current, widthPx, zoom, bleedPx, true, padPx);
+    drawRuler(leftRef.current, heightPx, zoom, bleedPx, false, padPx);
+  }, [widthPx, heightPx, zoom, bleedPx, padPx]);
 
   return (
     <>
@@ -62,6 +64,7 @@ function drawRuler(
   zoom: number,
   bleedPx: number,
   horizontal: boolean,
+  padPx = 0,
 ) {
   if (!el || lengthPx <= 0) return;
   const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
@@ -80,7 +83,7 @@ function drawRuler(
   const pxPerInch = EDITOR_PPI * zoom;
   // Below ~28 px/inch eighth-inch ticks turn into a grey smear.
   const stepIn = pxPerInch >= 110 ? 1 / 8 : pxPerInch >= 55 ? 1 / 4 : 1 / 2;
-  const origin = bleedPx * zoom;
+  const origin = padPx + bleedPx * zoom;
 
   ctx.font = '9px ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'top';

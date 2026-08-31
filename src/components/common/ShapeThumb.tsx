@@ -1,4 +1,5 @@
 import type { AveryTemplate } from '@/types';
+import { shapeColorTokens } from '@/lib/shapeColors';
 
 export default function ShapeThumb({
   template,
@@ -8,6 +9,7 @@ export default function ShapeThumb({
   size?: number;
 }) {
   const { labelWidthIn, labelHeightIn, shape, cornerRadiusIn } = template;
+  const colors = shapeColorTokens(shape);
   const ar = labelWidthIn / labelHeightIn;
   let w: number;
   let h: number;
@@ -29,8 +31,13 @@ export default function ShapeThumb({
   return (
     <div className="flex items-center justify-center" style={{ height: size, width: size }}>
       <div
-        className="border-2 border-gaia-400 bg-gradient-to-br from-gaia-50 to-gaia-100"
-        style={{ width: Math.max(6, w), height: Math.max(6, h), borderRadius: radius }}
+        style={{
+          width: Math.max(6, w),
+          height: Math.max(6, h),
+          borderRadius: radius,
+          border: `2px solid ${colors.hex}`,
+          background: `linear-gradient(to bottom right, ${colors.tint}, ${colors.border})`,
+        }}
       />
     </div>
   );

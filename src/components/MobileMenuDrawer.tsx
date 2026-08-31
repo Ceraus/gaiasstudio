@@ -26,7 +26,7 @@ const MENU_ITEMS: Array<{
   { id: 'ingredients', labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: Package },
   { id: 'products', labelKey: 'nav.products', defaultLabel: 'Products', icon: ShoppingBag },
   { id: 'shop', labelKey: 'nav.shop', defaultLabel: 'Etsy Shop', icon: Store },
-  { id: 'drafts', labelKey: 'nav.workspace', defaultLabel: 'Workspace', icon: FileStack },
+  { id: 'drafts', labelKey: 'nav.workspace', defaultLabel: 'Saved Designs', icon: FileStack },
   { id: 'promptBuilder', labelKey: 'nav.promptBuilder', defaultLabel: 'AI Prompt', icon: Sparkles },
   { id: 'orders', labelKey: 'nav.orders', defaultLabel: 'Orders', icon: ClipboardList },
   { id: 'finances', labelKey: 'nav.finances', defaultLabel: 'Finances', icon: Receipt },
@@ -42,7 +42,7 @@ interface MobileMenuDrawerProps {
   trainingMode?: boolean;
 }
 
-const TRAINING_MENU_IDS: Screen[] = ['export', 'drafts', 'settings'];
+const TRAINING_MENU_IDS: Screen[] = ['export', 'settings'];
 
 export default function MobileMenuDrawer({
   open,

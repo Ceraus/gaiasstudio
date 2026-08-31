@@ -4,21 +4,26 @@ import type {
   AssetRecord,
   Client,
   Collection,
+  CustomAffirmation,
   CustomMaterial,
+  FavoriteAffirmation,
   DesignVersion,
   Draft,
   EtsyListing,
   EtsySyncLog,
   Ingredient,
   LabelSet,
+  PendingComfyIcon,
   LotCode,
   ProductListing,
   Receipt,
   Recipe,
   SetPurchase,
+  VaultPdf,
   WorkOrder,
   WorkOrderItem,
 } from '@/types';
+import { canonicalIngredientKey } from '@/lib/ingredientResolution';
 
 // ---------------------------------------------------------------------------
 // Local, offline-first database.
@@ -51,6 +56,10 @@ export class GaiaDatabase extends Dexie {
   productListings!: Table<ProductListing, string>;
   etsySyncLogs!: Table<EtsySyncLog, string>;
   lotCodes!: Table<LotCode, string>;
+  pdfVault!: Table<VaultPdf, string>;
+  customAffirmations!: Table<CustomAffirmation, string>;
+  favoriteAffirmations!: Table<FavoriteAffirmation, string>;
+  pendingComfyIcons!: Table<PendingComfyIcon, string>;
 
   constructor() {
     super('gaia-label-studio');
@@ -166,30 +175,119 @@ export class GaiaDatabase extends Dexie {
       etsySyncLogs: 'id, direction, entity, timestamp',
       lotCodes: 'id, code, recipeId, productionDate, createdAt',
     });
+
+    // Version 15 — reset the initial workspace. Keep the full ingredient
+    // catalog and user assets, but let each user activate ingredients and
+    // create recipes as part of their own setup.
+    this.version(15).upgrade(async (tx) => {
+      await tx.table('recipes').clear();
+      await tx.table('ingredients').toCollection().modify({ active: false });
+    });
+
+    // Version 16 — Glycerin Base (Clear) stays active as the default soap base.
+    this.version(16).upgrade(async (tx) => {
+      await tx.table('ingredients').toCollection().modify((ing: { name?: string; active?: boolean }) => {
+        if (typeof ing.name === 'string' && ing.name.toLowerCase().trim() === 'glycerin base (clear)') {
+          ing.active = true;
+        }
+      });
+    });
+
+    // Version 17 — canonical identity metadata for safe online autocomplete.
+    // The index is intentionally non-unique: old databases may already contain
+    // duplicates and must continue to open so the user can review/merge them.
+    this.version(17).stores({
+      ingredients: 'id, name, canonicalKey, isSoapBase, active, createdAt, fractionalCost',
+    }).upgrade(async (tx) => {
+      await tx.table('ingredients').toCollection().modify((ing: Ingredient) => {
+        if (!ing.canonicalKey) {
+          ing.canonicalKey = canonicalIngredientKey(ing);
+        }
+        if (!ing.sourceRefs?.length) {
+          ing.sourceRefs = [{ provider: 'seed', id: ing.canonicalKey }];
+        }
+      });
+    });
+
+    // Version 18 — start from an empty user library. Icon artwork stays in
+    // the bundled map and is reattached when the same ingredient is added later.
+    this.version(18).upgrade(async (tx) => {
+      await tx.table('ingredients').clear();
+      await tx.table('recipes').toCollection().modify((recipe: Recipe) => {
+        recipe.ingredientIds = [];
+        recipe.ingredientAmounts = {};
+      });
+    });
+
+    // Version 19 — recipe trash (soft delete).
+    this.version(19).stores({
+      recipes: 'id, name, createdAt, deletedAt',
+    });
+
+    // Version 20 — empty leftover Saved Designs (autosaved Avery test labels).
+    // Recipes, ingredients, inventory, collections, and settings are untouched.
+    this.version(20).upgrade(async (tx) => {
+      await tx.table('drafts').clear();
+    });
+
+    // Version 21 — PDF Vault records so print-ready exports show in-app even
+    // when the Electron filesystem list is unavailable or stale.
+    this.version(21).stores({
+      pdfVault: 'id, name, createdAt',
+    });
+
+    // Version 22 — Affirmation Center: user-written lines and hearted favorites.
+    this.version(22).stores({
+      customAffirmations: 'id, createdAt',
+      favoriteAffirmations: 'id, source, refId, createdAt',
+    });
+
+    // Version 23 — ComfyUI icon jobs that failed while the host was offline.
+    this.version(23).stores({
+      pendingComfyIcons: 'id, ingredientId, createdAt',
+    });
   }
 }
 
 export const db = new GaiaDatabase();
 
+/** Default Ollama endpoint (Tailscale HTTPS on the AI gaming PC). */
+export const DEFAULT_OLLAMA_URL = 'https://alaster.tail18528d.ts.net';
+
+/** Seeded Unsplash demo app — Access Key is the Client-ID used for photo search. */
+export const DEFAULT_UNSPLASH_APP_ID = '1039698';
+export const DEFAULT_UNSPLASH_KEY = '012nArdZHVt27gGE6LZF1Dwr0czF7VC6lAJ6V-vH2gQ';
+export const DEFAULT_UNSPLASH_SECRET = '2Vt_LD_iyx_C2XYqqIQXaydiyYc-Pw4zATHTN3hJlys';
+export const DEFAULT_PIXABAY_KEY = '41419466-07b32c90ecd4a748aaf401ebd';
+
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'app',
   language: 'es',
   filenamePrefix: "Gaia's Essences",
-  bleedIn: 0.0625,
-  safeIn: 0.0625,
+  bleedIn: 0.125,
+  safeIn: 0.125,
   onboarded: false,
   favoriteTemplateIds: [],
   templateFavoritesConfigured: false,
   templateUsageCounts: {},
   uiScale: 1,
   localAiEnabled: true,
-  localAiBackend: 'bundled',
-  ollamaUrl: '',
-  ollamaModel: 'llama3.1:8b',
+  comfyUiEnabled: true,
+  comfyUiUrl: 'http://100.90.140.100:8188',
+  localAiBackend: 'ollama',
+  ollamaUrl: DEFAULT_OLLAMA_URL,
+  ollamaModel: 'gpt-oss:20b',
+  ollamaModelText: 'qwen2.5:7b-instruct',
+  ollamaModelJson: 'gpt-oss:20b',
+  ollamaModelVision: 'llama3.2-vision',
   businessName: "Gaia's Essences",
   businessAddress: "1836 Westchester Ave, Unit #282, Bronx, NY 10472",
   baseLaborRate: 20,
-  contact: 'Rosa Suarez · customercare@gaiasessences.com · https://www.gaiasessences.com/',
+  contact: 'customercare@gaiasessences.com · https://www.gaiasessences.com/',
   isTrainingMode: true,
   hasSeenTrainingWelcome: false,
+  unsplashAppId: DEFAULT_UNSPLASH_APP_ID,
+  unsplashKey: DEFAULT_UNSPLASH_KEY,
+  unsplashSecretKey: DEFAULT_UNSPLASH_SECRET,
+  pixabayKey: DEFAULT_PIXABAY_KEY,
 };

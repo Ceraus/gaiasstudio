@@ -14,8 +14,8 @@
 //   • restoreBackup(json)  — validates the file, then clears + reimports every
 //     recognized table inside ONE read-write transaction: all-or-nothing, a
 //     half-restored database is impossible.
-//   • maybeRunAutoBackup() — daily safety net on boot (Electron silent save or
-//     PWA browser download). Rosa never has to remember to back up.
+//   • maybeRunAutoBackup() — daily safety net on boot (Electron silent save to
+//     disk). Browser/PWA does not auto-download — use Settings → Export backup.
 // ---------------------------------------------------------------------------
 
 import { db } from '@/db/db';
@@ -63,7 +63,7 @@ export function backupFilename(prefix = 'Gaia_Backup', now = new Date()): string
   );
 }
 
-/** PWA auto-backup filename: gaias-studio-backup-YYYY-MM-DD.json */
+/** @deprecated Browser builds no longer auto-download; kept for manual export naming if needed. */
 export function pwaAutoBackupFilename(now = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `gaias-studio-backup-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}.json`;
@@ -152,43 +152,42 @@ export async function restoreBackup(json: string): Promise<RestoreSummary> {
 const LAST_BACKUP_DATE_KEY = 'lastBackupDate';
 const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-function triggerBrowserDownload(json: string, filename: string): void {
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
 /**
  * Writes an automatic backup at most once per 24 hours. Electron saves
- * silently; PWA triggers a browser download. Never throws — a failed
- * auto-backup must not break app startup.
+ * silently to disk. Browser/PWA only stamps the date — no surprise download
+ * on login (Settings → Export backup covers the hosted app).
+ * Never throws — a failed auto-backup must not break app startup.
+ *
+ * First app session (e.g. right after PIN setup) is deferred: we stamp
+ * lastBackupDate without downloading so Rosa isn't greeted with a backup file.
  */
 export async function maybeRunAutoBackup(): Promise<void> {
   try {
+    const now = Date.now();
     const lastRaw = localStorage.getItem(LAST_BACKUP_DATE_KEY);
-    const last = lastRaw ? Date.parse(lastRaw) : 0;
-    if (last && Date.now() - last < AUTO_BACKUP_INTERVAL_MS) return;
 
-    const backup = await buildBackup();
-    const json = JSON.stringify(backup);
+    if (!lastRaw) {
+      localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date(now).toISOString());
+      return;
+    }
+
+    const last = Date.parse(lastRaw);
+    if (Number.isFinite(last) && now - last < AUTO_BACKUP_INTERVAL_MS) return;
+
     const api = electronApi();
 
     if (api?.saveBackup) {
+      const backup = await buildBackup();
+      const json = JSON.stringify(backup);
       const { path } = await api.saveBackup(json, backupFilename('Gaia_AutoBackup'));
-      localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date().toISOString());
+      localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date(now).toISOString());
       console.info(`[Gaia] Automatic backup saved: ${path}`);
       return;
     }
 
-    triggerBrowserDownload(json, pwaAutoBackupFilename());
-    localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date().toISOString());
-    console.info('[Gaia] Automatic PWA backup downloaded');
+    // Hosted PWA: no auto-download. Manual export lives in Settings.
+    localStorage.setItem(LAST_BACKUP_DATE_KEY, new Date(now).toISOString());
+    console.info('[Gaia] Automatic browser backup skipped (use Settings → Export backup)');
   } catch (err) {
     console.warn('[Gaia] Automatic backup failed:', err);
   }

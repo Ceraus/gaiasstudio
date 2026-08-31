@@ -32,13 +32,14 @@ import {
   Users,
 } from 'lucide-react';
 import { editor } from '@/lib/fabric/editorController';
+import { layerDisplayName } from '@/lib/layerDisplayName';
 import { useEditorStore } from '@/store/useEditorStore';
 
 function kindIcon(kind: string) {
   if (kind === 'text') return Type;
   if (kind === 'group') return Users;
   if (kind === 'base' || kind === 'overlay') return Square;
-  if (['image', 'photo', 'logo', 'ai', 'stock', 'background'].includes(kind)) return ImageIcon;
+  if (['image', 'photo', 'logo', 'ai', 'stock', 'background', 'qr'].includes(kind)) return ImageIcon;
   return Shapes;
 }
 
@@ -59,14 +60,8 @@ export default function LayersPanel() {
   // Shift-click range selection anchors from the last plainly-clicked row.
   const [anchorId, setAnchorId] = useState<string | null>(null);
 
-  if (layers.length === 0) {
-    return <p className="p-4 text-center text-xs text-slate-400">{t('layers.empty')}</p>;
-  }
-
-  // ── Selection handling ──────────────────────────────────────────────────
   const handleRowClick = (e: MouseEvent, id: string) => {
     if (e.ctrlKey || e.metaKey) {
-      // Toggle this layer in the multi-selection.
       const next = activeIds.includes(id)
         ? activeIds.filter((x) => x !== id)
         : [...activeIds, id];
@@ -87,7 +82,6 @@ export default function LayersPanel() {
     setAnchorId(id);
   };
 
-  // ── Drag-and-drop handling ───────────────────────────────────────────────
   const handleDragStart = (e: DragEvent, id: string) => {
     setDragId(id);
     e.dataTransfer.setData('text/plain', id);
@@ -108,7 +102,6 @@ export default function LayersPanel() {
     if (dragId === null || dropGap === null) return;
     const fromIndex = layers.findIndex((l) => l.id === dragId);
     if (fromIndex !== -1) {
-      // Convert the gap index into the FINAL panel index after removal.
       const finalIndex = dropGap > fromIndex ? dropGap - 1 : dropGap;
       if (finalIndex !== fromIndex) editor.reorderLayer(dragId, finalIndex);
     }
@@ -121,13 +114,35 @@ export default function LayersPanel() {
     setDropGap(null);
   };
 
+  if (layers.length === 0) {
+    return <p className="p-4 text-center text-xs text-slate-500">{t('layers.empty')}</p>;
+  }
+
+  const selectedOpacity = selection?.opacity ?? 1;
   const multiSelected = activeIds.length >= 2;
   const singleGroupSelected = activeIds.length === 1 && !!selection?.isGroup;
 
   return (
     <div className="flex h-full flex-col">
-      {/* ── Group / Ungroup action bar ─────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 border-b border-slate-100 px-2 py-1.5">
+      {activeIds.length > 0 && selection && (
+        <div className="border-b border-slate-800 px-3 py-2.5">
+          <div className="mb-1.5 flex items-center justify-between text-[10px] text-slate-500">
+            <span>{t('editor.layerOpacity', 'Layer opacity')}</span>
+            <span className="font-mono text-slate-300">{Math.round(selectedOpacity * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={Math.round(selectedOpacity * 100)}
+            className="w-full accent-gaia-500"
+            onChange={(e) => editor.setActiveProps({ opacity: Number(e.target.value) / 100 })}
+          />
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5 border-b border-slate-800 px-2 py-1.5">
         <button
           className="btn-secondary px-2.5 py-1 text-xs"
           disabled={!multiSelected}
@@ -146,15 +161,14 @@ export default function LayersPanel() {
           <UngroupIcon className="h-3.5 w-3.5" />
           {t('layers.ungroup', 'Ungroup')}
         </button>
-        <span className="ml-auto pr-1 text-[10px] leading-tight text-slate-400">
+        <span className="ml-auto pr-1 text-[10px] leading-tight text-slate-500">
           {multiSelected
             ? t('layers.nSelected', '{{count}} selected', { count: activeIds.length })
             : t('layers.multiHint', 'Ctrl-click: multi · drag: reorder')}
         </span>
       </div>
 
-      {/* ── Layer rows ───────────────────────────────────────────────────────── */}
-      <ul className="min-h-0 flex-1 divide-y divide-slate-50 overflow-y-auto" onDrop={handleDrop}>
+      <ul className="min-h-0 flex-1 divide-y divide-slate-800 overflow-y-auto" onDrop={handleDrop}>
         {layers.map((layer, idx) => {
           const Icon = kindIcon(layer.kind);
           const active = activeIds.includes(layer.id);
@@ -168,7 +182,7 @@ export default function LayersPanel() {
               onDragOver={(e) => handleDragOver(e, idx)}
               onDragEnd={handleDragEnd}
               className={`relative flex items-center gap-1 px-1.5 py-1.5 transition-opacity ${
-                active ? 'bg-gaia-50' : 'hover:bg-slate-50'
+                active ? 'bg-gaia-900/50' : 'hover:bg-slate-800'
               } ${isDragging ? 'opacity-40' : ''}`}
             >
               {/* Insertion indicator lines (top gap = idx, bottom gap = idx+1 on last row) */}
@@ -181,7 +195,7 @@ export default function LayersPanel() {
 
               {/* Drag handle */}
               <span
-                className={`shrink-0 ${canDrag ? 'cursor-grab text-slate-300 hover:text-slate-500 active:cursor-grabbing' : 'cursor-not-allowed text-slate-200'}`}
+                className={`shrink-0 ${canDrag ? 'cursor-grab text-slate-600 hover:text-slate-400 active:cursor-grabbing' : 'cursor-not-allowed text-slate-700'}`}
                 title={canDrag
                   ? t('layers.dragHint', 'Drag to reorder')
                   : t('layers.dragLocked', 'Unlock to reorder')}
@@ -194,11 +208,11 @@ export default function LayersPanel() {
                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 onClick={(e) => handleRowClick(e, layer.id)}
               >
-                <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-gaia-600' : 'text-slate-400'}`} />
+                <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-gaia-400' : 'text-slate-500'}`} />
                 {editingId === layer.id ? (
                   <input
                     autoFocus
-                    className="w-full rounded border border-gaia-300 px-1 py-0.5 text-xs outline-none"
+                    className="w-full rounded border border-gaia-600 bg-slate-800 px-1 py-0.5 text-xs text-slate-200 outline-none"
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onBlur={() => {
@@ -212,13 +226,13 @@ export default function LayersPanel() {
                   />
                 ) : (
                   <span
-                    className="truncate text-xs text-slate-700"
+                    className="truncate text-xs text-slate-300"
                     onDoubleClick={() => {
                       setEditingId(layer.id);
                       setDraft(layer.name);
                     }}
                   >
-                    {layer.name}
+                    {layerDisplayName(layer.name, t)}
                   </span>
                 )}
               </button>

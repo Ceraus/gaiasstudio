@@ -4,9 +4,13 @@ dist.zip
 *.tsbuildinfo
 # Electron builder output — exe files are too large for GitHub (>100 MB)
 release/
-# Bundled local-AI model (~470 MB GGUF) — too large for GitHub (>100 MB).
-# Run `npm run ai:fetch-model` to (re)download it before packaging.
-resources/models/*.gguf
+# Local GGUF weights — never commit or ship. The desktop app does not
+# bundle an in-process LLM; optional AI uses external Ollama / ComfyUI.
+resources/models/
+*.gguf
+# Full CosIng inventory dump — filtered subset is merged into
+# src/data/offlineIngredientCatalog.json (autocomplete/icon backlog only).
+scripts/cosing-raw.csv
 # Raw output from the live Avery scraper
 scripts/avery-raw.json
 scripts/avery-docs/
@@ -14,3 +18,7 @@ scripts/avery-docx-log.json
 scripts/_*.html
 scripts/_*-template.*
 public/sync/config.php
+# Portable Electron userData / backups / exports created beside the app
+# (`electron .` writes this at the project root).
+Gaia's Save System/
+Gaia's Essences Save/

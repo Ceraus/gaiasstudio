@@ -3,19 +3,31 @@
  * per category as fallback. All icons share the same 24×24 viewBox and
  * fill="currentColor" so they inherit text colour from their container.
  */
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Loader2 } from 'lucide-react';
 import type { IngredientCategory } from '@/types';
 import { getIngredientSpecificIcon, getIngredientColorfulIcon } from '@/data/ingredientIconPaths';
 import { getCategoryLabel, getIngredientDisplayName } from '@/lib/ingredientI18n';
+import { ingredientIconFileSlug } from '@/lib/ingredientCatalog';
+import { assetsRepo } from '@/db/repositories';
+
+function bundledIngredientPngSrc(name?: string, iconKey?: string): string | null {
+  const slug = ingredientIconFileSlug(name, iconKey);
+  if (!slug) return null;
+  const base = import.meta.env.BASE_URL || './';
+  return `${base}assets/icons/ingredients/${slug}.png`;
+}
 
 interface Props {
   category?: IngredientCategory;
   /** When provided, looks up an ingredient-specific icon before falling back to the category. */
   name?: string;
+  iconKey?: string;
   className?: string;
-  /** 'md' = 32×32 (default), 'sm' = 20×20 */
-  size?: 'sm' | 'md';
+  /** 'md' = 32×32 (default), 'sm' = 26×26 (library/autocomplete rows), 'lg' = 48×48 (recipe card hero) */
+  size?: 'sm' | 'md' | 'lg';
+  loading?: boolean;
 }
 
 /* ── Each path is a standalone mini-illustration optimised for 20-28 px ── */
@@ -224,24 +236,80 @@ export const CATEGORY_LABELS: Record<IngredientCategory, string> = {
   wax:            'Wax',
   additive:       'Additive',
   milk:           'Milk / Cream',
-  seed:           'Seed / Pod',
+seed:           'Seed / Pod',
   spice:          'Spice / Wood',
   other:          'Other',
 };
 
-export default function IngredientIcon({ category = 'other', name, className = '', size = 'md' }: Props) {
+export default function IngredientIcon({ category = 'other', name, iconKey, className = '', size = 'md', loading = false }: Props) {
   const { t } = useTranslation();
-  const sizeCls = size === 'sm' ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-lg';
+  const [assetUrl, setAssetUrl] = useState<string | null>(null);
+  const regenerated = !!iconKey?.startsWith('asset_');
+  const pngSrc = bundledIngredientPngSrc(name, regenerated ? undefined : iconKey);
+  const [pngFailed, setPngFailed] = useState(false);
+
+  useEffect(() => {
+    setPngFailed(false);
+  }, [pngSrc]);
+
+  useEffect(() => {
+    setAssetUrl(null);
+    if (iconKey?.startsWith('asset_')) {
+      const id = iconKey.replace('asset_', '');
+      assetsRepo.get(id).then(a => {
+        if (a && !a.archived) setAssetUrl(a.dataUrl);
+      });
+    }
+  }, [iconKey]);
+
+  const sizeCls = size === 'sm'
+    ? 'box-border h-[26px] w-[26px] min-h-[26px] min-w-[26px] overflow-hidden rounded-md'
+    : size === 'lg'
+      ? 'box-border h-12 w-12 min-h-12 min-w-12 overflow-hidden rounded-lg'
+      : 'box-border h-8 w-8 min-h-8 min-w-8 overflow-hidden rounded-lg';
+  const spinnerCls = size === 'sm' ? 'h-3.5 w-3.5' : size === 'lg' ? 'h-6 w-6' : 'h-4 w-4';
   const titleText = name
     ? getIngredientDisplayName(name, t)
     : getCategoryLabel(category, t);
 
-  // ── Colorful full-SVG override (new flat-design 40×40 icons) ──────────────
-  const colorfulSvg = name ? getIngredientColorfulIcon(name) : undefined;
+  if (loading) {
+    return (
+      <div className={`flex shrink-0 items-center justify-center bg-slate-100 text-slate-400 ${sizeCls} ${className}`} title={titleText}>
+        <Loader2 className={`animate-spin ${spinnerCls}`} />
+      </div>
+    );
+  }
+
+  if (assetUrl) {
+    return (
+      <img
+        src={assetUrl}
+        alt={titleText}
+        title={titleText}
+        className={`object-cover bg-white ring-1 ring-slate-200 shrink-0 ${sizeCls} ${className}`}
+      />
+    );
+  }
+
+  if (pngSrc && !pngFailed) {
+    return (
+      <img
+        key={pngSrc}
+        src={pngSrc}
+        alt={titleText}
+        title={titleText}
+        onError={() => setPngFailed(true)}
+        className={`object-cover bg-white ring-1 ring-slate-200 shrink-0 ${sizeCls} ${className}`}
+      />
+    );
+  }
+
+  // ✨ Colorful full-SVG override (new flat-design 40×40 icons) ──────────────
+  const colorfulSvg = name || iconKey ? getIngredientColorfulIcon(name ?? '', iconKey) : undefined;
   if (colorfulSvg) {
     return (
       <span
-        className={`flex shrink-0 items-center justify-center overflow-hidden ${sizeCls} ${className}`}
+        className={`flex shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full ${sizeCls} ${className}`}
         title={titleText}
         aria-hidden="true"
       >
@@ -250,11 +318,11 @@ export default function IngredientIcon({ category = 'other', name, className = '
     );
   }
 
-  // ── Monochrome currentColor fallback (legacy icons + category shapes) ─────
-  const specific = name ? getIngredientSpecificIcon(name) : undefined;
+  // ✨ Monochrome currentColor fallback (legacy icons + category shapes) ─────
+  const specific = name || iconKey ? getIngredientSpecificIcon(name ?? '', iconKey) : undefined;
   const colorClasses = specific?.colors ?? (CATEGORY_COLORS[category] ?? CATEGORY_COLORS.other);
   const svgContent  = specific?.path    ?? (PATHS[category] ?? PATHS.other);
-  const svgSz   = size === 'sm' ? 12 : 16;
+  const svgSz   = size === 'lg' ? 28 : 16;
   return (
     <span
       className={`flex shrink-0 items-center justify-center ${sizeCls} ${colorClasses} ${className}`}

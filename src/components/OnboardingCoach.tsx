@@ -1,13 +1,11 @@
 import { useTranslation } from 'react-i18next';
 import { Download, Image as ImageIcon, LayoutTemplate, Sparkles, X } from 'lucide-react';
+import { isTrainingModeActive } from '@/lib/trainingMode';
 import { useAppStore } from '@/store/useAppStore';
 import { useTourStore } from '@/store/useTourStore';
 
 /**
- * First-run welcome card. The primary action hands off to the full guided
- * tour (TourOverlay); dismissing just marks onboarding done. Both paths are
- * always recoverable from the Help hub. The dismiss state lives in settings
- * so it never nags again.
+ * First-run welcome card when Training Mode is off.
  */
 export default function OnboardingCoach() {
   const { t } = useTranslation();
@@ -15,7 +13,7 @@ export default function OnboardingCoach() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const startTour = useTourStore((s) => s.start);
 
-  if (settings.onboarded) return null;
+  if (settings.onboarded || isTrainingModeActive(settings)) return null;
 
   const dismiss = () => void updateSettings({ onboarded: true });
   const start = () => {
@@ -69,7 +67,7 @@ export default function OnboardingCoach() {
               {t('onboarding.dismiss')}
             </button>
             <button className="btn-primary w-full sm:w-auto" onClick={start}>
-              {t('onboarding.startTour', 'Show me around')}
+              {t('onboarding.startTour', 'Show Me Around')}
             </button>
           </div>
           <p className="mt-3 text-center text-[11px] text-slate-400">

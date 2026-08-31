@@ -1,16 +1,15 @@
-import { forceRestoreSeedRecipes } from '@/data/recipeSeed';
-import { ingredientsRepo, recipesRepo } from '@/db/repositories';
+import { db } from '@/db/db';
 
-export interface RosaMaintenanceResult {
+export interface InitialSetupResetResult {
   ingredientsDeactivated: number;
-  recipesRestored: number;
-  recipeNames: string[];
+  recipesRemoved: number;
 }
 
-/** Deactivates all ingredients and restores Rosa's 28 seed recipes. */
-export async function runRosaMaintenance(): Promise<RosaMaintenanceResult> {
-  const ingredientsDeactivated = await ingredientsRepo.deactivateAll();
-  const recipesRestored = await forceRestoreSeedRecipes();
-  const recipeNames = (await recipesRepo.all()).map((r) => r.name);
-  return { ingredientsDeactivated, recipesRestored, recipeNames };
+/** Returns the recipe and ingredient library to the first-run setup state. */
+export async function resetInitialSetup(): Promise<InitialSetupResetResult> {
+  const recipesRemoved = await db.recipes.count();
+  const ingredientsDeactivated = await db.ingredients.count();
+  await db.recipes.clear();
+  await db.ingredients.clear();
+  return { ingredientsDeactivated, recipesRemoved };
 }

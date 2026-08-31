@@ -8,7 +8,7 @@ import {
   slotPositionIn,
 } from '@/lib/units';
 
-export interface SheetLayoutSlot {
+interface SheetLayoutSlot {
   col: number;
   row: number;
   page: number;
@@ -32,7 +32,7 @@ export function planSheets(template: AveryTemplate, quantity: number, fillSheet:
   return { total, sheets, perSheet, slots };
 }
 
-export interface BuildPdfArgs {
+interface BuildPdfArgs {
   template: AveryTemplate;
   pngDataUrl: string;
   quantity: number;
@@ -312,8 +312,8 @@ export function peekExportName(opts: ExportNameOptions): string {
   const recipe = sanitizePart(opts.recipeName ?? 'Label');
   const key = `gaia:seq:${seqStorageKey(opts)}`;
   const next = (Number(localStorage.getItem(key)) || 0) + 1;
-  const version = `v${String(next).padStart(2, '0')}`;
-  return `${brand} - ${recipe} - ${version}.${ext}`;
+  const version = `Design Version ${String(next).padStart(2, '0')}`;
+  return `${brand} – ${recipe} – ${version}.${ext}`;
 }
 
 export function bumpExportSeq(opts: ExportNameOptions) {

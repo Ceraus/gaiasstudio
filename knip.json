@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/main.tsx",
+    "index.html",
+    "electron/main.cjs",
+    "electron/preload.cjs",
+    "src/lib/testBridge.ts",
+    "scripts/*.{mjs,js}",
+    "src/**/*.test.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "electron/**/*.cjs",
+    "scripts/**/*.{mjs,js}"
+  ],
+  "paths": {
+    "@/*": ["./src/*"]
+  },
+  "ignore": [
+    "test-comfy*.cjs",
+    "test-ollama.cjs"
+  ],
+  "ignoreBinaries": ["python"],
+  "ignoreDependencies": [
+    "@fontsource/*"
+  ]
+}

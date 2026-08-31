@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /**
    * Opens the given URL in a dedicated Electron BrowserWindow with full
-   * Google sign-in support (uses the persist:aistudio session).
+   * Google sign-in support (shares the Gemini webview session).
    * @param {string} url
    */
   openAiBrowser(url) {
@@ -86,6 +86,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Fetch a local / Tailscale URL from the main process (no renderer CORS).
+   * Used by ComfyUI and other LAN AI services.
+   */
+  fetchLan(url, init) {
+    return ipcRenderer.invoke('gaia:fetch-lan', url, init);
+  },
+
+  /**
    * Silently saves a PDF (base64 bytes) into a sub-folder of the portable
    * save system, e.g. savePdf(b64, 'work_orders', 'Maria_ORD-003.pdf').
    * @param {string} base64
@@ -107,24 +115,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, payload) => cb(payload);
     ipcRenderer.on('gaia:pdf-exported', listener);
     return () => ipcRenderer.removeListener('gaia:pdf-exported', listener);
-  },
-
-  /**
-   * Checks whether the bundled in-app AI model (copywriting assist) is ready.
-   * @returns {Promise<{ state: 'connected'|'loading'|'unreachable', message?: string }>}
-   */
-  bundledAiStatus() {
-    return ipcRenderer.invoke('gaia:bundled-ai-status');
-  },
-
-  /**
-   * Asks the bundled in-app AI model to complete the given prompt. Runs
-   * entirely offline, in the main process (never the network).
-   * @param {string} prompt
-   * @returns {Promise<{ ok: boolean, text?: string, error?: string }>}
-   */
-  bundledAiGenerate(prompt) {
-    return ipcRenderer.invoke('gaia:bundled-ai-generate', prompt);
   },
 
   /**

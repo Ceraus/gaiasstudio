@@ -1,4 +1,17 @@
-import type { Ingredient, Recipe } from '@/types';
+import type { Ingredient, IngredientCategory, Recipe, RecipeAmountUnit } from '@/types';
+
+export type { RecipeAmountUnit };
+
+/** Liquids dosed by drop in melt-and-pour recipes. */
+export const VOLUME_CATEGORIES: ReadonlySet<IngredientCategory> = new Set([
+  'oil',
+  'essential-oil',
+  'fragrance',
+  'colorant',
+]);
+
+const SOLID_NAME = /\b(butter|wax|base|powder|clay|oatmeal|salt|beeswax)\b/i;
+const LIQUID_NAME = /\b(oil|fragrance|perfume|scent|\beo\b|colorant|dye)\b/i;
 
 /** 1 fluid ounce → grams (weight inventory). */
 export const OZ_TO_GRAMS = 28.35;
@@ -10,6 +23,13 @@ export const LBS_TO_GRAMS = 453.59;
 export const DROPS_PER_ML = 20;
 
 export type PurchaseUnit = 'oz' | 'lbs' | 'ml' | 'g';
+
+/** Recipe-line units already used in inventory / recipe math. */
+export const RECIPE_AMOUNT_UNITS: readonly RecipeAmountUnit[] = ['g', 'oz', 'ml', 'drops'];
+
+export function isRecipeAmountUnit(value: unknown): value is RecipeAmountUnit {
+  return value === 'g' || value === 'oz' || value === 'ml' || value === 'drops';
+}
 
 /** Convert a purchase size to grams for weight-based costing. */
 export function purchaseSizeToGrams(size: number, unit?: PurchaseUnit): number {
@@ -28,10 +48,10 @@ export function purchaseSizeToDrops(sizeMl: number): number {
  * Returns `undefined` when required fields are missing or invalid.
  */
 export function calculateFractionalCost(ing: Partial<Ingredient>): number | undefined {
-  const { measurementType, purchaseSize, purchaseUnit, purchasePrice } = ing;
+  const { purchaseSize, purchaseUnit, purchasePrice } = ing;
   if (!purchaseSize || !purchasePrice || purchaseSize <= 0) return undefined;
 
-  if (measurementType === 'volume') {
+  if (isVolumeIngredient(ing)) {
     return purchasePrice / purchaseSizeToDrops(purchaseSize);
   }
 
@@ -40,10 +60,13 @@ export function calculateFractionalCost(ing: Partial<Ingredient>): number | unde
   return purchasePrice / grams;
 }
 
-export function isVolumeIngredient(ing: Pick<Ingredient, 'measurementType' | 'category'>): boolean {
+export function isVolumeIngredient(
+  ing: Pick<Ingredient, 'measurementType' | 'category'> & { name?: string },
+): boolean {
+  if (ing.category && VOLUME_CATEGORIES.has(ing.category)) return true;
   if (ing.measurementType === 'volume') return true;
   if (ing.measurementType === 'weight') return false;
-  return ing.category === 'essential-oil' || ing.category === 'fragrance';
+  return !!ing.name && !SOLID_NAME.test(ing.name) && LIQUID_NAME.test(ing.name);
 }
 
 export function fractionalCostLabel(ing: Pick<Ingredient, 'measurementType' | 'category'>): '/g' | '/drop' {
@@ -70,24 +93,67 @@ export function containerBaseUnits(
 /** Approximate density (g/ml) for volume ingredients when sorting by weight predominance. */
 const VOLUME_DENSITY_G_PER_ML = 0.95;
 
+/** Oils / volume ingredients default to drops; everything else to grams. */
+export function defaultRecipeAmountUnit(
+  ing: Pick<Ingredient, 'measurementType' | 'category'> & { name?: string },
+): RecipeAmountUnit {
+  return isVolumeIngredient(ing) ? 'drops' : 'g';
+}
+
+/** Saved unit if valid; otherwise the ingredient default. */
+export function resolveRecipeAmountUnit(
+  ing: Pick<Ingredient, 'measurementType' | 'category'> & { name?: string },
+  saved?: string,
+): RecipeAmountUnit {
+  return isRecipeAmountUnit(saved) ? saved : defaultRecipeAmountUnit(ing);
+}
+
+/** Convert a recipe-line amount from its display unit into grams. */
+export function amountToGrams(amount: number, unit: RecipeAmountUnit): number {
+  if (unit === 'g') return amount;
+  if (unit === 'oz') return amount * OZ_TO_GRAMS;
+  if (unit === 'ml') return amount * VOLUME_DENSITY_G_PER_ML;
+  return (amount / DROPS_PER_ML) * VOLUME_DENSITY_G_PER_ML;
+}
+
+/** Convert a recipe-line amount into the ingredient's stocked base unit (g or drops). */
+export function amountInBaseUnits(
+  amount: number,
+  unit: RecipeAmountUnit,
+  ing: Pick<Ingredient, 'measurementType' | 'category'> & { name?: string },
+): number {
+  const base = baseUnitOf(ing);
+  if (unit === base) return amount;
+  const grams = amountToGrams(amount, unit);
+  if (base === 'g') return grams;
+  return (grams / VOLUME_DENSITY_G_PER_ML) * DROPS_PER_ML;
+}
+
+export function recipeLineAmountInBaseUnits(
+  amount: number,
+  ing: Pick<Ingredient, 'measurementType' | 'category'> & { name?: string },
+  savedUnit?: string,
+): number {
+  return amountInBaseUnits(amount, resolveRecipeAmountUnit(ing, savedUnit), ing);
+}
+
 /** Convert a recipe ingredient amount to grams for FDA predominance sorting. */
 export function ingredientAmountInGrams(
   amount: number,
-  ing: Pick<Ingredient, 'measurementType' | 'category'>,
+  ing: Pick<Ingredient, 'measurementType' | 'category'> & { name?: string },
+  unit?: RecipeAmountUnit,
 ): number {
-  if (isVolumeIngredient(ing)) {
-    return (amount / DROPS_PER_ML) * VOLUME_DENSITY_G_PER_ML;
-  }
-  return amount;
+  return amountToGrams(amount, unit ?? defaultRecipeAmountUnit(ing));
 }
 
 /** Ingredient IDs sorted by descending weight predominance (FDA label order). */
 export function sortedIngredientIdsByPredominance(
-  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts'>,
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'ingredientUnits'>,
   ingredients: Ingredient[],
 ): string[] {
   const byId = new Map(ingredients.map((i) => [i.id, i]));
   const amounts = recipe.ingredientAmounts ?? {};
+  const units = recipe.ingredientUnits ?? {};
   const ids = recipe.ingredientIds.filter((id) => {
     const amt = amounts[id];
     return amt !== undefined && amt > 0;
@@ -95,15 +161,15 @@ export function sortedIngredientIdsByPredominance(
   return ids.sort((a, b) => {
     const ingA = byId.get(a);
     const ingB = byId.get(b);
-    const gA = ingA ? ingredientAmountInGrams(amounts[a]!, ingA) : 0;
-    const gB = ingB ? ingredientAmountInGrams(amounts[b]!, ingB) : 0;
+    const gA = ingA ? ingredientAmountInGrams(amounts[a]!, ingA, resolveRecipeAmountUnit(ingA, units[a])) : 0;
+    const gB = ingB ? ingredientAmountInGrams(amounts[b]!, ingB, resolveRecipeAmountUnit(ingB, units[b])) : 0;
     return gB - gA;
   });
 }
 
 /** Comma-separated INCI list in FDA descending-weight order. */
 export function buildSortedInciList(
-  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts'>,
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'ingredientUnits'>,
   ingredients: Ingredient[],
 ): string {
   const byId = new Map(ingredients.map((i) => [i.id, i]));
@@ -129,7 +195,7 @@ export function calculateLaborCostPerUnit(
 
 /** Per-unit COGS: material (batch ÷ yield) + labor. */
 export function calculateRecipeUnitCogs(
-  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'customCosts' | 'laborMinutes' | 'barsPerBatch'>,
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'ingredientUnits' | 'customCosts' | 'laborMinutes' | 'barsPerBatch'>,
   ingredients: Ingredient[],
   baseLaborRate: number = DEFAULT_BASE_LABOR_RATE,
 ): number {
@@ -141,17 +207,18 @@ export function calculateRecipeUnitCogs(
 
 /** Sum raw material COGS for a recipe from ingredient amounts × fractional costs. */
 export function calculateRecipeMaterialCogs(
-  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'customCosts'>,
+  recipe: Pick<Recipe, 'ingredientIds' | 'ingredientAmounts' | 'ingredientUnits' | 'customCosts'>,
   ingredients: Ingredient[],
 ): number {
   const amounts = recipe.ingredientAmounts ?? {};
+  const units = recipe.ingredientUnits ?? {};
   let total = 0;
 
   for (const id of recipe.ingredientIds) {
     const amount = amounts[id];
     const ing = ingredients.find((i) => i.id === id);
     if (!amount || !ing?.fractionalCost) continue;
-    total += amount * ing.fractionalCost;
+    total += recipeLineAmountInBaseUnits(amount, ing, units[id]) * ing.fractionalCost;
   }
 
   for (const item of recipe.customCosts ?? []) {

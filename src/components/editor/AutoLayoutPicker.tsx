@@ -1,3 +1,4 @@
+// DEAD-CANDIDATE: only imported by unused AddPanel (2026-08-24). Auto-layout still runs on editor mount via applyAutoLayout.
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Languages, Wand2 } from 'lucide-react';
@@ -107,7 +108,7 @@ export default function AutoLayoutPicker({ open, onClose }: { open: boolean; onC
                       {r.name}
                       {isActive && (
                         <span className="ml-2 inline-flex items-center rounded-full bg-gaia-100 px-1.5 py-0.5 text-[10px] font-semibold text-gaia-700">
-                          {t('recipes.active', 'active')}
+                          {t('recipes.active', 'Active')}
                         </span>
                       )}
                     </span>

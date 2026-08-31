@@ -12,11 +12,11 @@
  * - Category badges
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, Search, X } from 'lucide-react';
-import { ALL_FONTS, SYSTEM_FONTS, type FontDef } from '@/data/googleFonts';
-import { preloadFont } from '@/lib/fontManager';
+import { ALL_FONTS, SYSTEM_FONTS, findFont, type FontCategory, type FontDef } from '@/data/googleFonts';
+import { isFontLoaded, loadFont, preloadFont } from '@/lib/fontManager';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const RECENTS_KEY = 'gaia_font_recents';
@@ -34,11 +34,122 @@ const CATEGORY_LABEL: Record<string, string> = {
 // Fixed render order for categories
 const CATEGORY_ORDER = ['serif', 'sans', 'script', 'display', 'mono', 'system'];
 
+function quoteFontFamily(family: string): string {
+  const trimmed = family.trim();
+  if (!trimmed) return 'sans-serif';
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed;
+  }
+  return `"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function genericFallback(category?: FontCategory): string {
+  if (category === 'serif' || category === 'display') return 'serif';
+  if (category === 'mono') return 'monospace';
+  if (category === 'script') return 'cursive';
+  return 'sans-serif';
+}
+
+/** Preview stack: the real face first, then a matching generic (never UI Poppins). */
+function previewFontStack(family: string, category?: FontCategory): string {
+  return `${quoteFontFamily(family)}, ${genericFallback(category)}`;
+}
+
+function resolveFontDef(family: string): FontDef {
+  return (
+    findFont(family) ??
+    ALL_FONTS.find((f) => f.family.toLowerCase() === family.toLowerCase()) ?? {
+      family,
+      category: /\bserif\b/i.test(family) ? 'serif' : 'sans',
+      bundled: false,
+    }
+  );
+}
+
+function FontPreviewName({
+  family,
+  category,
+  eager,
+  rootRef,
+}: {
+  family: string;
+  category: FontCategory;
+  eager?: boolean;
+  rootRef?: RefObject<HTMLDivElement | null>;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [ready, setReady] = useState(() => isFontLoaded(family));
+
+  useEffect(() => {
+    let cancelled = false;
+    const markReady = () => {
+      if (cancelled) return;
+      if (!document.fonts || document.fonts.check(`16px "${family}"`) || isFontLoaded(family)) {
+        setReady(true);
+      }
+    };
+    const start = () => {
+      preloadFont(family);
+      void loadFont(family).then((ok) => {
+        if (ok || (document.fonts && document.fonts.check(`16px "${family}"`))) markReady();
+      });
+    };
+
+    if (eager) {
+      start();
+    } else {
+      const el = ref.current;
+      if (!el || typeof IntersectionObserver === 'undefined') {
+        start();
+      } else {
+        const io = new IntersectionObserver(
+          ([entry]) => {
+            if (entry?.isIntersecting) {
+              start();
+              io.disconnect();
+            }
+          },
+          { root: rootRef?.current ?? null, rootMargin: '160px 0px', threshold: 0 }
+        );
+        io.observe(el);
+        return () => {
+          cancelled = true;
+          io.disconnect();
+        };
+      }
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [family, eager, rootRef]);
+
+  return (
+    <span
+      ref={ref}
+      className="min-w-0 flex-1 truncate"
+      data-font={family}
+      data-font-ready={ready ? '1' : '0'}
+      style={{
+        fontFamily: ready ? previewFontStack(family, category) : genericFallback(category),
+        fontSize: '16.2px',
+        lineHeight: 1.3,
+        fontWeight: 400,
+      }}
+    >
+      {family}
+    </span>
+  );
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function loadRecents(): string[] {
   try {
     return JSON.parse(localStorage.getItem(RECENTS_KEY) ?? '[]');
-  } catch {
+  } catch (err) {
+    console.error('[gaia] fontPicker.loadRecents failed', err);
     return [];
   }
 }
@@ -46,8 +157,8 @@ function loadRecents(): string[] {
 function saveRecents(families: string[]): void {
   try {
     localStorage.setItem(RECENTS_KEY, JSON.stringify(families));
-  } catch {
-    // ignore storage errors
+  } catch (err) {
+    console.error('[gaia] fontPicker.saveRecents failed', err);
   }
 }
 
@@ -132,10 +243,7 @@ export default function FontPicker({ value, onChange, loading }: Props) {
   const showRecents = !query.trim() && recents.length > 0;
   // Offset to account for the recents section in the keyboard nav flat list
   const recentFontDefs = useMemo<FontDef[]>(
-    () =>
-      recents
-        .map((fam) => ALL_FONTS.find((f) => f.family === fam))
-        .filter((f): f is FontDef => !!f),
+    () => recents.filter(Boolean).map(resolveFontDef),
     [recents]
   );
   const navFonts = useMemo<FontDef[]>(
@@ -143,14 +251,21 @@ export default function FontPicker({ value, onChange, loading }: Props) {
     [showRecents, recentFontDefs, flatFonts, recents]
   );
 
-  // ── Preload fonts when list changes ──────────────────────────────────────
+  // Keep the closed trigger in the selected face, and load Recents first when
+  // the list opens so they never stay on the UI sans fallback.
+  useEffect(() => {
+    if (!value) return;
+    preloadFont(value);
+    void loadFont(value);
+  }, [value]);
+
   useEffect(() => {
     if (!open) return;
-    // Preload the fonts visible in the current list so previews render
-    for (const f of flatFonts) {
+    for (const f of recentFontDefs) {
       preloadFont(f.family);
+      void loadFont(f.family);
     }
-  }, [open, flatFonts]);
+  }, [open, recentFontDefs]);
 
   // ── Scroll active item into view ─────────────────────────────────────────
   useEffect(() => {
@@ -198,23 +313,27 @@ export default function FontPicker({ value, onChange, loading }: Props) {
   const isActive = (family: string, navIdx: number) =>
     activeIdx === navIdx || value === family;
 
-  const renderFontButton = (f: FontDef, navIdx: number, isSelectedValue: boolean) => (
+  const renderFontButton = (f: FontDef, navIdx: number, isSelectedValue: boolean, eager = false) => (
     <button
-      key={f.family}
+      key={eager ? `recent-${f.family}` : f.family}
+      type="button"
+      data-font-section={eager ? 'recent' : 'list'}
+      data-font-preview={f.family}
       ref={activeIdx === navIdx ? activeItemRef : undefined}
       onClick={() => select(f.family)}
-      className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition ${
+      className={`flex w-full items-center justify-between px-[0.81rem] py-[0.54rem] text-left text-[0.945rem] transition ${
         isActive(f.family, navIdx)
           ? 'bg-gaia-50 text-gaia-700'
           : 'text-slate-700 hover:bg-gaia-50'
       }`}
+      style={{ fontFamily: previewFontStack(f.family, f.category) }}
     >
-      <span
-        className="truncate"
-        style={{ fontFamily: f.family, fontSize: '15px', lineHeight: 1.3 }}
-      >
-        {f.family}
-      </span>
+      <FontPreviewName
+        family={f.family}
+        category={f.category}
+        eager={eager}
+        rootRef={listRef}
+      />
       <span className="ml-1 flex shrink-0 items-center gap-1">
         {f.bundled && (
           <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-slate-400">
@@ -231,24 +350,24 @@ export default function FontPicker({ value, onChange, loading }: Props) {
   );
 
   return (
-    <div className="relative">
+    <div className="relative w-full">
       {/* ── Trigger button ──────────────────────────────────────────────── */}
       <button
         ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
-        className={`flex h-8 min-w-[8rem] max-w-[14rem] items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 text-sm transition hover:border-gaia-400 hover:bg-gaia-50 ${open ? 'border-gaia-500 ring-1 ring-gaia-400' : ''}`}
-        style={{ fontFamily: value }}
+        className={`flex h-[2.16rem] w-full items-center gap-[0.27rem] rounded-lg border border-slate-200 bg-white px-[0.54rem] text-[0.945rem] transition hover:border-gaia-400 hover:bg-gaia-50 ${open ? 'border-gaia-500 ring-1 ring-gaia-400' : ''}`}
+        style={{ fontFamily: previewFontStack(value, findFont(value)?.category) }}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <span
-          className="flex-1 truncate text-left text-sm font-medium text-slate-800"
-          style={{ fontFamily: value }}
+          className="flex-1 truncate text-left text-[0.945rem] font-medium text-slate-800"
+          style={{ fontFamily: previewFontStack(value, findFont(value)?.category) }}
         >
-          {loading ? <span className="text-slate-400 text-xs">{t('common.loading', 'Loading…')}</span> : value}
+          {loading ? <span className="text-slate-400 text-[0.81rem]">{t('common.loading', 'Loading…')}</span> : value}
         </span>
         <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`}
+          className={`h-[0.945rem] w-[0.945rem] shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
@@ -257,7 +376,7 @@ export default function FontPicker({ value, onChange, loading }: Props) {
         <div
           ref={popRef}
           role="listbox"
-          aria-label="Font picker"
+          aria-label={t('common.fontPicker')}
           className="absolute left-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200"
           style={{ maxHeight: '400px', display: 'flex', flexDirection: 'column' }}
         >
@@ -280,7 +399,7 @@ export default function FontPicker({ value, onChange, loading }: Props) {
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 onClick={() => setQuery('')}
                 tabIndex={-1}
-                aria-label="Clear search"
+                aria-label={t('common.clearSearch')}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -296,7 +415,7 @@ export default function FontPicker({ value, onChange, loading }: Props) {
                   {t('editor.recentFonts', 'Recent')}
                 </p>
                 {recentFontDefs.map((f, i) =>
-                  renderFontButton(f, i, value === f.family)
+                  renderFontButton(f, i, value === f.family, true)
                 )}
               </div>
             )}
@@ -312,7 +431,7 @@ export default function FontPicker({ value, onChange, loading }: Props) {
                 return (
                   <div key={category}>
                     <p className="sticky top-0 z-10 bg-slate-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      {CATEGORY_LABEL[category] ?? category}
+                      {t(`editor.fontCat.${category}`, CATEGORY_LABEL[category] ?? category)}
                       {!isSystemCat && (
                         <span className="ml-1 normal-case font-normal text-slate-300">
                           · {items[0].bundled ? 'offline' : 'google'}

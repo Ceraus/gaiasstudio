@@ -129,6 +129,9 @@ export async function encryptSettingsForStorage(settings: AppSettings): Promise<
   if (next.googleAiApiKey) {
     next.googleAiApiKey = await encryptOptionalField(next.googleAiApiKey);
   }
+  if (next.googleTranslateApiKey) {
+    next.googleTranslateApiKey = await encryptOptionalField(next.googleTranslateApiKey);
+  }
   if (next.etsyShop) {
     next.etsyShop = await encryptEtsyShop(next.etsyShop);
   }
@@ -140,6 +143,9 @@ export async function decryptSettingsFromStorage(settings: AppSettings): Promise
   const next: AppSettings = { ...settings };
   if (next.googleAiApiKey) {
     next.googleAiApiKey = await decryptOptionalField(next.googleAiApiKey);
+  }
+  if (next.googleTranslateApiKey) {
+    next.googleTranslateApiKey = await decryptOptionalField(next.googleTranslateApiKey);
   }
   if (next.etsyShop) {
     next.etsyShop = await decryptEtsyShop(next.etsyShop);

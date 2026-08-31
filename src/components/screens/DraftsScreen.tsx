@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
+  Archive,
   CheckSquare,
   Copy,
   FileStack,
+  FilePlus,
   FolderOpen,
   FolderTree,
   ImageOff,
   Loader2,
   Pencil,
   PencilLine,
-  Plus,
   Printer,
   Search,
   Square,
@@ -19,8 +20,9 @@ import {
   Vault,
   X,
 } from 'lucide-react';
-import type { AveryDataset, Collection, Draft, Ingredient, Recipe } from '@/types';
-import { collectionsRepo, draftsRepo, ingredientsRepo, recipesRepo } from '@/db/repositories';
+import type { AveryDataset, Collection, Draft, Ingredient, Recipe, VaultPdf } from '@/types';
+import { collectionsRepo, draftsRepo, ingredientsRepo, pdfVaultRepo, recipesRepo } from '@/db/repositories';
+import { downloadDataUrl } from '@/lib/pdfExport';
 import { useAppStore } from '@/store/useAppStore';
 import averyData from '@/data/averyTemplates.json';
 import Modal from '@/components/common/Modal';
@@ -28,6 +30,15 @@ import CollectionsModal from './CollectionsModal';
 import { readableTextOn, tint } from '@/data/collectionPalette';
 
 interface PdfEntry {
+  id: string;
+  name: string;
+  path?: string;
+  size: number;
+  modified: string;
+  dataUrl?: string;
+}
+
+interface DiskPdfEntry {
   name: string;
   path: string;
   size: number;
@@ -35,7 +46,7 @@ interface PdfEntry {
 }
 
 interface ElectronAPIWithVault {
-  listPdfs(): Promise<PdfEntry[]>;
+  listPdfs(): Promise<DiskPdfEntry[]>;
   openFile(filePath: string): Promise<void>;
   openFolder(filePath: string): Promise<void>;
   onPdfExported?(cb: (payload: { filename: string }) => void): () => void;
@@ -89,19 +100,47 @@ export default function DraftsScreen() {
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [managingCollections, setManagingCollections] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  }, []);
 
   const reload = useCallback(() => {
-    draftsRepo.all().then(setDrafts).catch(() => {});
-    collectionsRepo.all().then(setCollections).catch(() => {});
+    draftsRepo.all().then(setDrafts).catch((err) => {
+      console.error('[gaia] drafts.reload failed', err);
+    });
+    collectionsRepo.all().then(setCollections).catch((err) => {
+      console.error('[gaia] collections.reload failed', err);
+    });
   }, []);
 
   useEffect(() => {
     reload();
     // Recipes and ingredients only feed the search index, so failures here
     // must not stop the design list from rendering.
-    recipesRepo.all().then(setRecipes).catch(() => {});
-    ingredientsRepo.all().then(setIngredients).catch(() => {});
+    recipesRepo.all().then(setRecipes).catch((err) => {
+      console.error('[gaia] drafts.recipes failed', err);
+    });
+    ingredientsRepo.all().then(setIngredients).catch((err) => {
+      console.error('[gaia] drafts.ingredients failed', err);
+    });
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
   }, [reload]);
+
+  useEffect(() => {
+    const prev = document.title;
+    const pageTitle = t('drafts.title', t('welcome.savedDesigns', 'Saved Designs'));
+    document.title = `${pageTitle} — Gaia's Studio`;
+    return () => {
+      document.title = prev;
+    };
+  }, [t]);
 
   const collectionById = useMemo(
     () => new Map(collections.map((c) => [c.id, c])),
@@ -116,7 +155,7 @@ export default function DraftsScreen() {
 
   /**
    * One lower-cased haystack per design: its own name and notes plus the names
-   * of the things it is filed under â€” template, collection, recipe and every
+   * of the things it is filed under — template, collection, recipe and every
    * ingredient in that recipe. Searching "lavender" finds a label whose recipe
    * simply contains lavender oil.
    */
@@ -153,14 +192,14 @@ export default function DraftsScreen() {
 
   const activeDraft = activeDraftId ? drafts.find((d) => d.id === activeDraftId) ?? null : null;
 
-  const openDraft = (draft: Draft) => {
+  const openDraft = useCallback((draft: Draft) => {
     const tpl = templates.find((tmpl) => tmpl.id === draft.templateId);
     if (!tpl) {
-      alert(`Template for this draft is no longer available (id: ${draft.templateId}). The draft cannot be opened.`);
+      showToast(t('drafts.templateGone', { id: draft.templateId }));
       return;
     }
     loadDraft(draft, tpl);
-  };
+  }, [loadDraft, showToast, t]);
 
   const doRemove = async (id: string) => {
     setConfirmDeleteId(null);
@@ -169,9 +208,31 @@ export default function DraftsScreen() {
     reload();
   };
 
-  const toggleSelected = (id: string) => {
+  const toggleSelected = useCallback((id: string) => {
     setSelectedIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
-  };
+  }, []);
+
+  const handleDeleteDraft = useCallback((id: string) => {
+    setConfirmDeleteId(id);
+  }, []);
+
+  const handleDuplicateDraft = useCallback((id: string) => {
+    void draftsRepo.duplicate(id).then(reload).catch((err) => {
+      console.error('[gaia] drafts.duplicate failed', err);
+    });
+  }, [reload]);
+
+  const handleRenameDraft = useCallback((id: string, name: string) => {
+    draftsRepo.rename(id, name).then(reload).catch((err) => {
+      console.error('[gaia] drafts.rename failed', err);
+    });
+  }, [reload]);
+
+  const handleSetCollection = useCallback((id: string, collectionId: string | null) => {
+    draftsRepo.setCollection(id, collectionId).then(reload).catch((err) => {
+      console.error('[gaia] drafts.setCollection failed', err);
+    });
+  }, [reload]);
 
   const startBatchPrint = () => {
     setBatchDraftIds(selectedIds);
@@ -179,19 +240,21 @@ export default function DraftsScreen() {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto bg-slate-50 p-6">
+    <div className="flex h-full flex-col overflow-y-auto bg-gaia-50 px-6 py-8">
       <div className="mx-auto w-full max-w-5xl">
         {/* Header */}
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-slate-800">{t('drafts.title')}</h1>
+              <h1 className="text-3xl font-semibold text-gaia-900">
+                {t('drafts.title', t('welcome.savedDesigns', 'Saved Designs'))}
+              </h1>
               {activeDraft && tab === 'workspace' && (
                 <PencilLine className="h-5 w-5 text-orange-500" aria-hidden="true" />
               )}
             </div>
             {activeDraft && tab === 'workspace' ? (
-              <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
+              <p className="mt-2 flex items-center gap-1.5 text-sm text-slate-600">
                 <span>{t('drafts.subtitle')}</span>
                 <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-600">
                   <PencilLine className="h-3 w-3" />
@@ -199,26 +262,37 @@ export default function DraftsScreen() {
                 </span>
               </p>
             ) : (
-              <p className="mt-1 text-sm text-slate-500">{t('drafts.subtitle')}</p>
+              <p className="mt-2 text-sm text-slate-600">{t('drafts.subtitle')}</p>
             )}
           </div>
-          {tab === 'workspace' && (
-            <div className="flex shrink-0 items-center gap-2">
-              <button className="btn-primary" onClick={() => goto('template')}>
-                <Plus className="h-4 w-4" />
-                <span className="hidden sm:inline">{t('nav.newLabel')}</span>
-              </button>
-            </div>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              className="manage-collections-pill inline-flex items-center gap-[calc(0.375rem*1.15)] rounded-full px-[calc(0.75rem*1.15)] py-[calc(0.25rem*1.15)] text-[length:calc(0.75rem*1.15)] font-medium text-white transition"
+              onClick={() => setManagingCollections(true)}
+            >
+              <FolderTree className="h-3.5 w-3.5" />
+              {t('collections.manage', 'Manage Collections')}
+            </button>
+            <button
+              data-testid="drafts-new-label"
+              className="btn-primary rounded-full"
+              onClick={() => goto('template')}
+            >
+              <FilePlus className="h-4 w-4" />
+              <span className="hidden sm:inline">{t('nav.newLabel')}</span>
+            </button>
+          </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mb-5 flex gap-1 rounded-xl bg-slate-200 p-1">
+        {/* Tabs — same pill pair as My Sizes / Browse Catalog */}
+        <div className="mb-5 flex flex-wrap items-center gap-2">
           <button
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition ${
+            type="button"
+            data-testid="drafts-tab-workspace"
+            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
               tab === 'workspace'
-                ? 'bg-white text-slate-800 shadow'
-                : 'text-slate-500 hover:text-slate-700'
+                ? 'bg-gaia-600 text-white'
+                : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
             }`}
             onClick={() => setTab('workspace')}
           >
@@ -226,14 +300,16 @@ export default function DraftsScreen() {
             {t('drafts.tabWorkspace', 'Workspace')}
           </button>
           <button
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition ${
+            type="button"
+            data-testid="drafts-tab-pdfvault"
+            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
               tab === 'pdfvault'
-                ? 'bg-white text-slate-800 shadow'
-                : 'text-slate-500 hover:text-slate-700'
+                ? 'bg-gaia-600 text-white'
+                : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-gaia-300'
             }`}
             onClick={() => setTab('pdfvault')}
           >
-            <Vault className="h-4 w-4" />
+            <Archive className="h-4 w-4" />
             {t('drafts.pdfVault', 'PDF Vault')}
           </button>
         </div>
@@ -247,9 +323,10 @@ export default function DraftsScreen() {
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
+                    data-testid="drafts-search"
                     className="input pl-9 pr-9"
                     type="search"
-                    placeholder={t('drafts.searchPlaceholder', 'Search by design, recipe, ingredient or collectionâ€¦')}
+                    placeholder={t('drafts.searchPlaceholder', 'Search by design, recipe, ingredient or collection…')}
                     aria-label={t('drafts.searchLabel', 'Search designs')}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -269,7 +346,7 @@ export default function DraftsScreen() {
                 {/* Collection filter chips */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <FilterChip
-                    label={t('collections.all', 'All designs')}
+                    label={t('collections.all', 'All Designs')}
                     count={drafts.length}
                     active={collectionFilter === null}
                     onClick={() => setCollectionFilter(null)}
@@ -290,37 +367,30 @@ export default function DraftsScreen() {
                     active={collectionFilter === UNFILED}
                     onClick={() => setCollectionFilter(collectionFilter === UNFILED ? null : UNFILED)}
                   />
-                  <button
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-slate-500 ring-1 ring-slate-200 transition hover:bg-white hover:text-slate-700"
-                    onClick={() => setManagingCollections(true)}
-                  >
-                    <FolderTree className="h-3.5 w-3.5" />
-                    {t('collections.manage', 'Manage collections')}
-                  </button>
                 </div>
               </div>
             )}
 
             {drafts.length === 0 && (
-              <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white py-20 text-center">
-                <FileStack className="mb-4 h-12 w-12 text-slate-300" />
+              <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gaia-200 bg-white py-20 text-center">
+                <FileStack className="mb-4 h-12 w-12 text-gaia-300" />
                 <p className="font-semibold text-slate-600">{t('drafts.empty')}</p>
                 <p className="mt-1 max-w-xs text-sm text-slate-400">{t('drafts.emptyHint')}</p>
-                <button className="btn-primary mt-6" onClick={() => goto('template')}>
-                  <Plus className="h-4 w-4" /> {t('nav.newLabel')}
+                <button className="btn-primary mt-6 rounded-full" onClick={() => goto('template')}>
+                  <FilePlus className="h-4 w-4" /> {t('nav.newLabel')}
                 </button>
               </div>
             )}
 
             {drafts.length > 0 && visibleDrafts.length === 0 && (
-              <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white py-16 text-center">
-                <Search className="mb-3 h-10 w-10 text-slate-300" />
+              <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gaia-200 bg-white py-16 text-center">
+                <Search className="mb-3 h-10 w-10 text-gaia-300" />
                 <p className="font-semibold text-slate-600">{t('drafts.noMatches', 'No designs match that search.')}</p>
                 <button
-                  className="btn-secondary mt-4"
+                  className="btn-secondary mt-4 rounded-full"
                   onClick={() => { setQuery(''); setCollectionFilter(null); }}
                 >
-                  {t('drafts.clearFilters', 'Clear search & filters')}
+                  {t('drafts.clearFilters', 'Clear Search & Filters')}
                 </button>
               </div>
             )}
@@ -335,16 +405,12 @@ export default function DraftsScreen() {
                     collections={collections}
                     isActive={draft.id === activeDraftId}
                     selected={selectedIds.includes(draft.id)}
-                    onToggleSelected={() => toggleSelected(draft.id)}
-                    onOpen={() => openDraft(draft)}
-                    onDelete={() => setConfirmDeleteId(draft.id)}
-                    onDuplicate={() => { void draftsRepo.duplicate(draft.id).then(reload); }}
-                    onRename={(name) => {
-                      draftsRepo.rename(draft.id, name).then(reload).catch(() => {});
-                    }}
-                    onSetCollection={(id) => {
-                      draftsRepo.setCollection(draft.id, id).then(reload).catch(() => {});
-                    }}
+                    onToggleSelected={toggleSelected}
+                    onOpen={openDraft}
+                    onDelete={handleDeleteDraft}
+                    onDuplicate={handleDuplicateDraft}
+                    onRename={handleRenameDraft}
+                    onSetCollection={handleSetCollection}
                   />
                 ))}
               </div>
@@ -374,7 +440,7 @@ export default function DraftsScreen() {
             onClick={startBatchPrint}
           >
             <Printer className="h-3.5 w-3.5" />
-            {t('batch.printTogether', 'Print together')}
+            {t('batch.printTogether', 'Print Together')}
           </button>
         </div>
       )}
@@ -413,6 +479,15 @@ export default function DraftsScreen() {
       >
         <p className="text-sm text-slate-600">{t('common.confirmDeleteBody')}</p>
       </Modal>
+
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg"
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
@@ -434,15 +509,19 @@ function FilterChip({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition ${
-        active ? 'text-slate-900 ring-2' : 'text-slate-600 ring-1 ring-slate-200 hover:ring-slate-400'
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-[calc(0.25rem*1.08)] text-xs font-medium transition ${
+        color
+          ? active
+            ? 'text-slate-900'
+            : 'text-slate-600 hover:opacity-90'
+          : active
+            ? 'bg-gaia-600 text-white'
+            : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 hover:ring-gaia-300'
       }`}
       style={
         color
           ? { background: tint(color, active ? 0.55 : 0.22), ...(active ? { boxShadow: `0 0 0 2px ${color}` } : {}) }
-          : active
-            ? { background: '#fff', boxShadow: '0 0 0 2px #334155' }
-            : { background: '#fff' }
+          : undefined
       }
     >
       {color && (
@@ -457,9 +536,55 @@ function FilterChip({
 // ---------------------------------------------------------------------------
 // PDF Vault panel
 // ---------------------------------------------------------------------------
+function vaultRecordToEntry(record: VaultPdf): PdfEntry {
+  return {
+    id: record.id,
+    name: record.name,
+    path: record.path,
+    size: record.size,
+    modified: new Date(record.createdAt).toISOString(),
+    dataUrl: record.dataUrl,
+  };
+}
+
+async function loadVaultEntries(api: ElectronAPIWithVault | null): Promise<PdfEntry[]> {
+  const records = await pdfVaultRepo.all();
+  const merged = new Map<string, PdfEntry>();
+  for (const record of records) {
+    merged.set(record.name.toLowerCase(), vaultRecordToEntry(record));
+  }
+
+  if (api) {
+    try {
+      const disk = await api.listPdfs();
+      for (const pdf of disk) {
+        const key = pdf.name.toLowerCase();
+        const existing = merged.get(key);
+        if (existing) {
+          existing.path = existing.path || pdf.path;
+          existing.size = pdf.size || existing.size;
+          existing.modified = pdf.modified;
+        } else {
+          merged.set(key, {
+            id: pdf.path,
+            name: pdf.name,
+            path: pdf.path,
+            size: pdf.size,
+            modified: pdf.modified,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[gaia] drafts.listPdfs failed', err);
+    }
+  }
+
+  return [...merged.values()].sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
+}
+
 function PdfVaultPanel() {
   const { t } = useTranslation();
-  // Stabilize reference â€” the API object is always the same singleton or null.
+  // Stabilize reference — the API object is always the same singleton or null.
   const apiRef = useRef(getElectronVaultAPI());
   const api = apiRef.current;
 
@@ -467,12 +592,13 @@ function PdfVaultPanel() {
   const [loading, setLoading] = useState(false);
 
   const loadPdfs = useCallback(() => {
-    if (!api) return;
     setLoading(true);
-    api
-      .listPdfs()
+    loadVaultEntries(api)
       .then(setPdfs)
-      .catch(() => setPdfs([]))
+      .catch((err) => {
+        console.error('[gaia] drafts.loadVault failed', err);
+        setPdfs([]);
+      })
       .finally(() => setLoading(false));
   }, [api]);
 
@@ -486,17 +612,6 @@ function PdfVaultPanel() {
     return unsubscribe;
   }, [api, loadPdfs]);
 
-  if (!api) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white py-20 text-center">
-        <Vault className="mb-4 h-12 w-12 text-slate-300" />
-        <p className="font-semibold text-slate-600">
-          {t('drafts.pdfVaultDesktopOnly', 'PDF Vault is only available in the desktop app.')}
-        </p>
-      </div>
-    );
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -507,8 +622,8 @@ function PdfVaultPanel() {
 
   if (pdfs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white py-20 text-center">
-        <Vault className="mb-4 h-12 w-12 text-slate-300" />
+      <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gaia-200 bg-white py-20 text-center">
+        <Vault className="mb-4 h-12 w-12 text-gaia-300" />
         <p className="font-semibold text-slate-600">{t('drafts.noPdfs', 'No exported PDFs yet. Export a label to see it here.')}</p>
       </div>
     );
@@ -517,7 +632,7 @@ function PdfVaultPanel() {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {pdfs.map((pdf) => (
-        <PdfCard key={pdf.path} pdf={pdf} api={api} />
+        <PdfCard key={pdf.id} pdf={pdf} api={api} />
       ))}
     </div>
   );
@@ -529,16 +644,28 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function PdfCard({ pdf, api }: { pdf: PdfEntry; api: ElectronAPIWithVault }) {
-  const { t } = useTranslation();
+const PdfCard = memo(function PdfCard({ pdf, api }: { pdf: PdfEntry; api: ElectronAPIWithVault | null }) {
+  const { t, i18n } = useTranslation();
   const date = new Date(pdf.modified);
-  const dateStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  const dateStr = date.toLocaleDateString(i18n.language === 'es' ? 'es' : 'en', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const openPdf = () => {
+    if (api && pdf.path) {
+      void api.openFile(pdf.path);
+      return;
+    }
+    if (pdf.dataUrl) downloadDataUrl(pdf.dataUrl, pdf.name);
+  };
 
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       {/* Icon area */}
-      <div className="flex h-28 items-center justify-center bg-rose-50">
-        <Vault className="h-12 w-12 text-rose-300" />
+      <div className="flex h-28 items-center justify-center bg-gaia-50">
+        <Vault className="h-12 w-12 text-gaia-300" />
       </div>
       {/* Info */}
       <div className="flex flex-1 flex-col gap-1 p-3">
@@ -550,29 +677,31 @@ function PdfCard({ pdf, api }: { pdf: PdfEntry; api: ElectronAPIWithVault }) {
         {/* Actions */}
         <div className="mt-2 flex gap-2">
           <button
-            className="btn-primary flex-1 text-xs"
-            onClick={() => void api.openFile(pdf.path)}
+            className="btn-primary flex-1 rounded-full text-xs"
+            onClick={openPdf}
           >
             {t('drafts.openFile', 'Open')}
           </button>
-          <button
-            className="btn-secondary flex items-center gap-1 text-xs"
-            onClick={() => void api.openFolder(pdf.path)}
-            title={t('drafts.openFolder', 'Show in Folder')}
-          >
-            <FolderOpen className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t('drafts.openFolder', 'Show in Folder')}</span>
-          </button>
+          {api && pdf.path ? (
+            <button
+              className="btn-secondary flex items-center gap-1 rounded-full text-xs"
+              onClick={() => void api.openFolder(pdf.path!)}
+              title={t('drafts.openFolder', 'Show in Folder')}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t('drafts.openFolder', 'Show in Folder')}</span>
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Draft card
 // ---------------------------------------------------------------------------
-function DraftCard({
+const DraftCard = memo(function DraftCard({
   draft,
   collection,
   collections,
@@ -590,12 +719,12 @@ function DraftCard({
   collections: Collection[];
   isActive: boolean;
   selected: boolean;
-  onToggleSelected: () => void;
-  onOpen: () => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onRename: (name: string) => void;
-  onSetCollection: (collectionId: string | null) => void;
+  onToggleSelected: (id: string) => void;
+  onOpen: (draft: Draft) => void;
+  onDelete: (id: string) => void;
+  onDuplicate: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onSetCollection: (id: string, collectionId: string | null) => void;
 }) {
   const { t } = useTranslation();
   const tpl = templates.find((tmpl) => tmpl.id === draft.templateId);
@@ -609,7 +738,7 @@ function DraftCard({
     setEditing(false);
     const trimmed = nameVal.trim();
     if (trimmed && trimmed !== draft.name) {
-      onRename(trimmed);
+      onRename(draft.id, trimmed);
     } else {
       setNameVal(draft.name);
     }
@@ -633,7 +762,7 @@ function DraftCard({
       {collection && (
         <div
           data-testid="draft-collection-header"
-          className="truncate px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide"
+          className="truncate px-3 py-[calc(0.375rem*1.08)] text-[11px] font-semibold uppercase tracking-wide"
           style={{ background: collection.color, color: readableTextOn(collection.color) }}
         >
           {collection.name}
@@ -642,16 +771,16 @@ function DraftCard({
 
       {/* Active WIP badge */}
       {isActive && (
-        <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-600">
+        <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-[calc(0.375rem*1.08)] text-xs font-medium text-orange-600">
           <PencilLine className="h-3 w-3" />
-          <span>{t('drafts.currentlyEditing', 'Currently editing')}</span>
+          <span>{t('drafts.currentlyEditing', 'Currently Editing')}</span>
         </div>
       )}
 
       {/* Thumbnail */}
       <div
-        className="relative flex h-36 cursor-pointer items-center justify-center overflow-hidden bg-slate-100"
-        onClick={onOpen}
+        className="relative flex h-36 cursor-pointer items-center justify-center overflow-hidden bg-gaia-50"
+        onClick={() => onOpen(draft)}
       >
         {draft.thumb ? (
           <img
@@ -668,10 +797,10 @@ function DraftCard({
           className={`absolute left-2 top-2 rounded-lg bg-white/90 p-1 text-slate-500 shadow-sm transition hover:text-gaia-700 ${
             selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           }`}
-          title={t('batch.selectForPrinting', 'Select for a mixed print sheet')}
-          aria-label={t('batch.selectForPrinting', 'Select for a mixed print sheet')}
+          title={t('batch.selectForPrinting', 'Select For A Mixed Print Sheet')}
+          aria-label={t('batch.selectForPrinting', 'Select For A Mixed Print Sheet')}
           aria-pressed={selected}
-          onClick={(e) => { e.stopPropagation(); onToggleSelected(); }}
+          onClick={(e) => { e.stopPropagation(); onToggleSelected(draft.id); }}
         >
           {selected
             ? <CheckSquare className="h-4 w-4 text-gaia-600" />
@@ -680,7 +809,7 @@ function DraftCard({
 
         {/* Open overlay on hover */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/10">
-          <span className="scale-90 rounded-xl bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-700 opacity-0 shadow transition group-hover:scale-100 group-hover:opacity-100">
+          <span className="scale-90 rounded-full bg-gaia-600 px-3 py-1.5 text-xs font-semibold text-white opacity-0 shadow transition group-hover:scale-100 group-hover:opacity-100">
             {t('drafts.open', 'Open')}
           </span>
         </div>
@@ -703,12 +832,12 @@ function DraftCard({
           />
         ) : (
           <button
-            className="flex items-center gap-1 truncate text-left text-sm font-semibold text-slate-800 hover:text-gaia-700"
+            className="text-left text-sm font-semibold text-slate-800 hover:text-gaia-700"
             onClick={() => setEditing(true)}
-            title={t('drafts.clickToRename', 'Click to rename')}
+            title={t('drafts.clickToRename', 'Click To Rename')}
           >
-            <span className="truncate">{draft.name}</span>
-            <Pencil className="h-3 w-3 shrink-0 text-slate-400 opacity-0 transition group-hover:opacity-100" />
+            <span className="whitespace-normal break-words">{draft.name}</span>
+            <Pencil className="ml-1 inline h-3 w-3 shrink-0 align-text-bottom text-slate-400 opacity-0 transition group-hover:opacity-100" />
           </button>
         )}
 
@@ -733,7 +862,7 @@ function DraftCard({
           <select
             className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 outline-none focus:border-gaia-400"
             value={draft.collectionId ?? ''}
-            onChange={(e) => onSetCollection(e.target.value || null)}
+            onChange={(e) => onSetCollection(draft.id, e.target.value || null)}
           >
             <option value="">{t('collections.unfiled', 'Unfiled')}</option>
             {collections.map((c) => (
@@ -749,14 +878,14 @@ function DraftCard({
 
         {/* Actions */}
         <div className="mt-2 flex items-center gap-1.5">
-          <button className="btn-primary flex-1" onClick={onOpen}>
+          <button className="btn-primary flex-1 rounded-full" onClick={() => onOpen(draft)}>
             {t('drafts.open', 'Open')}
           </button>
           <button
             className="icon-btn"
             title={t('drafts.duplicate', 'Duplicate')}
             aria-label={t('drafts.duplicate', 'Duplicate')}
-            onClick={onDuplicate}
+            onClick={() => onDuplicate(draft.id)}
           >
             <Copy className="h-4 w-4" />
           </button>
@@ -764,7 +893,7 @@ function DraftCard({
             className="icon-btn text-rose-500 hover:bg-rose-50"
             title={t('common.delete')}
             aria-label={t('common.delete')}
-            onClick={onDelete}
+            onClick={() => onDelete(draft.id)}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -772,5 +901,5 @@ function DraftCard({
       </div>
     </div>
   );
-}
+});
 

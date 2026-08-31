@@ -7,7 +7,7 @@
 // target isn't on screen (empty states, different data), the step falls back
 // to a centered card so tours never dead-end.
 //
-// "Later" snoozes the tour for this session; "Skip tour" and finishing the
+// "Later" snoozes the tour for this session; "Skip Tour" and finishing the
 // last step both mark it completed in Settings (revisitable from the Help
 // hub any time).
 // ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ export default function TourOverlay() {
         style={cardStyle}
       >
         <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-gaia-600 to-gaia-500 px-4 py-2.5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gaia-100">
+          <p className="ui-label font-semibold uppercase tracking-wide text-gaia-100">
             {t(`tour.${tour.nameKey}`, tour.nameDefault)}
             <span className="ml-2 opacity-75">{stepIndex + 1}/{tour.steps.length}</span>
           </p>
@@ -221,7 +221,7 @@ export default function TourOverlay() {
 
         <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2.5">
           <button className="btn-ghost px-2 py-1.5 text-xs text-slate-400" onClick={finish}>
-            {t('tour.skip', 'Skip tour')}
+            {t('tour.skip', 'Skip Tour')}
           </button>
           <div className="flex gap-2">
             {stepIndex > 0 && (

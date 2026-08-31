@@ -60,14 +60,14 @@ export const TOURS: TourDefinition[] = [
         target: 'new-label',
         titleKey: 'gs3Title', titleDefault: 'Start a label any time',
         bodyKey: 'gs3Body',
-        bodyDefault: 'This button begins the guided label flow: pick a real Avery shape, activate your ingredients, choose a recipe, pick a background, refine the design, then print. The app does all the math.',
+        bodyDefault: 'This button begins the guided label flow: pick a real Avery shape, choose a recipe, pick a background, refine the design, then print. The app does all the math.',
       },
       {
         screen: 'template',
         target: 'workflow-steps',
         titleKey: 'gs4Title', titleDefault: 'The steps, always visible',
         bodyKey: 'gs4Body',
-        bodyDefault: 'Wherever you are in the flow, this bar shows the step you\u2019re on — including Step 1.5 to manage ingredients. Click any step to jump — nothing is ever locked away.',
+        bodyDefault: 'Wherever you are in the flow, this bar shows the step you\u2019re on. Click any step to jump — nothing is ever locked away.',
       },
       {
         screen: 'inventory',
@@ -113,18 +113,18 @@ export const TOURS: TourDefinition[] = [
       {
         screen: 'recipes',
         target: 'recipe-list',
-        titleKey: 'dl2Title', titleDefault: 'Choose the recipe',
+        titleKey: 'dl2Title', titleDefault: 'Choose The Recipe',
         bodyKey: 'dl2Body',
         bodyDefault: 'The label pulls its product name, ingredient list and warnings from the recipe you pick here, so back labels write themselves.',
       },
       {
         screen: 'background',
-        titleKey: 'dl3Title', titleDefault: 'Choose a background',
+        titleKey: 'dl3Title', titleDefault: 'Choose A Background',
         bodyKey: 'dl3Body',
         bodyDefault: 'Use your own photos, free stock search, or the AI tab. AI images sometimes invent borders at the edges — the editor\u2019s dimmed ring shows exactly what gets trimmed so nothing important is lost.',
       },
       {
-        screen: 'editor',
+        screen: 'editor-v2',
         target: 'editor-canvas',
         titleKey: 'dl4Title', titleDefault: 'The canvas',
         bodyKey: 'dl4Body',
@@ -286,4 +286,16 @@ export const TOURS: TourDefinition[] = [
 
 export function getTour(id: string): TourDefinition | undefined {
   return TOURS.find((t) => t.id === id);
+}
+
+/** Tours that navigate to business screens hidden while Training Mode is on. */
+export const FULL_STUDIO_TOUR_IDS = new Set([
+  'getting-started',
+  'inventory-pricing',
+  'orders-receipts',
+  'finances',
+]);
+
+export function tourRequiresFullStudio(tourId: string): boolean {
+  return FULL_STUDIO_TOUR_IDS.has(tourId);
 }

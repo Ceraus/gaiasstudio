@@ -153,8 +153,8 @@ function buildTemplate({ code, name, shape, w, h, grid, inferred = true }) {
   };
 }
 
-function fromBlankItem(item) {
-  const code = item.diyProductNumber || item.productNumber;
+function fromBlankItem(item, codeOverride) {
+  const code = codeOverride || item.diyProductNumber || item.productNumber;
   const shape = classifyShape(item.shape);
   let w = Number(item.width);
   let h = Number(item.height);
@@ -214,13 +214,22 @@ function mapCatalogToTemplates(catalog) {
 
   const blankByCode = new Map();
   for (const item of blankItems) {
-    if (item.diyProductNumber) blankByCode.set(String(item.diyProductNumber), item);
+    if (item.diyProductNumber) {
+      const code = String(item.diyProductNumber);
+      const existing = blankByCode.get(code);
+      // Avery can map one classic template number to both standard and
+      // print-to-edge custom stock. The classic number uses the denser,
+      // standard sheet; the productNumber below retains the other variant.
+      if (!existing || Number(item.labelsPerSheet) > Number(existing.labelsPerSheet)) {
+        blankByCode.set(code, item);
+      }
+    }
     if (item.productNumber) blankByCode.set(String(item.productNumber), item);
   }
 
   const byCode = new Map();
-  for (const item of blankItems) {
-    const tpl = fromBlankItem(item);
+  for (const [code, item] of blankByCode) {
+    const tpl = fromBlankItem(item, code);
     if (tpl) byCode.set(tpl.averyCode, tpl);
   }
   for (const item of labelItems) {
@@ -279,17 +288,30 @@ function mergeIntoDataset(scraped) {
     ? JSON.parse(readFileSync(DATASET, 'utf8'))
     : { templates: [] };
 
-  const byCode = new Map(existing.templates.map((t) => [t.averyCode ?? t.id, t]));
+  const byId = new Map(existing.templates.map((t) => [t.id, t]));
   let added = 0;
+  let corrected = 0;
   for (const tpl of scraped) {
-    const key = tpl.averyCode ?? tpl.id;
-    if (!byCode.has(key)) {
-      byCode.set(key, tpl);
+    const key = tpl.id;
+    if (!byId.has(key)) {
+      byId.set(key, tpl);
       added++;
+      continue;
+    }
+
+    const existing = byId.get(key);
+    const geometryConflicts =
+      existing.perSheet !== tpl.perSheet ||
+      Math.abs(existing.labelWidthIn - tpl.labelWidthIn) > 0.02 ||
+      Math.abs(existing.labelHeightIn - tpl.labelHeightIn) > 0.02;
+    if (geometryConflicts && !existing.geometrySource) continue;
+    if (geometryConflicts) {
+      byId.set(key, tpl);
+      corrected++;
     }
   }
 
-  const templates = [...byCode.values()];
+  const templates = [...byId.values()];
   writeFileSync(
     DATASET,
     JSON.stringify(
@@ -303,7 +325,7 @@ function mergeIntoDataset(scraped) {
       2,
     ) + '\n',
   );
-  return { total: templates.length, added };
+  return { total: templates.length, added, corrected };
 }
 
 async function main() {
@@ -338,8 +360,8 @@ async function main() {
   const scraped = mapCatalogToTemplates(catalog);
   console.log(`Mapped ${scraped.length} templates with usable geometry.`);
 
-  const { total, added } = mergeIntoDataset(scraped);
-  console.log(`Merged dataset: ${total} total (+${added} new) -> ${DATASET}`);
+  const { total, added, corrected } = mergeIntoDataset(scraped);
+  console.log(`Merged dataset: ${total} total (+${added} new, ${corrected} corrected) -> ${DATASET}`);
 }
 
 main().catch((e) => {

@@ -4,6 +4,43 @@ All notable changes to Gaia's Label Studio are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.4] - 2026-07-28
+
+### Changed
+- **Avery catalog** — dropped discontinued / historic SKUs that Avery no longer
+  lists in the live US catalog (gLabels A4 and old product codes). Bundled
+  templates are current Avery sheets plus curated aliases (round jars, ribbon wrap).
+
+### Added
+- **Draft label copy (EN + ES)** — Recipes: one AI call drafts name, tagline, directions,
+  and advisory warnings with preview/accept; translate buttons for directions/warnings.
+- **Etsy listing AI draft** — Shop → Create Listing: AI-drafted title, description, and
+  tags (Etsy limits enforced in code) plus optional Instagram caption.
+- **Quick add by text** — Work Orders: paste informal sales notes → structured extraction
+  with recipe fuzzy-match preview before opening the order form.
+- **Receipt photo OCR** — Finances: scan a receipt photo via Ollama vision to prefill
+  the new-receipt form (review before save).
+
+## [3.0.3] - 2026-07-28
+
+### Added
+- **Ollama structured JSON** — supplier extraction and remix tasks now send JSON
+  schemas to Ollama (with `'json'` and plain-prompt fallbacks for older servers).
+- **Per-task Ollama models** — Settings → Local AI exposes separate copywriting,
+  JSON/extraction, and vision model picks, populated from `/api/tags` after Test
+  Connection.
+- **`src/lib/aiTask.ts`** — shared single-flight + cache helper for AI imports.
+
+### Fixed
+- **Bundled AI extraction** — restored `extractBundledAi()` with JSON grammar,
+  serialization queue, and IPC (`gaia:bundled-ai-extract`); supports either the
+  shipped 0.5B or Qwen3-4B GGUF.
+- **Editor → Export handoff** — WorkflowNav Next and mobile Print now capture
+  the canvas (`setLabelPng` / `setDesignJson`) before navigating.
+- **Background Next** — no longer clears a background the user already selected.
+- **Prompt Builder imports** — clicking a recently imported AI image in standalone
+  mode sets the pending background and routes to the Background step.
+
 ## [3.0.2] - 2026-07-27
 
 ### Added
@@ -14,12 +51,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Internal production runs** — Work Orders can record Etsy/inventory stock
   production: deducts raw materials on complete and adds yield to product
   inventory (no client receipt PDF).
-- **PWA auto-backup** — browser builds download `gaias-studio-backup-[DATE].json`
-  at most once every 24 hours on boot (Electron still saves silently).
 - **Label barcodes** — editor sidebar Barcode tool (JsBarcode CODE128) drops a
   resizable SKU image on the canvas.
 
 ### Fixed
+- **PWA login backup download** — browser builds no longer auto-download
+  `gaias-studio-backup-[DATE].json` on login (desktop still saves silently;
+  use Settings → Backup or cloud sync on the hosted app).
 - **Workflow stepper** — removed the stray "Manage Ingredients" Step 1.5 pill;
   navigation is restored to a clean 1–5 label design flow.
 

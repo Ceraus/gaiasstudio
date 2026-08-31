@@ -11,24 +11,11 @@ export const EDITOR_PPI = 150;
 /** Pixels per inch used when rasterizing the label for PDF export. */
 export const EXPORT_PPI = 300;
 
-/** PDF points per inch. */
-export const PDF_PPI = 72;
-
-export const inToPx = (inches: number, ppi = EDITOR_PPI) => inches * ppi;
-export const pxToIn = (px: number, ppi = EDITOR_PPI) => px / ppi;
-export const inToPt = (inches: number) => inches * PDF_PPI;
+export const inToPt = (inches: number) => inches * 72;
 
 /** Typographic points <-> editor canvas pixels (font sizes are shown in pt). */
 export const ptToPx = (pt: number, ppi = EDITOR_PPI) => (pt / 72) * ppi;
 export const pxToPt = (px: number, ppi = EDITOR_PPI) => (px / ppi) * 72;
-
-/** Editor canvas pixel size for a single label at a given zoom-independent PPI. */
-export function labelPixelSize(t: AveryTemplate, ppi = EDITOR_PPI) {
-  return {
-    width: Math.round(t.labelWidthIn * ppi),
-    height: Math.round(t.labelHeightIn * ppi),
-  };
-}
 
 /** Physical position (inches, from page top-left) of one label slot. */
 export function slotPositionIn(t: AveryTemplate, col: number, row: number) {

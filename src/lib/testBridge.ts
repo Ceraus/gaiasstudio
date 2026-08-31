@@ -18,7 +18,7 @@ interface GaiaEditorLike {
   exportLabelPng: (ppi?: number) => string;
 }
 
-export interface GaiaTestApi {
+interface GaiaTestApi {
   templates: () => Array<{
     id: string;
     shape: string;
@@ -40,6 +40,16 @@ export interface GaiaTestApi {
   /** Writes a deterministic set of collections + drafts for Workspace UI tests. */
   seedWorkspace: () => Promise<{ collections: number; drafts: number }>;
   clearWorkspace: () => Promise<void>;
+  /** Empties Saved Designs (`drafts`) only — not recipes, ingredients, or collections. */
+  clearDrafts: () => Promise<{ drafts: number }>;
+  tableCounts: () => Promise<{
+    drafts: number;
+    recipes: number;
+    ingredients: number;
+    collections: number;
+    settings: number;
+  }>;
+  ingredientDedupRoundTrip: () => Promise<{ sameId: boolean; sourceCount: number }>;
   /** Full backup → restore → re-export round trip over the live database. */
   backupRoundTrip: () => Promise<{
     tables: number;
@@ -171,6 +181,47 @@ const api: GaiaTestApi = {
     await Promise.all([db.drafts.clear(), db.collections.clear()]);
   },
 
+  clearDrafts: async () => {
+    const { draftsRepo } = await import('@/db/repositories');
+    const drafts = await draftsRepo.clear();
+    return { drafts };
+  },
+
+  tableCounts: async () => {
+    const { db } = await import('@/db/db');
+    const [drafts, recipes, ingredients, collections, settings] = await Promise.all([
+      db.drafts.count(),
+      db.recipes.count(),
+      db.ingredients.count(),
+      db.collections.count(),
+      db.settings.count(),
+    ]);
+    return { drafts, recipes, ingredients, collections, settings };
+  },
+
+  ingredientDedupRoundTrip: async () => {
+    const { ingredientsRepo } = await import('@/db/repositories');
+    const first = await ingredientsRepo.create({
+      name: 'Smoke Test Shea EO',
+      benefit: '',
+      isSoapBase: false,
+      active: true,
+      sourceRefs: [{ provider: 'manual', id: 'smoke-eo' }],
+    });
+    const second = await ingredientsRepo.create({
+      name: 'Smoke Test Shea Essential Oil',
+      benefit: '',
+      isSoapBase: false,
+      active: true,
+      sourceRefs: [{ provider: 'openfoodfacts', id: 'smoke-shea' }],
+    });
+    const sameId = first.id === second.id;
+    const resolved = await ingredientsRepo.all();
+    const sourceCount = resolved.find((ingredient) => ingredient.id === first.id)?.sourceRefs?.length ?? 0;
+    await ingredientsRepo.remove(first.id);
+    return { sameId, sourceCount };
+  },
+
   backupRoundTrip: async () => {
     const { buildBackup, restoreBackup } = await import('@/lib/backup');
     const countRows = (tables: Record<string, unknown[]>) =>
@@ -190,23 +241,24 @@ const api: GaiaTestApi = {
 };
 
 export interface GaiaMaintenanceApi {
-  runRosaMaintenance: () => Promise<import('@/lib/maintenance').RosaMaintenanceResult>;
+  resetInitialSetup: () => Promise<import('@/lib/maintenance').InitialSetupResetResult>;
   deactivateAllIngredients: () => Promise<number>;
-  restoreSeedRecipes: () => Promise<number>;
+  clearDrafts: () => Promise<{ drafts: number }>;
 }
 
 const maintenanceApi: GaiaMaintenanceApi = {
-  runRosaMaintenance: async () => {
-    const { runRosaMaintenance } = await import('@/lib/maintenance');
-    return runRosaMaintenance();
+  resetInitialSetup: async () => {
+    const { resetInitialSetup } = await import('@/lib/maintenance');
+    return resetInitialSetup();
   },
   deactivateAllIngredients: async () => {
     const { ingredientsRepo } = await import('@/db/repositories');
     return ingredientsRepo.deactivateAll();
   },
-  restoreSeedRecipes: async () => {
-    const { forceRestoreSeedRecipes } = await import('@/data/recipeSeed');
-    return forceRestoreSeedRecipes();
+  clearDrafts: async () => {
+    const { draftsRepo } = await import('@/db/repositories');
+    const drafts = await draftsRepo.clear();
+    return { drafts };
   },
 };
 

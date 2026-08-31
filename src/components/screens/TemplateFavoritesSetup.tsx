@@ -10,6 +10,8 @@ import type { AveryDataset, AveryTemplate, LabelShape } from '@/types';
 
 import { describeSize } from '@/lib/units';
 
+import { shapeColorTokens } from '@/lib/shapeColors';
+
 import { useAppStore } from '@/store/useAppStore';
 
 import ShapeThumb from '@/components/common/ShapeThumb';
@@ -58,6 +60,20 @@ const SHAPE_LABEL_KEYS: Record<LabelShape, string> = {
 
 };
 
+/** Chip outline matches the Avery shape — readable text beats perfect geometry. */
+const SHAPE_CHIP_GEOMETRY: Record<LabelShape, string> = {
+  circle:
+    'h-[6.75rem] w-[6.75rem] shrink-0 items-center justify-center rounded-full px-2 text-center',
+  oval:
+    'min-h-[3.25rem] min-w-[8.75rem] shrink-0 items-center justify-center rounded-full px-8 py-2 text-center',
+  square:
+    'h-[6.5rem] w-[6.5rem] shrink-0 items-center justify-center rounded-[3px] px-2 text-center',
+  rectangle:
+    'min-h-[2.75rem] min-w-[9rem] shrink-0 items-center justify-center rounded-[2px] px-5 py-1.5 text-center',
+  'rounded-rectangle':
+    'min-h-[3.5rem] min-w-[8.5rem] shrink-0 items-center justify-center rounded-2xl px-5 py-2.5 text-center',
+};
+
 
 
 function PickCard({
@@ -88,6 +104,8 @@ function PickCard({
 
   const { t } = useTranslation();
 
+  const colors = shapeColorTokens(tpl.shape);
+
   return (
 
     <button
@@ -96,11 +114,17 @@ function PickCard({
 
       onClick={onToggle}
 
-      className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 text-center ring-1 transition ${
+      className="relative flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 text-center transition"
 
-        picked ? 'ring-2 ring-gaia-500 shadow-sm' : 'ring-slate-100 hover:ring-gaia-200'
+      style={{
 
-      }`}
+        boxShadow: picked
+
+          ? `0 0 0 2px ${colors.hex}, 0 1px 2px rgb(0 0 0 / 0.05)`
+
+          : `0 0 0 1px ${colors.border}`,
+
+      }}
 
     >
 
@@ -116,7 +140,13 @@ function PickCard({
 
       {shapeBadge && (
 
-        <span className="absolute left-2 top-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+        <span
+
+          className="absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium"
+
+          style={{ backgroundColor: colors.tint, color: colors.text }}
+
+        >
 
           {shapeBadge}
 
@@ -126,7 +156,7 @@ function PickCard({
 
       <ShapeThumb template={tpl} />
 
-      <span className="mt-0.5 text-sm font-bold leading-tight text-gaia-700">{describeSize(tpl)}</span>
+      <span className="mt-0.5 text-sm font-bold leading-tight" style={{ color: colors.text }}>{describeSize(tpl)}</span>
 
       <span className="line-clamp-2 text-[11px] leading-snug text-slate-500">
 
@@ -355,7 +385,7 @@ export default function TemplateFavoritesSetup() {
 
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gaia-100 text-gaia-700">
 
-              <Star className="h-6 w-6" />
+              <Star className="h-6 w-6 fill-amber-400 text-amber-400" />
 
             </span>
 
@@ -491,17 +521,19 @@ export default function TemplateFavoritesSetup() {
 
           <div className="mt-8">
 
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <p className="ui-label font-semibold uppercase tracking-wide text-slate-400">
 
               {t('template.favoritesPickShape')}
 
             </p>
 
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
 
               {SETUP_SHAPES.map((s) => {
 
                 const active = !isSearching && shape === s;
+
+                const colors = shapeColorTokens(s);
 
                 return (
 
@@ -511,23 +543,43 @@ export default function TemplateFavoritesSetup() {
 
                     type="button"
 
+                    data-testid={`shape-filter-${s}`}
+
+                    data-selected={active ? 'true' : 'false'}
+
                     onClick={() => selectShape(s)}
 
-                    className={`flex flex-col items-start rounded-xl px-4 py-3 text-left ring-1 transition ${
+                    className={`inline-flex flex-col transition ${SHAPE_CHIP_GEOMETRY[s]}`}
+
+                    style={
 
                       active
 
-                        ? 'bg-gaia-600 text-white ring-gaia-600'
+                        ? { backgroundColor: colors.hex, color: '#ffffff' }
 
-                        : 'bg-white text-slate-700 ring-slate-200 hover:ring-gaia-300'
+                        : {
 
-                    }`}
+                            backgroundColor: colors.tint,
+
+                            color: colors.text,
+
+                            boxShadow: `inset 0 0 0 1px ${colors.border}`,
+
+                          }
+
+                    }
 
                   >
 
-                    <span className="text-sm font-semibold">{t(SHAPE_LABEL_KEYS[s])}</span>
+                    <span className="whitespace-nowrap text-sm font-semibold leading-tight">{t(SHAPE_LABEL_KEYS[s])}</span>
 
-                    <span className={`mt-0.5 text-xs ${active ? 'text-gaia-100' : 'text-slate-400'}`}>
+                    <span
+
+                      className="mt-0.5 whitespace-nowrap text-xs leading-tight"
+
+                      style={{ color: active ? 'rgba(255,255,255,0.8)' : colors.text }}
+
+                    >
 
                       {t('template.favoritesShapeCount', { count: shapeCounts[s] })}
 

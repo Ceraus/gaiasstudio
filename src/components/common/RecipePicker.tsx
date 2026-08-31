@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown } from 'lucide-react';
 import type { Ingredient, Recipe } from '@/types';
 import { getRecipeColor } from '@/lib/recipeColors';
@@ -18,10 +19,13 @@ export default function RecipePicker({
   ingredients,
   value,
   onChange,
-  placeholder = '— Choose a recipe —',
+  placeholder,
   className = '',
-  'aria-label': ariaLabel = 'Recipe',
+  'aria-label': ariaLabel,
 }: RecipePickerProps) {
+  const { t } = useTranslation();
+  const resolvedPlaceholder = placeholder ?? t('promptBuilder.chooseRecipe');
+  const resolvedAria = ariaLabel ?? t('products.selectRecipe');
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -53,7 +57,7 @@ export default function RecipePicker({
     <div ref={rootRef} className={`relative ${className}`}>
       <button
         type="button"
-        aria-label={ariaLabel}
+        aria-label={resolvedAria}
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen((v) => !v)}
@@ -67,7 +71,7 @@ export default function RecipePicker({
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/80 ${selectedTheme.dot}`} />
         )}
         <span className="min-w-0 flex-1 truncate font-medium">
-          {selected?.name ?? placeholder}
+          {selected?.name ?? resolvedPlaceholder}
         </span>
         <ChevronDown className={`h-4 w-4 shrink-0 opacity-60 transition ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -75,7 +79,7 @@ export default function RecipePicker({
       {open && (
         <ul
           role="listbox"
-          aria-label={ariaLabel}
+          aria-label={resolvedAria}
           className="absolute left-0 right-0 z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg ring-1 ring-black/5"
         >
           <li role="option" aria-selected={!value}>
@@ -88,7 +92,7 @@ export default function RecipePicker({
               }}
             >
               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-200" />
-              {placeholder}
+              {resolvedPlaceholder}
             </button>
           </li>
           {sorted.map((recipe) => {

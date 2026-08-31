@@ -61,7 +61,7 @@ export default function CollectionsModal({ open, collections, counts, onClose, o
         <input
           className="input"
           placeholder={t('collections.namePlaceholder', 'e.g. Oily Skin, Holiday Gifts')}
-          aria-label={t('collections.newCollection', 'New collection')}
+          aria-label={t('collections.newCollection', 'New Collection')}
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}

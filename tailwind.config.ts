@@ -18,18 +18,6 @@ export default {
           800: '#2b422a',
           900: '#243824',
         },
-        clay: {
-          50: '#faf6f2',
-          100: '#f1e7dc',
-          200: '#e2ccb6',
-          300: '#d0ac89',
-          400: '#c08f63',
-          500: '#b0764a',
-          600: '#98603c',
-          700: '#7c4c33',
-          800: '#663f2f',
-          900: '#55362a',
-        },
       },
       fontFamily: {
         display: ['Playfair Display', 'Cormorant Garamond', 'serif'],

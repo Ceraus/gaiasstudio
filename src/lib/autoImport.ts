@@ -66,7 +66,7 @@ export function startAutoImport(): () => void {
   const unsubscribe = api.onImageDownloaded(async ({ dataUrl, filename }) => {
     try {
       const { addFromDataUrl } = useLibraryStore.getState();
-      await addFromDataUrl(dataUrl, 'ai', filename);
+      await addFromDataUrl(dataUrl, 'ai', `gemini-${Date.now()}-${filename}`);
       emitToast(i18n.t('assets.autoImportSuccess', 'Image "{{filename}}" imported from AI!', { filename }));
     } catch (err) {
       console.error('[Gaia] Auto-import failed:', err);

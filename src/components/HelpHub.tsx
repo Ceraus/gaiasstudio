@@ -9,7 +9,8 @@
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, GraduationCap, Lightbulb, Play, RotateCcw } from 'lucide-react';
 import Modal from '@/components/common/Modal';
-import { TOURS } from '@/components/tour/tours';
+import { TOURS, tourRequiresFullStudio } from '@/components/tour/tours';
+import { isTrainingModeActive } from '@/lib/trainingMode';
 import { useTourStore } from '@/store/useTourStore';
 import { useAppStore } from '@/store/useAppStore';
 
@@ -21,6 +22,7 @@ export default function HelpHub({ open, onClose }: { open: boolean; onClose: () 
 
   const completed = new Set(settings.completedTours ?? []);
   const dismissedTipCount = settings.dismissedTips?.length ?? 0;
+  const trainingMode = isTrainingModeActive(settings);
 
   const play = (tourId: string) => {
     onClose();
@@ -35,7 +37,7 @@ export default function HelpHub({ open, onClose }: { open: boolean; onClose: () 
       title={
         <span className="flex items-center gap-2">
           <GraduationCap className="h-4 w-4 text-gaia-600" />
-          {t('helpHub.title', 'Help & walkthroughs')}
+          {t('helpHub.title', 'Help & Walkthroughs')}
         </span>
       }
     >
@@ -61,6 +63,11 @@ export default function HelpHub({ open, onClose }: { open: boolean; onClose: () 
                 </p>
                 <p className="mt-0.5 text-xs leading-snug text-slate-500">
                   {t(`tour.${tour.descriptionKey}`, tour.descriptionDefault)}
+                  {trainingMode && tourRequiresFullStudio(tour.id) && (
+                    <span className="mt-1 block text-gaia-600">
+                      {t('helpHub.enablesFullStudio', 'Starts in Full Studio so business tabs are visible.')}
+                    </span>
+                  )}
                 </p>
               </div>
               <span className="shrink-0 text-[11px] text-slate-400">
@@ -91,7 +98,7 @@ export default function HelpHub({ open, onClose }: { open: boolean; onClose: () 
             onClick={() => void updateSettings({ dismissedTips: [] })}
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            {t('helpHub.resetTips', 'Bring back all tips')}
+            {t('helpHub.resetTips', 'Bring Back All Tips')}
           </button>
           {dismissedTipCount > 0 && (
             <span className="text-[11px] text-slate-400">
@@ -113,7 +120,7 @@ export default function HelpHub({ open, onClose }: { open: boolean; onClose: () 
             onClose();
           }}
         >
-          {t('helpHub.showWelcome', 'Show it')}
+          {t('helpHub.showWelcome', 'Show It')}
         </button>
       </div>
     </Modal>

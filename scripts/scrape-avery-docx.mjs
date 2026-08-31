@@ -54,6 +54,20 @@ function extractS3Urls(html) {
   return [...new Set(urls)];
 }
 
+function extractLabelsPerSheet(html) {
+  const normalized = html
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u003c/g, '<')
+    .replace(/\\u003e/g, '>');
+  const matches = [
+    ...normalized.matchAll(/(\d{1,3})\s*(?:labels?\s*)?per\s*sheet/gi),
+  ];
+  const counts = matches
+    .map((match) => Number(match[1]))
+    .filter((count) => Number.isInteger(count) && count > 0);
+  return counts[0] ?? null;
+}
+
 async function fetchTemplatePage(code) {
   const res = await fetch(`https://www.avery.com/templates/${code}`, {
     headers: {
@@ -106,8 +120,11 @@ function classifyShape(w, h) {
   return 'rectangle';
 }
 
-function buildTemplate(code, geom) {
-  const shape = classifyShape(geom.labelWidthIn, geom.labelHeightIn);
+function buildTemplate(code, geom, existing) {
+  // DOCX table geometry gives exact placement but does not reliably identify
+  // whether equal-width/height stock is round or square. Preserve the shape
+  // supplied by Avery REST (or an earlier verified entry).
+  const shape = existing?.shape ?? classifyShape(geom.labelWidthIn, geom.labelHeightIn);
   return {
     id: String(code),
     name: `Avery ${code} · ${geom.labelWidthIn}" x ${geom.labelHeightIn}"`,
@@ -155,6 +172,13 @@ async function main() {
   let codes = loadSkuList(args);
   if (Number.isFinite(limit)) codes = codes.slice(0, limit);
 
+  const existing = existsSync(DATASET)
+    ? JSON.parse(readFileSync(DATASET, 'utf8'))
+    : { templates: [] };
+  const existingByCode = new Map(
+    existing.templates.map((template) => [String(template.averyCode ?? template.id), template]),
+  );
+
   console.log(`Parsing Word templates for ${codes.length} Avery codes…`);
   mkdirSync(CACHE_DIR, { recursive: true });
 
@@ -187,7 +211,15 @@ async function main() {
         await sleep(200);
         continue;
       }
-      verified.push(buildTemplate(code, geom));
+      const expectedPerSheet = extractLabelsPerSheet(html);
+      const parsedPerSheet = geom.columns * geom.rows;
+      if (expectedPerSheet && parsedPerSheet !== expectedPerSheet) {
+        console.log(`layout mismatch (${parsedPerSheet} parsed, ${expectedPerSheet} on Avery page)`);
+        fail++;
+        await sleep(200);
+        continue;
+      }
+      verified.push(buildTemplate(code, geom, existingByCode.get(code)));
       console.log(`OK ${geom.columns}x${geom.rows} ${geom.labelWidthIn}x${geom.labelHeightIn}"`);
       ok++;
     } catch (e) {
@@ -197,19 +229,17 @@ async function main() {
     await sleep(250);
   }
 
-  const existing = existsSync(DATASET)
-    ? JSON.parse(readFileSync(DATASET, 'utf8'))
-    : { templates: [] };
-  const byCode = new Map(existing.templates.map((t) => [t.averyCode ?? t.id, t]));
-  for (const tpl of verified) byCode.set(tpl.averyCode, tpl);
+  const byId = new Map(existing.templates.map((t) => [t.id, t]));
+  for (const tpl of verified) byId.set(tpl.id, tpl);
 
-  const templates = [...byCode.values()];
+  const templates = [...byId.values()];
   writeFileSync(
     DATASET,
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
-        note: 'Merged curated + REST catalog + Word-template verified geometry (avery-docx-verified).',
+        note:
+          'Avery live REST catalog + official DOCX geometry + MIT-licensed gLabels geometry. See THIRD_PARTY_LICENSES.md.',
         count: templates.length,
         templates,
       },

@@ -16,25 +16,72 @@ export interface Guide {
   center: boolean;
 }
 
-const SNAP_COLOR = 'rgba(236, 72, 153, 0.9)';
+/** Avery Design & Print snap line: thin steel-blue, not a magenta overlay. */
+const SNAP_COLOR = 'rgba(70, 130, 180, 0.95)';
+
+export interface SnapOptions {
+  threshold?: number;
+  /** When > 0, snap leftover axes to this grid (trim origin). */
+  gridSpacing?: number;
+}
 
 interface Candidate {
   pos: number;
   center: boolean;
 }
 
+function trimCandidates(trim: TrimBox): { candX: Candidate[]; candY: Candidate[] } {
+  return {
+    candX: [
+      { pos: trim.cx, center: true },
+      { pos: trim.left, center: false },
+      { pos: trim.right, center: false },
+    ],
+    candY: [
+      { pos: trim.cy, center: true },
+      { pos: trim.top, center: false },
+      { pos: trim.bottom, center: false },
+    ],
+  };
+}
+
 /**
- * Snaps the moving object to the label center, the trim edges and the edges /
- * centers of other objects. Mutates target.left/top and returns the guide lines
- * to render. This powers both the magenta alignment guides and the logo
- * "snap-to-center" behaviour.
+ * Delta that would snap one of `edges` onto the nearest grid line in [origin, end].
+ * Includes the trim edges so grid-only mode still kisses the die-cut.
+ */
+export function snapEdgesToGrid(
+  edges: number[],
+  origin: number,
+  end: number,
+  spacing: number,
+  threshold: number,
+): number | null {
+  if (!(spacing > 0) || !edges.length) return null;
+  let best: number | null = null;
+  for (let p = origin; p <= end + 1e-6; p += spacing) {
+    for (const edge of edges) {
+      const delta = p - edge;
+      if (Math.abs(delta) <= threshold) {
+        if (best === null || Math.abs(delta) < Math.abs(best)) best = delta;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Snaps the moving object to the label center, trim edges, other objects, and
+ * (optionally) the alignment grid. Mutates target.left/top and returns the
+ * object/center guide lines to render — grid-only snaps stay silent.
  */
 export function computeSnapGuides(
   canvas: Canvas,
   target: FabricObject,
   trim: TrimBox,
-  threshold = 7,
+  options: SnapOptions | number = {},
 ): Guide[] {
+  const threshold = typeof options === 'number' ? options : (options.threshold ?? 7);
+  const gridSpacing = typeof options === 'number' ? 0 : (options.gridSpacing ?? 0);
   const others = canvas
     .getObjects()
     .filter(
@@ -48,16 +95,7 @@ export function computeSnapGuides(
   const edgesX = [br.left, br.left + br.width / 2, br.left + br.width];
   const edgesY = [br.top, br.top + br.height / 2, br.top + br.height];
 
-  const candX: Candidate[] = [
-    { pos: trim.cx, center: true },
-    { pos: trim.left, center: false },
-    { pos: trim.right, center: false },
-  ];
-  const candY: Candidate[] = [
-    { pos: trim.cy, center: true },
-    { pos: trim.top, center: false },
-    { pos: trim.bottom, center: false },
-  ];
+  const { candX, candY } = trimCandidates(trim);
   const centersX: number[] = [];
   const centersY: number[] = [];
   for (const o of others) {
@@ -85,15 +123,25 @@ export function computeSnapGuides(
   const bestY = pickBest(candY, edgesY, threshold);
 
   const guides: Guide[] = [];
+  let dx = 0;
+  let dy = 0;
   if (bestX) {
-    target.set('left', target.left + bestX.delta);
+    dx = bestX.delta;
     guides.push({ vertical: true, pos: bestX.cand.pos, center: bestX.cand.center });
+  } else if (gridSpacing > 0) {
+    dx = snapEdgesToGrid(edgesX, trim.left, trim.right, gridSpacing, threshold) ?? 0;
   }
   if (bestY) {
-    target.set('top', target.top + bestY.delta);
+    dy = bestY.delta;
     guides.push({ vertical: false, pos: bestY.cand.pos, center: bestY.cand.center });
+  } else if (gridSpacing > 0) {
+    dy = snapEdgesToGrid(edgesY, trim.top, trim.bottom, gridSpacing, threshold) ?? 0;
   }
-  if (bestX || bestY) target.setCoords();
+  if (dx || dy) {
+    target.set('left', target.left + dx);
+    target.set('top', target.top + dy);
+    target.setCoords();
+  }
   return guides;
 }
 
@@ -138,16 +186,7 @@ export function computeResizeGuides(
   const br = target.getBoundingRect();
   const edgesX = [br.left, br.left + br.width / 2, br.left + br.width];
   const edgesY = [br.top, br.top + br.height / 2, br.top + br.height];
-  const candX: Candidate[] = [
-    { pos: trim.cx, center: true },
-    { pos: trim.left, center: false },
-    { pos: trim.right, center: false },
-  ];
-  const candY: Candidate[] = [
-    { pos: trim.cy, center: true },
-    { pos: trim.top, center: false },
-    { pos: trim.bottom, center: false },
-  ];
+  const { candX, candY } = trimCandidates(trim);
   for (const o of others) {
     const b = o.getBoundingRect();
     candX.push(

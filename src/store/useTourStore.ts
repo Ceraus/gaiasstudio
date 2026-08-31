@@ -5,7 +5,8 @@
 // the tour until the next launch without nagging forever.
 // ---------------------------------------------------------------------------
 import { create } from 'zustand';
-import { getTour } from '@/components/tour/tours';
+import { getTour, tourRequiresFullStudio } from '@/components/tour/tours';
+import { isTrainingModeActive } from '@/lib/trainingMode';
 import { useAppStore } from '@/store/useAppStore';
 
 export const TOUR_SNOOZE_KEY = 'gaia.tour.snoozed';
@@ -30,7 +31,13 @@ export const useTourStore = create<TourState>((set, get) => ({
 
   start: (tourId) => {
     if (!getTour(tourId)) return;
-    set({ activeTourId: tourId, stepIndex: 0 });
+    void (async () => {
+      const { settings, setTrainingMode } = useAppStore.getState();
+      if (tourRequiresFullStudio(tourId) && isTrainingModeActive(settings)) {
+        await setTrainingMode(false);
+      }
+      set({ activeTourId: tourId, stepIndex: 0 });
+    })();
   },
 
   next: () => {

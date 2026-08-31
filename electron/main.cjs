@@ -3,7 +3,6 @@
 const { app, BrowserWindow, dialog, ipcMain, net, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const bundledAi = require('./bundledAi.cjs');
 
 // Accessibility: the entire UI renders 25% larger (Chromium page zoom — the
 // same mechanism as Ctrl+'+' — so all responsive breakpoints, canvas pointer
@@ -11,26 +10,57 @@ const bundledAi = require('./bundledAi.cjs');
 const UI_ZOOM_FACTOR = 1.25;
 
 // ── Portable save-system path ────────────────────────────────────────────────
-// For portable builds, electron-builder sets PORTABLE_EXECUTABLE_DIR to the
-// folder that contains the .exe.  Fall back to the directory of the process
-// executable so the same logic works in development.
-const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-  || path.dirname(process.execPath);
+// The live database is Chromium IndexedDB (Dexie). Backups, PDFs, and exports
+// live in the same accompanying folder so Rosa has one place to copy.
+//
+// Packaged Windows zip / portable: folder that contains the .exe
+// Packaged macOS: folder that contains the .app (not Contents/MacOS)
+// `electron .` (dev): the project root — never node_modules/electron/dist
+function resolvePortableDir() {
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    return process.env.PORTABLE_EXECUTABLE_DIR;
+  }
+  if (app.isPackaged) {
+    if (process.platform === 'darwin') {
+      return path.resolve(path.dirname(process.execPath), '..', '..', '..');
+    }
+    return path.dirname(process.execPath);
+  }
+  return path.join(__dirname, '..');
+}
 
-const saveSystemDir = path.join(portableDir, "Gaia's Save System");
+const portableDir = resolvePortableDir();
+const oldDir = path.join(portableDir, "Gaia's Save System");
+const newDir = path.join(portableDir, "Gaia's Essences Save");
+if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+  fs.renameSync(oldDir, newDir);
+}
+const saveSystemDir = newDir;
 const exportsDir = path.join(saveSystemDir, 'exports');
 const downloadsDir = path.join(saveSystemDir, 'downloads');
+const backupsDir = path.join(saveSystemDir, 'backups');
+const workOrdersDir = path.join(saveSystemDir, 'work_orders');
+const logsDir = path.join(saveSystemDir, 'logs');
 
-// App/window icon — Gaia's Essences mark. Also used by electron-builder's
-// top-level "icon" config (build/icon.png) to auto-generate the packaged
-// .ico/.icns; this copy in electron/ ships inside the app for the runtime
-// BrowserWindow icon (taskbar/title bar) on every platform.
+for (const dir of [saveSystemDir, backupsDir, exportsDir, downloadsDir, workOrdersDir, logsDir]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+// App/window icon — Gaia's Essences mark. electron-builder's win.icon
+// (`build/icon.ico`) stamps the packaged .exe; this PNG copy ships inside
+// the app for the runtime BrowserWindow / dock icon on every platform.
 const appIconPath = path.join(__dirname, 'icon.png');
 
 // Must be called before app.ready so Chromium uses these paths for IndexedDB,
 // localStorage, cookies, session data, and all other user-data storage.
 app.setPath('userData', saveSystemDir);
-app.setPath('logs', path.join(saveSystemDir, 'logs'));
+app.setPath('sessionData', saveSystemDir);
+app.setPath('logs', logsDir);
+// Windows taskbar grouping — matches build.appId so the running window
+// uses our exe icon instead of a generic Electron entry.
+app.setAppUserModelId('com.gaiasessences.studio');
+
+console.log("[Gaia] Save system:", saveSystemDir);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** @type {import('electron').BrowserWindow | null} */
@@ -59,7 +89,6 @@ const MAX_AUTO_IMPORT_BYTES = 24 * 1024 * 1024;
 
 /** Hosts the in-app AI browser window is allowed to navigate to. */
 const AI_HOST_ALLOWLIST = new Set([
-  'aistudio.google.com',
   'gemini.google.com',
   'accounts.google.com',
   'accounts.youtube.com',
@@ -99,6 +128,60 @@ function isAllowedSupplierFetchUrl(parsed) {
   // Tailscale CGNAT (100.64.0.0/10) — block supplier fetches into private tailnet
   if (/^100\./.test(host)) return false;
   return true;
+}
+
+/** Local AI / ComfyUI hosts — Tailscale, loopback, and private LAN only. */
+function isAllowedLanFetchUrl(parsed) {
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+  if (host.endsWith('.ts.net') || host.endsWith('.tailscale.net')) return true;
+  if (host === 'metadata.google.internal' || host.startsWith('169.254.')) return false;
+  // Tailscale CGNAT 100.64.0.0/10
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return true;
+  if (/^10\./.test(host) || /^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  return false;
+}
+
+async function fetchLanFromMain(url, init = {}) {
+  try {
+    const parsed = new URL(String(url));
+    if (!isAllowedLanFetchUrl(parsed)) {
+      return { ok: false, status: 0, error: 'Host is not a local or Tailscale address.', contentType: '', base64: '' };
+    }
+    const method = typeof init.method === 'string' ? init.method.toUpperCase() : 'GET';
+    const headers = init.headers && typeof init.headers === 'object' ? init.headers : {};
+    const controller = new AbortController();
+    const timeoutMs = Number(init.timeoutMs) > 0 ? Number(init.timeoutMs) : 8000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await net.fetch(parsed.toString(), {
+        method,
+        headers,
+        body: typeof init.body === 'string' ? init.body : undefined,
+        signal: controller.signal,
+      });
+      const buf = Buffer.from(await res.arrayBuffer());
+      return {
+        ok: res.ok,
+        status: res.status,
+        contentType: res.headers.get('content-type') || '',
+        base64: buf.toString('base64'),
+        error: '',
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      contentType: '',
+      base64: '',
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 async function fetchSupplierPageFromMain(url) {
@@ -202,7 +285,7 @@ function isAllowedAiUrl(rawUrl) {
 }
 
 /**
- * Opens (or reuses) the dedicated AI browser window. It shares the
+ * Opens (or reuses) the dedicated Gemini browser window. It shares the
  * `persist:aistudio` partition with the in-app <webview>, so signing in here
  * also signs in there.
  */
@@ -216,7 +299,7 @@ function openAiWindow(url) {
   aiBrowserWindow = new BrowserWindow({
     width: 1200,
     height: 900,
-    title: "Gaia's Essences — AI Studio",
+    title: "Gaia's Essences — Gemini",
     icon: appIconPath,
     webPreferences: {
       partition: 'persist:aistudio',
@@ -324,10 +407,13 @@ async function runMaintenanceAndQuit(win) {
   });
 }
 
-app.whenReady().then(() => {
-  // Configure the isolated session used by the AI Studio webview.
-  // The `persist:aistudio` partition gives the webview its own persistent
-  // cookie/storage context so Google sign-in survives restarts.
+app.whenReady().then(async () => {
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIconPath);
+  }
+
+  // Isolated Gemini webview session. The partition name is historical
+  // (`persist:aistudio`) so existing Google sign-ins keep working.
   const aiSession = session.fromPartition('persist:aistudio');
   aiSession.setUserAgent(
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -338,9 +424,12 @@ app.whenReady().then(() => {
 
   attachDownloadInterceptor(session.defaultSession, { allowPdf: true });
   attachDownloadInterceptor(aiSession);
+  // Older Prompt Builder builds used persist:gemini — keep intercepting it
+  // so leftover signed-in sessions still auto-import downloads.
+  attachDownloadInterceptor(session.fromPartition('persist:gemini'));
 
   // IPC helpers exposed to the renderer via preload.
-  ipcMain.handle('gaia:get-downloads-path', () => app.getPath('downloads'));
+  ipcMain.handle('gaia:get-downloads-path', () => downloadsDir);
   ipcMain.handle('gaia:get-save-path', () => saveSystemDir);
 
   // PDF Vault — list all exported PDFs in the exports sub-folder.
@@ -368,6 +457,7 @@ app.whenReady().then(() => {
   // Supplier price importer — fetch a product page from the main process so
   // the renderer is never blocked by shop CORS policies. Read-only GET.
   ipcMain.handle('gaia:fetch-url', (_event, url) => fetchSupplierPageFromMain(url));
+  ipcMain.handle('gaia:fetch-lan', (_event, url, init) => fetchLanFromMain(url, init));
   ipcMain.handle('gaia:open-folder', (_event, filePath) => {
     if (typeof filePath !== 'string' || !isInsideDir(saveSystemDir, filePath)) return;
     shell.showItemInFolder(filePath);
@@ -395,7 +485,7 @@ app.whenReady().then(() => {
     return picked.filter(Boolean);
   });
 
-  // Opens a dedicated BrowserWindow for AI tools (AI Studio, Gemini) that
+  // Opens a dedicated BrowserWindow for Gemini that
   // supports full Google sign-in via a real browser session.
   ipcMain.handle('gaia:open-ai-browser', (_event, { url }) => openAiWindow(url));
 
@@ -406,31 +496,22 @@ app.whenReady().then(() => {
     return true;
   });
 
-  // Bundled local AI — runs entirely in this process via node-llama-cpp
-  // against the model shipped in resources/models. Zero setup, 100% offline.
-  // `generate` powers the copywriting assist; `extract` is the supplier-link
-  // price importer's grammar-constrained JSON tier. See electron/bundledAi.cjs.
-  ipcMain.handle('gaia:bundled-ai-status', () => bundledAi.getBundledAiStatus());
-  ipcMain.handle('gaia:bundled-ai-generate', (_event, prompt) => bundledAi.generateBundledAi(String(prompt || '')));
-  ipcMain.handle('gaia:bundled-ai-extract', (_event, pageText) => bundledAi.extractBundledAi(String(pageText || '')));
-
   // Full-database backup — writes the JSON into the portable save system's
   // backups/ folder and prunes to the newest 14 files, so daily auto-backups
   // never eat the disk. Returns the absolute path for the success message.
   ipcMain.handle('gaia:save-backup', async (_event, { json, filename }) => {
-    const dir = path.join(saveSystemDir, 'backups');
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(backupsDir, { recursive: true });
     const safeName = safeBasename(filename || `Gaia_Backup_${Date.now()}.json`);
-    const filePath = path.join(dir, safeName.toLowerCase().endsWith('.json') ? safeName : `${safeName}.json`);
+    const filePath = path.join(backupsDir, safeName.toLowerCase().endsWith('.json') ? safeName : `${safeName}.json`);
     await fs.promises.writeFile(filePath, String(json), 'utf8');
     try {
-      const files = (await fs.promises.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.json'));
+      const files = (await fs.promises.readdir(backupsDir)).filter((f) => f.toLowerCase().endsWith('.json'));
       const stats = await Promise.all(
-        files.map(async (f) => ({ f, m: (await fs.promises.stat(path.join(dir, f))).mtimeMs })),
+        files.map(async (f) => ({ f, m: (await fs.promises.stat(path.join(backupsDir, f))).mtimeMs })),
       );
       stats.sort((a, b) => b.m - a.m);
       for (const old of stats.slice(14)) {
-        await fs.promises.unlink(path.join(dir, old.f)).catch(() => {});
+        await fs.promises.unlink(path.join(backupsDir, old.f)).catch(() => {});
       }
     } catch { /* pruning is best-effort */ }
     return { path: filePath };
@@ -447,8 +528,31 @@ app.whenReady().then(() => {
     fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, safeName.toLowerCase().endsWith('.pdf') ? safeName : `${safeName}.pdf`);
     await fs.promises.writeFile(filePath, Buffer.from(String(base64), 'base64'));
+    if (safeFolder === 'exports' && !mainWindow?.isDestroyed()) {
+      mainWindow?.webContents.send('gaia:pdf-exported', { filename: path.basename(filePath) });
+    }
     return { path: filePath };
   });
+
+  // Headless check: confirm the accompanying folder exists and a backup write
+  // lands there, then exit. Used by `GAIA_SAVE_SMOKE=1 electron .`
+  if (process.env.GAIA_SAVE_SMOKE === '1') {
+    const smokePath = path.join(backupsDir, 'Gaia_SmokeTest.json');
+    await fs.promises.writeFile(
+      smokePath,
+      JSON.stringify({
+        app: 'gaia-label-studio',
+        format: 1,
+        exportedAt: new Date().toISOString(),
+        smoke: true,
+        saveSystemDir,
+      }),
+      'utf8',
+    );
+    console.log('[Gaia] Smoke backup written:', smokePath);
+    app.exit(0);
+    return;
+  }
 
   createWindow();
 

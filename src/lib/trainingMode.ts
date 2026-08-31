@@ -28,10 +28,9 @@ export interface TrainingGateResult {
 
 const TARGET_ORDER: Partial<Record<Screen, number>> = {
   template: 1,
-  ingredients: 1.5,
   recipes: 2,
   background: 3,
-  editor: 4,
+  'editor-v2': 4,
   export: 5,
 };
 
@@ -41,17 +40,17 @@ export function checkTrainingGate(input: TrainingGateInput): TrainingGateResult 
   const targetOrder = TARGET_ORDER[target];
   if (targetOrder == null) return null;
 
-  if (targetOrder >= 1.5 && !template) {
+  if (targetOrder >= 2 && !template) {
     return {
       reason: 'needTemplate',
       messageKey: 'trainingMode.blockNeedTemplate',
-      defaultMessage: 'Training Mode: Please select a Shape & Size first.',
+      defaultMessage: 'Please select a Shape & Size first.',
       redirectTo: 'template',
       canOverride: false,
     };
   }
 
-  if (targetOrder >= 2 && !activeRecipeId) {
+  if (targetOrder >= 3 && !activeRecipeId) {
     return {
       reason: 'needRecipe',
       messageKey: 'trainingMode.blockNeedRecipe',
@@ -59,7 +58,7 @@ export function checkTrainingGate(input: TrainingGateInput): TrainingGateResult 
       redirectTo: 'recipes',
       canOverride: true,
       overrideMessageKey: 'trainingMode.proceedBlankRecipe',
-      overrideDefaultMessage: 'Proceed with blank label',
+      overrideDefaultMessage: 'Proceed With Blank Label',
     };
   }
 
@@ -71,7 +70,7 @@ export function checkTrainingGate(input: TrainingGateInput): TrainingGateResult 
       redirectTo: 'background',
       canOverride: true,
       overrideMessageKey: 'trainingMode.proceedBlankBackground',
-      overrideDefaultMessage: 'Continue with blank background',
+      overrideDefaultMessage: 'Continue With Blank Background',
     };
   }
 
@@ -79,11 +78,11 @@ export function checkTrainingGate(input: TrainingGateInput): TrainingGateResult 
     return {
       reason: 'needEditor',
       messageKey: 'trainingMode.blockNeedEditor',
-      defaultMessage: 'Training Mode: Refine your design in the Editor before printing.',
-      redirectTo: 'editor',
+      defaultMessage: 'Refine your design in the Editor before printing.',
+      redirectTo: 'editor-v2',
       canOverride: true,
       overrideMessageKey: 'trainingMode.proceedToExport',
-      overrideDefaultMessage: 'Go to Print anyway',
+      overrideDefaultMessage: 'Go To Print Anyway',
     };
   }
 
@@ -97,7 +96,7 @@ export const TRAINING_ALLOWED_SCREENS: Screen[] = [
   'ingredients',
   'recipes',
   'background',
-  'editor',
+  'editor-v2',
   'export',
   'drafts',
   'sets',

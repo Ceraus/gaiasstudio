@@ -16,6 +16,7 @@
 
 import { db } from '@/db/db';
 import type { Ingredient, IngredientCategory } from '@/types';
+import { canonicalIngredientKey } from '@/lib/ingredientResolution';
 
 export interface SeedIngredient {
   name: string;
@@ -23,7 +24,7 @@ export interface SeedIngredient {
   benefit: string;
   isSoapBase: boolean;
   category: IngredientCategory;
-  /** When true this ingredient is pre-activated in the user's workspace after seeding. */
+  /** Legacy catalog metadata; imports always start inactive. */
   active?: boolean;
   /** Determines the COGS unit: 'weight' = grams, 'volume' = drops. */
   measurementType?: 'weight' | 'volume';
@@ -791,25 +792,66 @@ export const INGREDIENT_SEED: SeedIngredient[] = [
 
 export const INGREDIENT_CATALOG_SIZE = INGREDIENT_SEED.length;
 
+/** Always-on default soap base for new recipes and first-run setup. */
+export const DEFAULT_SOAP_BASE_NAME = 'Glycerin Base (Clear)';
+
+export function isDefaultSoapBaseName(name: string): boolean {
+  return name.toLowerCase().trim() === DEFAULT_SOAP_BASE_NAME.toLowerCase();
+}
+
+/** Put glycerin first and keep a single copy — every recipe uses this base. */
+export function withDefaultSoapBaseIds(ingredientIds: string[], baseId?: string): string[] {
+  if (!baseId) return [...ingredientIds];
+  return [baseId, ...ingredientIds.filter((id) => id !== baseId)];
+}
+
 const seedUid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-/** Merge missing catalog entries into IndexedDB by name (case-insensitive). */
+/**
+ * Do not bulk-import INGREDIENT_SEED or the offline name/icon backlog into Dexie.
+ * Those names stay invisible until the user adds one via autocomplete.
+ * Only the default glycerin base is ensured.
+ */
 export async function syncIngredientCatalog(): Promise<{ added: number }> {
+  const before = await db.ingredients.count();
+  await ensureDefaultSoapBase();
+  const after = await db.ingredients.count();
+  return { added: Math.max(0, after - before) };
+}
+
+/** Create Glycerin Base (Clear) if missing. Does not force it back to active. */
+export async function ensureDefaultSoapBase(): Promise<Ingredient | undefined> {
   const existing = await db.ingredients.toArray();
-  const existingNames = new Set(existing.map((i) => i.name.toLowerCase().trim()));
+  const found = existing.find((i) => isDefaultSoapBaseName(i.name));
+  if (found) {
+    if (found.isSoapBase && found.category === 'base') return found;
+    const patch = {
+      isSoapBase: true,
+      category: 'base' as const,
+      updatedAt: Date.now(),
+    };
+    await db.ingredients.update(found.id, patch);
+    return { ...found, ...patch };
+  }
+
+  const seed = INGREDIENT_SEED.find((item) => isDefaultSoapBaseName(item.name));
+  if (!seed) return undefined;
   const now = Date.now();
-  const toAdd: Ingredient[] = INGREDIENT_SEED
-    .filter((s) => !existingNames.has(s.name.toLowerCase().trim()))
-    .map((s) => ({
-      ...s,
-      active: s.active ?? false,
-      id: seedUid(),
-      createdAt: now,
-      updatedAt: now,
-    }));
-  if (toAdd.length > 0) await db.ingredients.bulkAdd(toAdd);
-  return { added: toAdd.length };
+  const canonicalKey = canonicalIngredientKey(seed);
+  const record: Ingredient = {
+    ...seed,
+    active: true,
+    isSoapBase: true,
+    category: 'base',
+    canonicalKey,
+    sourceRefs: [{ provider: 'seed', id: canonicalKey }],
+    id: seedUid(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.ingredients.add(record);
+  return record;
 }

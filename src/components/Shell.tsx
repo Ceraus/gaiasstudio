@@ -1,11 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BarChart3, BookOpen, ChevronDown, ClipboardList, FileStack, FlaskConical, HelpCircle, Layers,
-  Loader2, Package, Plus, Receipt, Settings as SettingsIcon, ShoppingBag, Sparkles, Store, AlertTriangle,
+  BarChart3, BookOpen, ChevronDown, ClipboardList, FileStack, FlaskConical, FolderOpen, Layers,
+  Loader2, Package, Receipt, Settings as SettingsIcon, ShoppingBag, Sparkles, Store,
 } from 'lucide-react';
 import brandIcon from '@/assets/icon.png';
-import { useAppStore, type Screen } from '@/store/useAppStore';
+import { canonicalizeScreen, isAppScreen, screenFromLocation, useAppStore, type Screen } from '@/store/useAppStore';
 import WelcomeScreen from '@/components/screens/WelcomeScreen';
 import OnboardingCoach from '@/components/OnboardingCoach';
 import WorkflowStepper from '@/components/WorkflowStepper';
@@ -14,17 +14,14 @@ import HelpHub from '@/components/HelpHub';
 import TourOverlay from '@/components/tour/TourOverlay';
 import { startAutoImport, onAutoImportToast } from '@/lib/autoImport';
 import { maybeRunAutoBackup } from '@/lib/backup';
-import { pullCloudBackup, runCloudSync } from '@/lib/cloudSync';
 import LocalAiStatusBadge from '@/components/LocalAiStatusBadge';
 import MobileWorkflowTabs from '@/components/MobileWorkflowTabs';
 import MobileMenuDrawer from '@/components/MobileMenuDrawer';
-import TrainingModeToggle from '@/components/TrainingModeToggle';
 import TrainingBlockModal from '@/components/TrainingBlockModal';
-import TrainingModeWelcome from '@/components/TrainingModeWelcome';
 import { TRAINING_ALLOWED_SCREENS, isTrainingModeActive } from '@/lib/trainingMode';
 import { useStreamlinedMobile } from '@/hooks/useMobileLayout';
 
-const WORKFLOW_TAB_SCREENS: Screen[] = ['template', 'ingredients', 'recipes', 'background', 'editor'];
+const WORKFLOW_TAB_SCREENS: Screen[] = ['template', 'recipes', 'background', 'editor-v2'];
 
 const TemplateScreen = lazy(() => import('@/components/screens/TemplateScreen'));
 const BackgroundScreen = lazy(() => import('@/components/screens/BackgroundScreen'));
@@ -38,7 +35,7 @@ const DraftsScreen = lazy(() => import('@/components/screens/DraftsScreen'));
 
 // Editor pulls in Fabric.js and Export pulls in pdf-lib — load these heavy
 // libraries on demand so the initial bundle stays light.
-const EditorScreen = lazy(() => import('@/components/screens/EditorScreen'));
+const EditorScreenV2 = lazy(() => import('@/components/screens/EditorScreenV2'));
 const ExportScreen = lazy(() => import('@/components/screens/ExportScreen'));
 // Mixed batch printing pulls in both Fabric (to rasterize each saved design)
 // and pdf-lib, so it stays out of the initial bundle too.
@@ -51,9 +48,9 @@ const ShopScreen = lazy(() => import('@/components/screens/ShopScreen'));
 const ProductsScreen = lazy(() => import('@/components/screens/ProductsScreen'));
 const ReportsScreen = lazy(() => import('@/components/screens/ReportsScreen'));
 
-/** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings). */
+/** Screens where the WorkflowStepper sub-header bar is shown (all except welcome/settings/drafts). */
 const STEPPER_SCREENS: Screen[] = [
-  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor', 'export', 'drafts', 'batch', 'inventory', 'promptBuilder', 'finances', 'orders', 'shop', 'products', 'reports',
+  'template', 'sets', 'recipes', 'ingredients', 'background', 'editor-v2', 'export', 'batch', 'inventory', 'promptBuilder', 'finances', 'orders', 'shop', 'products', 'reports',
 ];
 
 /** Library tabs — grouped: Design | Business | Connect */
@@ -67,7 +64,7 @@ const BASE_LIBRARY_TABS: Array<{
   icon: typeof BookOpen;
   optional?: boolean;
 }> = [
-  { id: 'drafts',      group: 'design',   labelKey: 'nav.workspace',   defaultLabel: 'Workspace',   icon: FileStack    },
+  { id: 'drafts',      group: 'design',   labelKey: 'nav.workspace',   defaultLabel: 'Saved Designs', icon: FileStack    },
   { id: 'ingredients', group: 'design',   labelKey: 'nav.ingredients', defaultLabel: 'Ingredients', icon: FlaskConical },
   { id: 'sets',        group: 'design',   labelKey: 'nav.sets',        defaultLabel: 'Label Sets',  icon: Layers,      optional: true },
   { id: 'products',    group: 'business', labelKey: 'nav.products',    defaultLabel: 'Products',    icon: ShoppingBag  },
@@ -95,23 +92,23 @@ export default function Shell() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [openNavGroup, setOpenNavGroup] = useState<NavGroup | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [cloudSyncConflict, setCloudSyncConflict] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
+  const mobileNavRef = useRef<HTMLDivElement>(null);
 
   const streamlinedMobile = useStreamlinedMobile(settings);
   const trainingMode = isTrainingModeActive(settings);
 
   const LIBRARY_TABS = BASE_LIBRARY_TABS.filter((tab) => {
     if (tab.optional && !settings?.showLabelSets) return false;
-    if (trainingMode) {
-      return tab.group === 'design' && (tab.id === 'drafts' || tab.id === 'sets');
-    }
     return true;
   });
 
-  const visibleNavGroups = trainingMode
-    ? NAV_GROUPS.filter((g) => g.id === 'design')
-    : NAV_GROUPS;
+  /** Training Mode hides library nav visually but keeps layout slots reserved. */
+  const navInteractionLocked = trainingMode;
+
+  useEffect(() => {
+    if (trainingMode) setOpenNavGroup(null);
+  }, [trainingMode]);
 
   const tabsByGroup = useMemo(() => {
     const grouped: Record<NavGroup, typeof LIBRARY_TABS> = {
@@ -131,9 +128,11 @@ export default function Shell() {
   useEffect(() => {
     if (!openNavGroup) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (navRef.current && !navRef.current.contains(event.target as Node)) {
-        setOpenNavGroup(null);
-      }
+      const target = event.target as Node;
+      const insideNav =
+        (navRef.current?.contains(target) ?? false) ||
+        (mobileNavRef.current?.contains(target) ?? false);
+      if (!insideNav) setOpenNavGroup(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpenNavGroup(null);
@@ -155,60 +154,24 @@ export default function Shell() {
 
   useEffect(() => {
     const cleanup = startAutoImport();
-    void import('@/data/recipeSeed').then(({ seedRecipes }) => seedRecipes());
-    void (async () => {
-      await maybeRunAutoBackup();
-      const s = useAppStore.getState().settings;
-      if (!s.cloudSyncEnabled || !s.cloudSyncUrl?.trim() || !s.cloudSyncToken?.trim()) return;
-      const result = await runCloudSync(s, { autoPull: false, autoPush: true });
-      if (result.status === 'sync_conflict') {
-        setCloudSyncConflict(
-          t('settings.cloudSyncConflict', {
-            defaultValue:
-              'Sync Conflict: The cloud has newer data. Pushing now will overwrite it. Please resolve manually.',
-          }),
-        );
-        return;
-      }
-      if (result.status === 'pushed') {
-        await updateSettings({
-          cloudSyncLastPushedAt: result.remoteExportedAt ?? new Date().toISOString(),
-          cloudSyncLastPulledAt: result.remoteExportedAt ?? new Date().toISOString(),
-        });
-        return;
-      }
-      if (result.status === 'remote_newer' && result.remoteExportedAt) {
-        const when = new Date(result.remoteExportedAt).toLocaleString();
-        const ok = window.confirm(
-          t('settings.cloudSyncBootConfirm', {
-            when,
-            defaultValue: `A newer copy exists on the website (${when}). Download it now? Your current data will be replaced.`,
-          }),
-        );
-        if (!ok) return;
-        const pull = await pullCloudBackup(s);
-        if (pull.status === 'pulled') {
-          await updateSettings({
-            cloudSyncLastPulledAt: pull.remoteExportedAt ?? new Date().toISOString(),
-          });
-          window.location.reload();
-        }
-      }
-    })();
+    void maybeRunAutoBackup();
     return cleanup;
-  }, [t, updateSettings]);
+  }, []);
 
   // Keep in-app navigation on the browser Back/Forward buttons instead of leaving the app.
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    try {
+      sessionStorage.setItem('gaia:last-screen', screen);
+    } catch {
+      // ignore
+    }
     window.history.replaceState({ gaiaScreen: screen }, '', `#/${screen}`);
     const onPopState = (event: PopStateEvent) => {
-      const target = (event.state as { gaiaScreen?: Screen } | null)?.gaiaScreen;
+      const fromState = (event.state as { gaiaScreen?: Screen } | null)?.gaiaScreen;
+      const target = isAppScreen(fromState) ? canonicalizeScreen(fromState) : screenFromLocation();
       if (target) {
         useAppStore.setState({ screen: target });
-      } else {
-        useAppStore.setState({ screen: 'welcome' });
-        window.history.replaceState({ gaiaScreen: 'welcome' }, '', '#/welcome');
       }
     };
     window.addEventListener('popstate', onPopState);
@@ -221,36 +184,63 @@ export default function Shell() {
     mobileMenuOpen ||
     (streamlinedMobile && !WORKFLOW_TAB_SCREENS.includes(screen) && screen !== 'welcome');
 
-  /** Language toggle. */
+  /** Language toggle. Locked on bilingual screens that already show both. */
+  const bilingualLocked = screen === 'recipes';
   const LangSwitcher = () => (
-    <div className="flex overflow-hidden rounded-lg ring-1 ring-slate-200">
-      {(['en', 'es'] as const).map((lng) => (
-        <button
-          key={lng}
-          onClick={() => void updateSettings({ language: lng })}
-          aria-label={lng === 'en' ? t('settings.english', 'English') : t('settings.spanish', 'Español')}
-          aria-pressed={settings.language === lng}
-          className={`px-2.5 py-1.5 text-xs font-semibold ${
-            settings.language === lng
-              ? 'bg-gaia-600 text-white'
-              : 'bg-white text-slate-500 hover:bg-slate-50'
-          }`}
-        >
-          {lng.toUpperCase()}
-        </button>
-      ))}
+    <div
+      className={`inline-flex rounded-full p-[4.5px] ${
+        bilingualLocked
+          ? 'bg-transparent'
+          : settings.language === 'en'
+            ? 'bg-amber-600'
+            : 'bg-sky-600'
+      }`}
+    >
+      <div className="flex overflow-hidden rounded-full">
+        {(['en', 'es'] as const).map((lng) => (
+          <button
+            key={lng}
+            type="button"
+            disabled={bilingualLocked}
+            onClick={() => {
+              if (bilingualLocked) return;
+              void updateSettings({ language: lng });
+            }}
+            aria-label={lng === 'en' ? t('settings.english', 'English') : t('settings.spanish', 'Español')}
+            aria-pressed={bilingualLocked ? true : settings.language === lng}
+            title={
+              bilingualLocked
+                ? t('recipes.bilingualLocked', 'This page already shows English and Spanish together.')
+                : undefined
+            }
+            className={`px-2.5 py-1.5 text-xs font-semibold ${
+              lng === 'en'
+                ? 'rounded-l-full bg-sky-600 text-white'
+                : 'rounded-r-full bg-amber-600 text-white'
+            } ${bilingualLocked ? 'cursor-not-allowed' : ''}`}
+          >
+            {lng.toUpperCase()}
+          </button>
+        ))}
+      </div>
     </div>
   );
 
   /** Logo button. */
   const LogoButton = () => (
     <button
-      className="flex shrink-0 items-center gap-2 text-gaia-700"
+      className="flex h-[2.6rem] max-h-[2.6rem] shrink-0 items-center gap-[calc(0.5rem*1.15)] overflow-hidden text-gaia-700"
       aria-label={t('nav.home', 'Home')}
       onClick={() => goto('welcome')}
     >
-      <img src={brandIcon} alt="" className="h-9 w-9 shrink-0 select-none rounded-xl object-contain" draggable={false} />
-      <span className="hidden whitespace-nowrap text-base font-semibold tracking-tight sm:inline">
+      <img
+        src={brandIcon}
+        alt=""
+        className="h-9 w-9 max-h-9 max-w-9 shrink-0 select-none rounded-xl object-contain"
+        style={{ width: '2.5875rem', height: '2.5875rem', maxWidth: '2.5875rem', maxHeight: '2.5875rem' }}
+        draggable={false}
+      />
+      <span className="hidden whitespace-nowrap text-[calc(1rem*1.15)] font-semibold leading-none tracking-tight sm:inline">
         {t('app.name')}
       </span>
     </button>
@@ -258,68 +248,35 @@ export default function Shell() {
 
   return (
     <div className="flex h-full flex-col">
-      {cloudSyncConflict && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 border-b border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-900"
-        >
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />
-          <p className="flex-1">{cloudSyncConflict}</p>
-          <button
-            type="button"
-            className="shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-            onClick={() => setCloudSyncConflict(null)}
-          >
-            {t('common.dismiss', 'Dismiss')}
-          </button>
-        </div>
-      )}
-
       {/* ── Header (classic responsive + desktop; hidden on streamlined phone) ─ */}
       {!streamlinedMobile && (
-      <header className={`relative border-b border-slate-200 bg-white/90 backdrop-blur safe-top ${openNavGroup ? 'z-40' : 'z-20'}`}>
-        <div className="flex flex-col gap-0 sm:flex-row sm:flex-nowrap sm:items-center sm:gap-2 sm:px-6 sm:py-2">
-        <div className="flex flex-nowrap items-center justify-between gap-2 px-3 py-2 sm:contents">
-
-        {/* Left: Logo */}
-        <LogoButton />
-
-        {/* Center: Training Mode toggle (desktop/tablet) */}
-        <div className="hidden shrink-0 sm:flex sm:flex-1 sm:justify-center">
-          <TrainingModeToggle />
+      <header className={`relative overflow-visible border-b border-slate-200 bg-white/90 backdrop-blur safe-top ${openNavGroup ? 'z-40' : 'z-20'}`}>
+        {/* ── Phone header row ─────────────────────────────────────────────── */}
+        <div className="flex h-[70px] min-h-[70px] flex-nowrap items-center justify-between gap-2 px-3 py-2 sm:hidden">
+          <LogoButton />
+          <div className="flex shrink-0 items-center gap-1">
+            <LangSwitcher />
+            <button onClick={() => goto('settings')} className="btn btn-ghost shrink-0 p-2" aria-label={t('nav.settings')}>
+              <SettingsIcon className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Right cluster on phone — settings row */}
-        <div className="flex shrink-0 items-center gap-1 sm:hidden">
-          <TrainingModeToggle compact />
-          <button
-            onClick={() => goto('template')}
-            className="btn btn-primary shrink-0 p-2"
-            aria-label={t('nav.newLabel', 'New Label')}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-          <button onClick={() => setHelpOpen(true)} className="btn btn-ghost shrink-0 p-2" aria-label={t('nav.help')}>
-            <HelpCircle className="h-4 w-4" />
-          </button>
-          <button onClick={() => goto('settings')} className="btn btn-ghost shrink-0 p-2" aria-label={t('nav.settings')}>
-            <SettingsIcon className="h-4 w-4" />
-          </button>
-          <LangSwitcher />
-        </div>
-        </div>
-
-        {/* Center: grouped nav — horizontal scroll on phone */}
-        <div ref={navRef} className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap no-scrollbar hide-scrollbar border-t border-slate-100 px-2 py-1.5 sm:border-0 sm:px-0 sm:py-0">
-          <nav className="inline-flex w-max min-w-full items-center gap-1 sm:w-auto" data-tour="nav-tabs">
-            {visibleNavGroups.map(({ id, labelKey, defaultLabel }) => {
+        {/* Phone nav — slot kept, hidden in Training Mode */}
+        <div
+          ref={mobileNavRef}
+          className={`overflow-x-auto overflow-y-visible whitespace-nowrap border-t border-slate-100 px-2 py-1.5 no-scrollbar hide-scrollbar sm:hidden ${
+            navInteractionLocked ? 'pointer-events-none invisible' : ''
+          }`}
+          aria-hidden={navInteractionLocked}
+        >
+          <nav className="inline-flex w-max min-w-full items-center gap-1" data-tour="nav-tabs">
+            {NAV_GROUPS.map(({ id, labelKey, defaultLabel }) => {
               const tabs = tabsByGroup[id];
               if (!tabs.length) return null;
-
               const isGroupActive = activeNavGroup === id;
               const isOpen = openNavGroup === id;
               const activeTab = tabs.find((tab) => tab.id === screen);
-
               return (
                 <div key={id} className="relative">
                   <button
@@ -327,58 +284,34 @@ export default function Shell() {
                     aria-expanded={isOpen}
                     aria-haspopup="menu"
                     onClick={() => setOpenNavGroup(isOpen ? null : id)}
-                    className={`flex max-w-[11rem] items-center gap-1 rounded-md px-2.5 py-2 text-sm font-medium transition-colors sm:max-w-none sm:gap-1.5 sm:px-3 ${
-                      isGroupActive
-                        ? 'bg-gaia-50 text-gaia-700'
-                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                    className={`flex max-w-[11rem] items-center gap-1 rounded-md px-2.5 py-2 text-sm font-medium transition-colors ${
+                      isGroupActive ? 'bg-gaia-50 text-gaia-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
                     }`}
                   >
                     <span className="truncate">{t(labelKey, defaultLabel)}</span>
                     {activeTab && (
-                      <span className="hidden truncate text-xs font-normal text-gaia-600 lg:inline">
+                      <span className="truncate text-xs font-normal text-gaia-600">
                         · {t(activeTab.labelKey, activeTab.defaultLabel)}
                       </span>
                     )}
                     <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                    {isGroupActive && (
-                      <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-gaia-600" />
-                    )}
                   </button>
-
                   {isOpen && (
-                    <div
-                      role="menu"
-                      className="absolute left-0 top-full z-50 mt-1 min-w-[12rem] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
-                    >
-                      {tabs.map(({ id: tabId, labelKey: tabLabelKey, defaultLabel: tabDefault, icon: Icon }) => {
-                        const isActive = screen === tabId;
-                        const hasDraftWip = tabId === 'drafts' && !!activeDraftId;
-                        return (
-                          <button
-                            key={tabId}
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              goto(tabId);
-                              setOpenNavGroup(null);
-                            }}
-                            className={`relative flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
-                              isActive
-                                ? 'bg-gaia-50 font-medium text-gaia-700'
-                                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
-                            }`}
-                          >
-                            <Icon className="h-4 w-4 shrink-0" />
-                            <span className="min-w-0 flex-1 truncate">{t(tabLabelKey, tabDefault)}</span>
-                            {hasDraftWip && (
-                              <span
-                                className="h-2 w-2 shrink-0 rounded-full bg-orange-500"
-                                aria-label={t('drafts.ariaActiveDraft', 'Active draft in progress')}
-                              />
-                            )}
-                          </button>
-                        );
-                      })}
+                    <div role="menu" className="absolute left-0 top-full z-[100] mt-1 min-w-[12rem] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                      {tabs.map(({ id: tabId, labelKey: tabLabelKey, defaultLabel: tabDefault, icon: Icon }) => (
+                        <button
+                          key={tabId}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => { goto(tabId); setOpenNavGroup(null); }}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                            screen === tabId ? 'bg-gaia-50 font-medium text-gaia-700' : 'text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{t(tabLabelKey, tabDefault)}</span>
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -387,55 +320,136 @@ export default function Shell() {
           </nav>
         </div>
 
-        {/* Right: desktop / tablet actions */}
-        <div className="hidden shrink-0 flex-nowrap items-center justify-end gap-2 whitespace-nowrap sm:flex sm:px-0">
-          <span className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-gaia-50 px-3 py-1 text-xs font-medium text-gaia-700 ring-1 ring-gaia-100 lg:inline-flex">
-            <span>🌹 {t('common.greeting', 'Hi Rosa')}</span>
-            <LocalAiStatusBadge settings={settings} />
-          </span>
-          <button
-            onClick={() => goto('template')}
-            className="btn btn-primary flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm"
-            data-tour="new-label"
-          >
-            <Plus className="h-4 w-4 shrink-0" />
-            <span className="hidden sm:inline">{t('nav.newLabel', 'New Label')}</span>
-          </button>
-          {!trainingMode && (
-          <button
-            onClick={() => goto('promptBuilder')}
-            title={t('nav.promptBuilder', 'AI Prompt')}
-            className={`btn flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2 text-sm font-semibold transition-colors ${
-              screen === 'promptBuilder'
-                ? 'bg-gaia-100 text-gaia-700'
-                : 'bg-gaia-50 text-gaia-600 ring-1 ring-gaia-200 hover:bg-gaia-100 hover:text-gaia-700'
-            }`}
-          >
-            <Sparkles className="h-4 w-4 shrink-0" />
-            <span className="hidden sm:inline">{t('nav.promptBuilder', 'AI Prompt')}</span>
-          </button>
-          )}
-          <button
-            onClick={() => setHelpOpen(true)}
-            title={t('nav.help', 'Help & walkthroughs')}
-            aria-label={t('nav.help', 'Help & walkthroughs')}
-            className="btn btn-ghost shrink-0 p-2"
-            data-tour="help"
-          >
-            <HelpCircle className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => goto('settings')}
-            title={t('nav.settings', 'Settings')}
-            aria-label={t('nav.settings', 'Settings')}
-            className="btn btn-ghost shrink-0 p-2"
-          >
-            <SettingsIcon className="h-4 w-4" />
-          </button>
-          <div className="shrink-0 max-sm:hidden">
-            <LangSwitcher />
+        {/* ── Desktop header — fixed grid so toggling Training Mode never reflows ── */}
+        <div className="hidden sm:grid sm:h-[70px] sm:min-h-[70px] sm:grid-cols-[1fr_auto] sm:items-center sm:gap-x-3 sm:px-6 sm:py-2">
+          
+          <div className="flex min-w-0 items-center gap-3">
+            <LogoButton />
+            <div
+              ref={navRef}
+              className={`min-w-0 overflow-visible ${navInteractionLocked ? 'pointer-events-none invisible' : ''}`}
+              aria-hidden={navInteractionLocked}
+            >
+            <nav className="inline-flex items-center gap-1" data-tour="nav-tabs">
+              {NAV_GROUPS.map(({ id, labelKey, defaultLabel }) => {
+                const tabs = tabsByGroup[id];
+                if (!tabs.length) return null;
+                const isGroupActive = activeNavGroup === id;
+                const isOpen = openNavGroup === id;
+                const activeTab = tabs.find((tab) => tab.id === screen);
+                return (
+                  <div key={id} className="relative">
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      aria-haspopup="menu"
+                      onClick={() => setOpenNavGroup(isOpen ? null : id)}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                        isGroupActive
+                          ? 'bg-gaia-50 text-gaia-700'
+                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate">{t(labelKey, defaultLabel)}</span>
+                      {activeTab && (
+                        <span className="hidden truncate text-xs font-normal text-gaia-600 lg:inline">
+                          · {t(activeTab.labelKey, activeTab.defaultLabel)}
+                        </span>
+                      )}
+                      <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                      {isGroupActive && (
+                        <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-gaia-600" />
+                      )}
+                    </button>
+                    {isOpen && (
+                      <div
+                        role="menu"
+                        className="absolute left-0 top-full z-[100] mt-1 min-w-[12rem] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                      >
+                        {tabs.map(({ id: tabId, labelKey: tabLabelKey, defaultLabel: tabDefault, icon: Icon }) => {
+                          const isActive = screen === tabId;
+                          const hasDraftWip = tabId === 'drafts' && !!activeDraftId;
+                          return (
+                            <button
+                              key={tabId}
+                              type="button"
+                              role="menuitem"
+                              onClick={() => { goto(tabId); setOpenNavGroup(null); }}
+                              className={`relative flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                                isActive
+                                  ? 'bg-gaia-50 font-medium text-gaia-700'
+                                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
+                              }`}
+                            >
+                              <Icon className="h-4 w-4 shrink-0" />
+                              <span className="min-w-0 flex-1 truncate">{t(tabLabelKey, tabDefault)}</span>
+                              {hasDraftWip && (
+                                <span className="h-2 w-2 shrink-0 rounded-full bg-orange-500" aria-hidden />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </nav>
           </div>
-        </div>
+          </div>
+
+          <div className="flex shrink-0 flex-nowrap items-center justify-end gap-[calc(0.5rem*1.035)] whitespace-nowrap">
+            <button
+              onClick={() => goto('promptBuilder')}
+              title={t('nav.promptBuilder', 'AI Prompt')}
+              aria-hidden={navInteractionLocked}
+              tabIndex={navInteractionLocked ? -1 : undefined}
+              className={`btn flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2 text-sm font-semibold transition-colors ${
+                navInteractionLocked ? 'pointer-events-none invisible' : ''
+              } ${
+                screen === 'promptBuilder'
+                  ? 'bg-gaia-100 text-gaia-700'
+                  : 'bg-gaia-50 text-gaia-600 ring-1 ring-gaia-200 hover:bg-gaia-100 hover:text-gaia-700'
+              }`}
+            >
+              <Sparkles className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline">{t('nav.promptBuilder', 'AI Prompt')}</span>
+            </button>
+            <span
+              data-nav="hi-rosa"
+              className="hidden lg:inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-gaia-50 pl-3 pr-2 py-1.5 font-medium text-gaia-700 ring-1 ring-gaia-100"
+            >
+              <span className="shrink-0 pr-2 text-[1.00625rem] leading-[1.4375rem]">
+                🌹 {t('common.greeting', 'Hi Rosa!')}
+              </span>
+              <span className="inline-flex shrink-0">
+                <LocalAiStatusBadge settings={settings} />
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => goto('drafts')}
+              title={t('welcome.savedDesigns', 'Saved Designs')}
+              aria-label={t('welcome.savedDesigns', 'Saved Designs')}
+              data-nav="saved-designs"
+              className="saved-designs-pill btn inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold text-white shadow-md hover:shadow-lg"
+              style={{ backgroundColor: '#0d9488', color: '#ffffff' }}
+            >
+              <FolderOpen className="h-5 w-5 shrink-0" />
+              <span>{t('welcome.savedDesigns', t('nav.workspace', 'Saved Designs'))}</span>
+            </button>
+            <div className="shrink-0">
+              <LangSwitcher />
+            </div>
+            <button
+              onClick={() => goto('settings')}
+              title={t('nav.settings', 'Settings')}
+              aria-label={t('nav.settings', 'Settings')}
+              className="btn btn-ghost shrink-0 p-2"
+            >
+              <SettingsIcon className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
       )}
@@ -443,18 +457,10 @@ export default function Shell() {
       {/* ── Streamlined phone header ───────────────────────────────────────── */}
       {streamlinedMobile && (
         <header className="relative z-20 border-b border-slate-200 bg-white/90 backdrop-blur safe-top">
-          <div className="flex items-center justify-between gap-2 px-4 py-2">
+          <div className="flex h-[70px] min-h-[70px] items-center justify-between gap-2 px-4 py-2">
             <LogoButton />
-            <TrainingModeToggle compact />
             <div className="flex items-center gap-1">
-              <button
-                onClick={() => setHelpOpen(true)}
-                title={t('nav.help', 'Help & walkthroughs')}
-                aria-label={t('nav.help', 'Help & walkthroughs')}
-                className="btn btn-ghost shrink-0 p-2"
-              >
-                <HelpCircle className="h-4 w-4" />
-              </button>
+              <LangSwitcher />
               <button
                 onClick={() => goto('settings')}
                 title={t('nav.settings', 'Settings')}
@@ -463,7 +469,6 @@ export default function Shell() {
               >
                 <SettingsIcon className="h-4 w-4" />
               </button>
-              <LangSwitcher />
             </div>
           </div>
         </header>
@@ -475,12 +480,12 @@ export default function Shell() {
           stack above BOTH the header (z-20) and the <main> element below. */}
       {showStepper && <div className="relative z-30"><WorkflowStepper /></div>}
 
-      <main className={`relative flex-1 overflow-hidden ${showMobileTabs ? 'pb-mobile-nav' : ''}`}>
+      <main className={`relative min-h-0 flex-1 overflow-hidden ${showMobileTabs ? 'pb-mobile-nav' : ''}`}>
         <Suspense fallback={<ScreenLoader label={t('common.loading')} />}>
           {screen === 'welcome'       && <WelcomeScreen />}
           {screen === 'template'      && <TemplateScreen />}
           {screen === 'background'    && <BackgroundScreen />}
-          {screen === 'editor'        && <EditorScreen />}
+          {screen === 'editor-v2'     && <EditorScreenV2 />}
           {screen === 'export'        && <ExportScreen />}
           {screen === 'recipes'       && <RecipesScreen />}
           {screen === 'ingredients'   && <IngredientsScreen />}
@@ -523,7 +528,6 @@ export default function Shell() {
       )}
 
       <OnboardingCoach />
-      <TrainingModeWelcome />
       <TrainingBlockModal />
       <HelpHub open={helpOpen} onClose={() => setHelpOpen(false)} />
       <TourOverlay />

@@ -39,6 +39,7 @@ const loaded = new Set<string>([
   ...BUNDLED_FONTS.map((f) => f.family),
 ]);
 const injected = new Set<string>();
+const inflight = new Map<string, Promise<boolean>>();
 
 function injectGoogleFontLink(family: string) {
   if (injected.has(family)) return;
@@ -61,9 +62,7 @@ function injectGoogleFontLink(family: string) {
  * face is ready to render on the Fabric canvas / PDF, `false` if it could not be
  * fetched (offline + not bundled). Never rejects.
  */
-export async function loadFont(family: string): Promise<boolean> {
-  if (loaded.has(family)) return true;
-
+async function loadFontImpl(family: string): Promise<boolean> {
   const def = findFont(family);
 
   // System fonts and bundled fonts are already in the `loaded` set above —
@@ -96,6 +95,15 @@ export async function loadFont(family: string): Promise<boolean> {
   }
 }
 
+export async function loadFont(family: string): Promise<boolean> {
+  if (loaded.has(family)) return true;
+  const pending = inflight.get(family);
+  if (pending) return pending;
+  const promise = loadFontImpl(family).finally(() => inflight.delete(family));
+  inflight.set(family, promise);
+  return promise;
+}
+
 /**
  * Fire-and-forget version for preview loading in the font picker.
  * Injects the Google Fonts link but does not await font rasterization.
@@ -104,11 +112,6 @@ export function preloadFont(family: string): void {
   const def = findFont(family);
   if (def?.category === 'system' || def?.bundled) return;
   injectGoogleFontLink(family);
-}
-
-/** Pre-load every font family used by a set of Fabric objects (before export). */
-export async function ensureFontsLoaded(families: string[]): Promise<void> {
-  await Promise.all([...new Set(families)].map((f) => loadFont(f)));
 }
 
 export function isFontLoaded(family: string): boolean {
